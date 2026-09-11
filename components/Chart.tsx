@@ -103,10 +103,9 @@ function calculateMa(points: MaPoint[], length: number, type: MaType): MaPoint[]
   return values;
 }
 
-function volumeMa(bars: Bar[], length: number, type: MaType, smoothingLength: number) {
+function volumeMa(bars: Bar[], length: number, type: MaType, _smoothingLength: number) {
   const volumePoints = bars.map((bar) => ({ time: bar.time, value: bar.volume }));
-  const primary = calculateMa(volumePoints, length, type);
-  return smoothingLength > 1 ? calculateMa(primary, smoothingLength, type) : primary;
+  return calculateMa(volumePoints, length, type);
 }
 
 function formatVolume(value: number) {
@@ -194,7 +193,7 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
 
     const chart = createChart(containerRef.current, {
       layout: {
-        background: { type: ColorType.Solid, color: "#10131a" },
+        background: { type: ColorType.Solid, color: "#131722" },
         textColor: "#8b92a5",
       },
       localization: {
@@ -209,7 +208,7 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
       leftPriceScale: {
         visible: true,
         borderColor: "#262b38",
-        scaleMargins: { top: 0.08, bottom: 0.30 },
+        scaleMargins: { top: 0.08, bottom: 0.10 },
       },
       rightPriceScale: { visible: false, borderColor: "#262b38" },
       timeScale: {
@@ -260,7 +259,7 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
     });
     const volumeSmaSeries = chart.addSeries(LineSeries, {
       color: "#1f6fd1",
-      lineWidth: 1,
+      lineWidth: 3,
       lineType: LineType.Simple,
       priceScaleId: "volume",
       lastValueVisible: false,
@@ -269,7 +268,7 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
     });
     chart.priceScale("volume").applyOptions({
       // Giữ biểu đồ khối lượng trong vùng chính như VNDirect
-      scaleMargins: { top: 0.72, bottom: 0 },
+      scaleMargins: { top: 0.04, bottom: 0 },
       visible: true,
       autoScale: true,
     });
