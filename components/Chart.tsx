@@ -394,7 +394,7 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
       if (!range) return;
 
       const currentWidth = range.to - range.from;
-      const factor = event.deltaY > 0 ? 1.14 : 1 / 1.14;
+      const factor = event.deltaY > 0 ? 1.07 : 1 / 1.07;
       const nextWidth = Math.max(8, Math.min(300, currentWidth * factor));
       const rightEdge = range.to;
 
