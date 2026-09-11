@@ -348,8 +348,6 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
       if (gesture.mode === "pending" && Math.max(dx, dy) < 4) return;
       if (gesture.mode === "pending") {
         gesture.mode = dy > dx ? "vertical" : "horizontal";
-        // Own both pan directions so the chart can be dragged beyond the
-        // latest candle instead of stopping at the right edge.
         chart.applyOptions({ handleScroll: { pressedMouseMove: false } });
       }
 
@@ -374,6 +372,10 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
         chart.timeScale().setVisibleLogicalRange({
           from: gesture.startLogicalRange.from - logicalDelta,
           to: gesture.startLogicalRange.to - logicalDelta,
+        });
+        chart.priceScale("left").setVisibleRange({
+          from: gesture.startPriceRange.from,
+          to: gesture.startPriceRange.to,
         });
         event.preventDefault();
       }
