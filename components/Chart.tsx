@@ -249,11 +249,11 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
     });
     const series = chart.addSeries(CandlestickSeries, {
       priceScaleId: "left",
-      upColor: "#63c89b",
-      downColor: "#df5f68",
+      upColor: "#53B987",
+      downColor: "#EB4D5C",
       borderVisible: false,
-      wickUpColor: "#63c89b",
-      wickDownColor: "#df5f68",
+      wickUpColor: "#53B987",
+      wickDownColor: "#EB4D5C",
       priceLineVisible: true,
       lastValueVisible: true,
       priceFormat: { type: "price", precision: 2, minMove: 0.01 },
