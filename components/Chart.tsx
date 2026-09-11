@@ -134,6 +134,11 @@ function rangeForResolution(resolution: string, rangeDays?: number): { from: num
   return { from: to - daysBack * 86400, to };
 }
 
+function futureTimelinePoints(lastTime: number, resolution: string, count = 500) {
+  const step = resolution === "M" ? 2592000 : resolution === "W" ? 604800 : resolution === "D" ? 86400 : Number(resolution) * 60;
+  return Array.from({ length: count }, (_, index) => ({ time: (lastTime + step * (index + 1)) as Bar["time"] }));
+}
+
 // Giữ khung nhìn đầu tiên hữu ích khi đổi khung thời gian
 const INITIAL_VISIBLE_BARS: Record<string, number> = {
   "1": 30,
@@ -151,6 +156,7 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const volumeSmaSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const timelineSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const lineToolsRef = useRef<ILineToolsPlugin | null>(null);
   const currentBarRef = useRef<Bar | undefined>(undefined);
   const barsByTimeRef = useRef(new Map<number, Bar>());
@@ -267,6 +273,13 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
       priceLineVisible: false,
       crosshairMarkerVisible: false,
     });
+    const timelineSeries = chart.addSeries(LineSeries, {
+      priceScaleId: "",
+      lineVisible: false,
+      lastValueVisible: false,
+      priceLineVisible: false,
+      crosshairMarkerVisible: false,
+    });
     chart.priceScale("volume").applyOptions({
       // Giữ biểu đồ khối lượng trong vùng chính như VNDirect
       scaleMargins: { top: 0.04, bottom: 0 },
@@ -278,6 +291,7 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
     seriesRef.current = series;
     volumeSeriesRef.current = volumeSeries;
     volumeSmaSeriesRef.current = volumeSmaSeries;
+    timelineSeriesRef.current = timelineSeries;
 
     chart.subscribeCrosshairMove((param) => {
       const time = param.time ? Number(param.time) : undefined;
@@ -432,6 +446,7 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
       seriesRef.current = null;
       volumeSeriesRef.current = null;
       volumeSmaSeriesRef.current = null;
+      timelineSeriesRef.current = null;
     };
   }, []);
 
@@ -458,6 +473,7 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
       })));
       const settings = maSettingsRef.current;
       volumeSmaSeriesRef.current?.setData(volumeMa(bars, settings.length, settings.type, settings.smoothingLength));
+      if (bars.length) timelineSeriesRef.current?.setData(futureTimelinePoints(Number(bars[bars.length - 1].time), resolution));
       barsByTimeRef.current = new Map(bars.map((bar) => [Number(bar.time), bar]));
       previousCloseByTimeRef.current = new Map(bars.slice(1).map((bar, index) => [Number(bar.time), bars[index].close]));
       const visibleBars = INITIAL_VISIBLE_BARS[resolution] ?? 30;
@@ -563,6 +579,7 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
 
         currentBarRef.current = mergeTick(currentBarRef.current, tick.price, tick.volume, bucket);
         lastRealtimeBucketRef.current = bucketNumber;
+        if (isNewBucket) timelineSeriesRef.current?.setData(futureTimelinePoints(bucketNumber, resolution));
 
         seriesRef.current?.update(currentBarRef.current);
         volumeSeriesRef.current?.update({
