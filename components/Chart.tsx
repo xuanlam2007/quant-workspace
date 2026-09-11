@@ -12,18 +12,24 @@ import {
   LineType,
   type IChartApi,
   type ISeriesApi,
+  type Time,
 } from "lightweight-charts";
 import {
   createLineToolsPlugin,
   type ILineToolsPlugin,
   type LineToolType,
 } from "lightweight-charts-line-tools-core";
-import { registerLinesPlugin } from "lightweight-charts-line-tools-lines";
+import {
+  LineToolHorizontalLine,
+  LineToolHorizontalRay,
+  LineToolRay,
+  LineToolTrendLine,
+} from "lightweight-charts-line-tools-lines";
 import { LineToolRectangle } from "lightweight-charts-line-tools-rectangle";
-import { registerFibRetracementPlugin } from "lightweight-charts-line-tools-fib-retracement";
-import { registerPriceRangePlugin } from "lightweight-charts-line-tools-price-range";
-import { registerLongShortPositionPlugin } from "lightweight-charts-line-tools-long-short-position";
-import { registerTextPlugin } from "lightweight-charts-line-tools-text";
+import { LineToolFibRetracement } from "lightweight-charts-line-tools-fib-retracement";
+import { LineToolPriceRange } from "lightweight-charts-line-tools-price-range";
+import { LineToolLongShortPosition } from "lightweight-charts-line-tools-long-short-position";
+import { LineToolText } from "lightweight-charts-line-tools-text";
 import { fetchHistory, type Bar } from "@/lib/dchart-api";
 import { connectPriceFeed, type ConnStatus } from "@/lib/dchart-socket";
 import { bucketStart, mergeTick } from "@/lib/bar-builder";
@@ -228,7 +234,7 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
         fixRightEdge: false,
         lockVisibleTimeRangeOnResize: true,
         rightBarStaysOnScroll: false,
-        tickMarkFormatter: (time) => new Intl.DateTimeFormat("en-GB", ["D", "W", "M"].includes(resolutionRef.current)
+        tickMarkFormatter: (time: Time) => new Intl.DateTimeFormat("en-GB", ["D", "W", "M"].includes(resolutionRef.current)
           ? { timeZone: "Asia/Bangkok", day: "2-digit", month: "short" }
           : { timeZone: "Asia/Bangkok", hour: "2-digit", minute: "2-digit", hour12: false }
         ).format(new Date(Number(time) * 1000)),
@@ -299,12 +305,15 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
     });
 
     const lineTools = createLineToolsPlugin(chart, series);
-    registerLinesPlugin(lineTools);
+    lineTools.registerLineTool("TrendLine", LineToolTrendLine);
+    lineTools.registerLineTool("Ray", LineToolRay);
+    lineTools.registerLineTool("HorizontalLine", LineToolHorizontalLine);
+    lineTools.registerLineTool("HorizontalRay", LineToolHorizontalRay);
     lineTools.registerLineTool("Rectangle", LineToolRectangle);
-    registerFibRetracementPlugin(lineTools);
-    registerPriceRangePlugin(lineTools);
-    registerLongShortPositionPlugin(lineTools);
-    registerTextPlugin(lineTools);
+    lineTools.registerLineTool("FibRetracement", LineToolFibRetracement);
+    lineTools.registerLineTool("PriceRange", LineToolPriceRange);
+    lineTools.registerLineTool("LongShortPosition", LineToolLongShortPosition);
+    lineTools.registerLineTool("Text", LineToolText);
     // Giữ con trỏ và điểm vẽ đúng vị trí chuột
     lineTools.setMagnetThreshold(0);
     lineTools.subscribeLineToolsAfterEdit(() => {
@@ -565,8 +574,9 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
       }, 1200);
     };
 
-    lastRealtimeBucketRef.current = currentBarRef.current
-      ? Number(currentBarRef.current.time)
+    const currentBar = currentBarRef.current as Bar | undefined;
+    lastRealtimeBucketRef.current = currentBar
+      ? Number(currentBar.time)
       : undefined;
 
     feedRef.current?.close();
@@ -661,7 +671,7 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
     if (!drawingsLocked) {
       drawingGestureRef.current = true;
       // Tắt hút điểm riêng cho từng công cụ để điểm neo không tự nhảy
-      lineToolsRef.current?.addLineTool(type, undefined, { magnetThreshold: 0 });
+      lineToolsRef.current?.addLineTool(type);
     }
   };
 
