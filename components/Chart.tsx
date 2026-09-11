@@ -168,7 +168,7 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
     startY: number;
     startPriceRange: { from: number; to: number };
     startLogicalRange: { from: number; to: number };
-    mode: "pending" | "vertical" | "horizontal";
+    mode: "pending" | "pan";
   } | null>(null);
 
   const [symbol, setSymbol] = useState(SYMBOLS[0]);
@@ -347,38 +347,26 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
 
       if (gesture.mode === "pending" && Math.max(dx, dy) < 4) return;
       if (gesture.mode === "pending") {
-        gesture.mode = dy > dx ? "vertical" : "horizontal";
+        gesture.mode = "pan";
         chart.applyOptions({ handleScroll: { pressedMouseMove: false } });
       }
 
-      if (gesture.mode === "vertical") {
-        const startPrice = currentSeries.coordinateToPrice(gesture.startY);
-        const currentPrice = currentSeries.coordinateToPrice(y);
-        if (startPrice === null || currentPrice === null) return;
-        const priceDelta = startPrice - currentPrice;
-        chart.priceScale("left").setVisibleRange({
-          from: gesture.startPriceRange.from + priceDelta,
-          to: gesture.startPriceRange.to + priceDelta,
-        });
-        event.preventDefault();
-        return;
-      }
+      const paneWidth = Math.max(1, chart.paneSize().width);
+      const paneHeight = Math.max(1, chart.paneSize().height);
+      const logicalWidth = gesture.startLogicalRange.to - gesture.startLogicalRange.from;
+      const logicalDelta = ((x - gesture.startX) / paneWidth) * logicalWidth;
+      const priceHeight = gesture.startPriceRange.to - gesture.startPriceRange.from;
+      const priceDelta = ((y - gesture.startY) / paneHeight) * priceHeight;
 
-      if (gesture.mode === "horizontal") {
-        const paneWidth = Math.max(1, chart.paneSize().width);
-        const logicalWidth = gesture.startLogicalRange.to - gesture.startLogicalRange.from;
-        const logicalDelta = ((x - gesture.startX) / paneWidth) * logicalWidth;
-
-        chart.timeScale().setVisibleLogicalRange({
-          from: gesture.startLogicalRange.from - logicalDelta,
-          to: gesture.startLogicalRange.to - logicalDelta,
-        });
-        chart.priceScale("left").setVisibleRange({
-          from: gesture.startPriceRange.from,
-          to: gesture.startPriceRange.to,
-        });
-        event.preventDefault();
-      }
+      chart.timeScale().setVisibleLogicalRange({
+        from: gesture.startLogicalRange.from - logicalDelta,
+        to: gesture.startLogicalRange.to - logicalDelta,
+      });
+      chart.priceScale("left").setVisibleRange({
+        from: gesture.startPriceRange.from + priceDelta,
+        to: gesture.startPriceRange.to + priceDelta,
+      });
+      event.preventDefault();
     };
 
     const onWheel = (event: WheelEvent) => {
@@ -403,7 +391,7 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
     };
 
     const clearMouseGesture = () => {
-      if (verticalPanRef.current?.mode === "vertical" || verticalPanRef.current?.mode === "horizontal") {
+      if (verticalPanRef.current?.mode === "pan") {
         chart.applyOptions({ handleScroll: { pressedMouseMove: true } });
       }
       verticalPanRef.current = null;
