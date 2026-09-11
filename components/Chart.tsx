@@ -166,7 +166,8 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
   const verticalPanRef = useRef<{
     startX: number;
     startY: number;
-    startRange: { from: number; to: number };
+    startPriceRange: { from: number; to: number };
+    startLogicalRange: { from: number; to: number };
     mode: "pending" | "vertical" | "horizontal";
   } | null>(null);
 
@@ -218,9 +219,9 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
         barSpacing: 14,
         minBarSpacing: 6,
         rightOffset: 6,
-        fixRightEdge: true,
+        fixRightEdge: false,
         lockVisibleTimeRangeOnResize: true,
-        rightBarStaysOnScroll: true,
+        rightBarStaysOnScroll: false,
         tickMarkFormatter: (time) => new Intl.DateTimeFormat("en-GB", ["D", "W", "M"].includes(resolutionRef.current)
           ? { timeZone: "Asia/Bangkok", day: "2-digit", month: "short" }
           : { timeZone: "Asia/Bangkok", hour: "2-digit", minute: "2-digit", hour12: false }
@@ -320,11 +321,13 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
       if (x < 55 || x > drawingWidth - 4 || y < 0 || y > chart.paneSize().height) return;
 
       const visibleRange = chart.priceScale("left").getVisibleRange();
-      if (!visibleRange) return;
+      const logicalRange = chart.timeScale().getVisibleLogicalRange();
+      if (!visibleRange || !logicalRange) return;
       verticalPanRef.current = {
         startX: x,
         startY: y,
-        startRange: { from: Number(visibleRange.from), to: Number(visibleRange.to) },
+        startPriceRange: { from: Number(visibleRange.from), to: Number(visibleRange.to) },
+        startLogicalRange: { from: Number(logicalRange.from), to: Number(logicalRange.to) },
         mode: "pending",
       };
     };
@@ -345,22 +348,35 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
       if (gesture.mode === "pending" && Math.max(dx, dy) < 4) return;
       if (gesture.mode === "pending") {
         gesture.mode = dy > dx ? "vertical" : "horizontal";
-        if (gesture.mode === "vertical") {
-          // Tắt cuộn chuột của LWC khi xác định là kéo dọc
-          chart.applyOptions({ handleScroll: { pressedMouseMove: false } });
-        }
+        // Own both pan directions so the chart can be dragged beyond the
+        // latest candle instead of stopping at the right edge.
+        chart.applyOptions({ handleScroll: { pressedMouseMove: false } });
       }
-      if (gesture.mode !== "vertical") return;
 
-      const startPrice = currentSeries.coordinateToPrice(gesture.startY);
-      const currentPrice = currentSeries.coordinateToPrice(y);
-      if (startPrice === null || currentPrice === null) return;
-      const priceDelta = startPrice - currentPrice;
-      chart.priceScale("left").setVisibleRange({
-        from: gesture.startRange.from + priceDelta,
-        to: gesture.startRange.to + priceDelta,
-      });
-      event.preventDefault();
+      if (gesture.mode === "vertical") {
+        const startPrice = currentSeries.coordinateToPrice(gesture.startY);
+        const currentPrice = currentSeries.coordinateToPrice(y);
+        if (startPrice === null || currentPrice === null) return;
+        const priceDelta = startPrice - currentPrice;
+        chart.priceScale("left").setVisibleRange({
+          from: gesture.startPriceRange.from + priceDelta,
+          to: gesture.startPriceRange.to + priceDelta,
+        });
+        event.preventDefault();
+        return;
+      }
+
+      if (gesture.mode === "horizontal") {
+        const paneWidth = Math.max(1, chart.paneSize().width);
+        const logicalWidth = gesture.startLogicalRange.to - gesture.startLogicalRange.from;
+        const logicalDelta = ((x - gesture.startX) / paneWidth) * logicalWidth;
+
+        chart.timeScale().setVisibleLogicalRange({
+          from: gesture.startLogicalRange.from - logicalDelta,
+          to: gesture.startLogicalRange.to - logicalDelta,
+        });
+        event.preventDefault();
+      }
     };
 
     const onWheel = (event: WheelEvent) => {
@@ -385,7 +401,7 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
     };
 
     const clearMouseGesture = () => {
-      if (verticalPanRef.current?.mode === "vertical") {
+      if (verticalPanRef.current?.mode === "vertical" || verticalPanRef.current?.mode === "horizontal") {
         chart.applyOptions({ handleScroll: { pressedMouseMove: true } });
       }
       verticalPanRef.current = null;
