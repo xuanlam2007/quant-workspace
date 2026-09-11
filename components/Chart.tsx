@@ -114,6 +114,19 @@ function volumeMa(bars: Bar[], length: number, type: MaType, _smoothingLength: n
   return calculateMa(volumePoints, length, type);
 }
 
+
+function isVolumeSessionTime(time: Bar["time"]) {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Bangkok",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(new Date(Number(time) * 1000));
+  const hour = Number(parts.find((part) => part.type === "hour")?.value ?? 0);
+  const minute = Number(parts.find((part) => part.type === "minute")?.value ?? 0);
+  return hour < 14 || (hour === 14 && minute <= 45);
+}
+
 function formatVolume(value: number) {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(2)}M`;
   if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
@@ -475,13 +488,14 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
       const bars = await fetchHistory(symbol, resolution, from, to);
       if (cancelled) return;
       series.setData(bars);
-      volumeSeriesRef.current?.setData(bars.map((bar) => ({
+      const volumeBars = bars.filter((bar) => isVolumeSessionTime(bar.time));
+      volumeSeriesRef.current?.setData(volumeBars.map((bar) => ({
         time: bar.time,
         value: bar.volume,
         color: bar.close >= bar.open ? "rgba(99, 200, 155, 0.55)" : "rgba(223, 95, 104, 0.55)",
       })));
       const settings = maSettingsRef.current;
-      volumeSmaSeriesRef.current?.setData(volumeMa(bars, settings.length, settings.type, settings.smoothingLength));
+      volumeSmaSeriesRef.current?.setData(volumeMa(volumeBars, settings.length, settings.type, settings.smoothingLength));
       if (bars.length) timelineSeriesRef.current?.setData(futureTimelinePoints(Number(bars[bars.length - 1].time), resolution));
       barsByTimeRef.current = new Map(bars.map((bar) => [Number(bar.time), bar]));
       previousCloseByTimeRef.current = new Map(bars.slice(1).map((bar, index) => [Number(bar.time), bars[index].close]));
@@ -522,7 +536,9 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
     })();
 
     const refreshVolumeMa = () => {
-      const allBars = [...barsByTimeRef.current.values()].sort((a, b) => Number(a.time) - Number(b.time));
+      const allBars = [...barsByTimeRef.current.values()]
+        .filter((bar) => isVolumeSessionTime(bar.time))
+        .sort((a, b) => Number(a.time) - Number(b.time));
       const settings = maSettingsRef.current;
       volumeSmaSeriesRef.current?.setData(
         volumeMa(allBars, settings.length, settings.type, settings.smoothingLength)
@@ -559,14 +575,16 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
           currentBarRef.current = reconciled;
           barsByTimeRef.current.set(bucket, reconciled);
           seriesRef.current?.update(reconciled);
-          volumeSeriesRef.current?.update({
-            time: reconciled.time,
-            value: reconciled.volume,
-            color: reconciled.close >= reconciled.open
-              ? "rgba(99, 200, 155, 0.55)"
-              : "rgba(223, 95, 104, 0.55)",
-          });
-          refreshVolumeMa();
+          if (isVolumeSessionTime(reconciled.time)) {
+            volumeSeriesRef.current?.update({
+              time: reconciled.time,
+              value: reconciled.volume,
+              color: reconciled.close >= reconciled.open
+                ? "rgba(99, 200, 155, 0.55)"
+                : "rgba(223, 95, 104, 0.55)",
+            });
+            refreshVolumeMa();
+          }
           setVisibleBar(reconciled);
         } catch {
           // Tiếp tục nhận dữ liệu nếu đối chiếu lịch sử thất bại
@@ -592,19 +610,25 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
         if (isNewBucket) timelineSeriesRef.current?.setData(futureTimelinePoints(bucketNumber, resolution));
 
         seriesRef.current?.update(currentBarRef.current);
-        volumeSeriesRef.current?.update({
-          time: currentBarRef.current.time,
-          value: currentBarRef.current.volume,
-          color: currentBarRef.current.close >= currentBarRef.current.open
-            ? "rgba(99, 200, 155, 0.55)"
-            : "rgba(223, 95, 104, 0.55)",
-        });
+        if (isVolumeSessionTime(currentBarRef.current.time)) {
+          volumeSeriesRef.current?.update({
+            time: currentBarRef.current.time,
+            value: currentBarRef.current.volume,
+            color: currentBarRef.current.close >= currentBarRef.current.open
+              ? "rgba(99, 200, 155, 0.55)"
+              : "rgba(223, 95, 104, 0.55)",
+          });
+        }
         barsByTimeRef.current.set(bucketNumber, currentBarRef.current);
 
-        const allBars = [...barsByTimeRef.current.values()].sort((a, b) => Number(a.time) - Number(b.time));
-        const settings = maSettingsRef.current;
-        const latestVolumeSma = volumeMa(allBars, settings.length, settings.type, settings.smoothingLength).at(-1);
-        if (latestVolumeSma) volumeSmaSeriesRef.current?.update(latestVolumeSma);
+        if (isVolumeSessionTime(currentBarRef.current.time)) {
+          const allBars = [...barsByTimeRef.current.values()]
+            .filter((bar) => isVolumeSessionTime(bar.time))
+            .sort((a, b) => Number(a.time) - Number(b.time));
+          const settings = maSettingsRef.current;
+          const latestVolumeSma = volumeMa(allBars, settings.length, settings.type, settings.smoothingLength).at(-1);
+          if (latestVolumeSma) volumeSmaSeriesRef.current?.update(latestVolumeSma);
+        }
 
         if (isNewBucket) reconcileCurrentBar(bucketNumber);
 
@@ -626,7 +650,9 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
   }, [symbol, resolution, rangeDays]);
 
   useEffect(() => {
-    const bars = [...barsByTimeRef.current.values()].sort((a, b) => Number(a.time) - Number(b.time));
+    const bars = [...barsByTimeRef.current.values()]
+      .filter((bar) => isVolumeSessionTime(bar.time))
+      .sort((a, b) => Number(a.time) - Number(b.time));
     volumeSmaSeriesRef.current?.setData(volumeMa(bars, maLength, maType, smoothingLength));
   }, [maLength, maType, smoothingLength]);
 
