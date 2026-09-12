@@ -409,7 +409,6 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
       const currentChart = chartRef.current;
       if (!currentChart) return;
 
-      // Neo cạnh phải và chỉ thay đổi vùng nhìn về phía trái
       event.preventDefault();
 
       const range = currentChart.timeScale().getVisibleLogicalRange();
@@ -418,7 +417,10 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
       const currentWidth = range.to - range.from;
       const factor = event.deltaY > 0 ? 1.07 : 1 / 1.07;
       const nextWidth = Math.max(8, Math.min(300, currentWidth * factor));
-      const rightEdge = range.to;
+      const bars = [...barsByTimeRef.current.values()].sort((a, b) => Number(a.time) - Number(b.time));
+      const lastBarIndex = Math.max(0, bars.length - 1);
+      const rightPadding = Math.min(6, Math.max(2, nextWidth * 0.08));
+      const rightEdge = Math.min(range.to, lastBarIndex + rightPadding);
 
       currentChart.timeScale().setVisibleLogicalRange({
         from: rightEdge - nextWidth,
