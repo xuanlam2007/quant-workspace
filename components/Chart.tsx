@@ -109,9 +109,9 @@ function calculateMa(points: MaPoint[], length: number, type: MaType): MaPoint[]
   return values;
 }
 
-function volumeMa(bars: Bar[], length: number, type: MaType, _smoothingLength: number) {
+function volumeMa(bars: Bar[], length: number) {
   const volumePoints = bars.map((bar) => ({ time: bar.time, value: bar.volume }));
-  return calculateMa(volumePoints, length, type);
+  return calculateMa(volumePoints, length, "SMA");
 }
 
 
@@ -497,7 +497,7 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
         color: bar.close >= bar.open ? "rgba(99, 200, 155, 0.55)" : "rgba(223, 95, 104, 0.55)",
       })));
       const settings = maSettingsRef.current;
-      volumeSmaSeriesRef.current?.setData(volumeMa(volumeBars, settings.length, settings.type, settings.smoothingLength));
+      volumeSmaSeriesRef.current?.setData(volumeMa(volumeBars, settings.length));
       if (bars.length) timelineSeriesRef.current?.setData(futureTimelinePoints(Number(bars[bars.length - 1].time), resolution));
       barsByTimeRef.current = new Map(bars.map((bar) => [Number(bar.time), bar]));
       previousCloseByTimeRef.current = new Map(bars.slice(1).map((bar, index) => [Number(bar.time), bars[index].close]));
@@ -543,7 +543,7 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
         .sort((a, b) => Number(a.time) - Number(b.time));
       const settings = maSettingsRef.current;
       volumeSmaSeriesRef.current?.setData(
-        volumeMa(allBars, settings.length, settings.type, settings.smoothingLength)
+        volumeMa(allBars, settings.length)
       );
     };
 
@@ -628,7 +628,7 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
             .filter((bar) => isVolumeSessionTime(bar.time))
             .sort((a, b) => Number(a.time) - Number(b.time));
           const settings = maSettingsRef.current;
-          const latestVolumeSma = volumeMa(allBars, settings.length, settings.type, settings.smoothingLength).at(-1);
+          const latestVolumeSma = volumeMa(allBars, settings.length).at(-1);
           if (latestVolumeSma) volumeSmaSeriesRef.current?.update(latestVolumeSma);
         }
 
@@ -655,7 +655,7 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
     const bars = [...barsByTimeRef.current.values()]
       .filter((bar) => isVolumeSessionTime(bar.time))
       .sort((a, b) => Number(a.time) - Number(b.time));
-    volumeSmaSeriesRef.current?.setData(volumeMa(bars, maLength, maType, smoothingLength));
+    volumeSmaSeriesRef.current?.setData(volumeMa(bars, maLength));
   }, [maLength, maType, smoothingLength]);
 
   useEffect(() => {
@@ -723,8 +723,10 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
   const change = quoteBar && previousClose ? quoteBar.close - previousClose : 0;
   const changePercent = previousClose ? (change / previousClose) * 100 : 0;
   const quoteClass = change >= 0 ? "quote--up" : "quote--down";
-  const sortedBars = [...barsByTimeRef.current.values()].sort((a, b) => Number(a.time) - Number(b.time));
-  const currentVolumeMa = volumeMa(sortedBars, maLength, maType, smoothingLength).at(-1)?.value;
+  const sortedBars = [...barsByTimeRef.current.values()]
+    .filter((bar) => isVolumeSessionTime(bar.time))
+    .sort((a, b) => Number(a.time) - Number(b.time));
+  const currentVolumeMa = volumeMa(sortedBars, maLength).at(-1)?.value;
 
   const applyRangePreset = (preset: (typeof RANGE_PRESETS)[number]) => {
     setRangeDays(preset.days);
