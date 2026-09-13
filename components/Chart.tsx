@@ -114,6 +114,10 @@ function volumeMa(bars: Bar[], length: number) {
   return calculateMa(volumePoints, length, "SMA");
 }
 
+function candleColor(bar: Bar) {
+  return bar.close > bar.open ? "#53B987" : "#EB4D5C";
+}
+
 
 function isVolumeSessionTime(time: Bar["time"]) {
   const parts = new Intl.DateTimeFormat("en-GB", {
@@ -274,6 +278,7 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
       wickUpColor: "#53B987",
       wickDownColor: "#EB4D5C",
       priceLineVisible: true,
+      priceLineColor: "#EB4D5C",
       lastValueVisible: true,
       priceFormat: { type: "price", precision: 2, minMove: 0.01 },
     });
@@ -490,6 +495,7 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
       const bars = await fetchHistory(symbol, resolution, from, to);
       if (cancelled) return;
       series.setData(bars);
+      if (bars.length) series.applyOptions({ priceLineColor: candleColor(bars[bars.length - 1]) });
       const volumeBars = bars.filter((bar) => isVolumeSessionTime(bar.time));
       volumeSeriesRef.current?.setData(volumeBars.map((bar) => ({
         time: bar.time,
@@ -577,6 +583,7 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
           currentBarRef.current = reconciled;
           barsByTimeRef.current.set(bucket, reconciled);
           seriesRef.current?.update(reconciled);
+          seriesRef.current?.applyOptions({ priceLineColor: candleColor(reconciled) });
           if (isVolumeSessionTime(reconciled.time)) {
             volumeSeriesRef.current?.update({
               time: reconciled.time,
@@ -612,6 +619,7 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
         if (isNewBucket) timelineSeriesRef.current?.setData(futureTimelinePoints(bucketNumber, resolution));
 
         seriesRef.current?.update(currentBarRef.current);
+        seriesRef.current?.applyOptions({ priceLineColor: candleColor(currentBarRef.current) });
         if (isVolumeSessionTime(currentBarRef.current.time)) {
           volumeSeriesRef.current?.update({
             time: currentBarRef.current.time,
