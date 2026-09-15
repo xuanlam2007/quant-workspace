@@ -267,7 +267,7 @@ const INITIAL_VISIBLE_BARS: Record<string, number> = {
   M: 60,
 };
 
-export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) {
+export default function Chart() {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -1092,10 +1092,6 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
               </div>
             </div>
           </details>
-          <div className="engine-switch" role="group" aria-label="Chart engine">
-            <button className="engine-switch--active">Lightweight</button>
-            <button onClick={onSelectKLine}>KLineChart</button>
-          </div>
         </div>
         <div className="status-row">
           <span className={"dot " + (status === "connected" ? "dot--on" : "dot--off")} />
