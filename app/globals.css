@@ -455,8 +455,8 @@ main#kline-chart {
 }
 
 @media (max-width: 900px) {
-  .chart-header { overflow-x: auto; }
-  .chart-header, .symbol-row, .status-row { flex-shrink: 0; }
+  .chart-header { flex-wrap: wrap; overflow: visible; }
+  .symbol-row, .status-row { flex-shrink: 0; }
   .engine-switch { display: none; }
   .connection-label { display: none; }
   .market-data-row { gap: 9px; }

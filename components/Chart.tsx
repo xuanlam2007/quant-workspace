@@ -116,12 +116,14 @@ function volumeMa(bars: Bar[], length: number, type: MaType, smoothingLength: nu
 }
 
 const PRICE_INDICATORS = [
+  { id: "SMA", label: "SMA 20", length: 20, type: "SMA" as const, color: "#bb6bd9" },
   { id: "MA5", label: "MA 5", length: 5, type: "SMA" as const, color: "#f2c94c" },
   { id: "MA10", label: "MA 10", length: 10, type: "SMA" as const, color: "#56ccf2" },
-  { id: "MA20", label: "MA 20", length: 20, type: "SMA" as const, color: "#bb6bd9" },
   { id: "EMA12", label: "EMA 12", length: 12, type: "EMA" as const, color: "#f2994a" },
   { id: "EMA26", label: "EMA 26", length: 26, type: "EMA" as const, color: "#2d9cdb" },
 ];
+
+const INDICATOR_SETTINGS_KEY = "vndirect-chart:indicator-settings";
 
 function priceIndicatorData(bars: Bar[], length: number, type: MaType) {
   return calculateMa(bars.map((bar) => ({ time: bar.time, value: bar.close })), length, type);
@@ -129,6 +131,11 @@ function priceIndicatorData(bars: Bar[], length: number, type: MaType) {
 
 function candleColor(bar: Bar) {
   return bar.close > bar.open ? "#53B987" : "#EB4D5C";
+}
+
+function volumeColor(bar: Bar, previousClose?: number) {
+  const isGrowing = previousClose === undefined ? bar.close >= bar.open : bar.close >= previousClose;
+  return isGrowing ? "rgba(99, 200, 155, 0.55)" : "rgba(223, 95, 104, 0.55)";
 }
 
 
@@ -231,7 +238,8 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
   const [rangeDays, setRangeDays] = useState<number | undefined>(undefined);
   const [scaleMode, setScaleMode] = useState<"normal" | "percent" | "log">("normal");
   const [autoScale, setAutoScale] = useState(true);
-  const [activePriceIndicators, setActivePriceIndicators] = useState<string[]>(["MA20"]);
+  const [activePriceIndicators, setActivePriceIndicators] = useState<string[]>(["SMA"]);
+  const [indicatorSettingsLoaded, setIndicatorSettingsLoaded] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   // Giữ thiết lập MA để dùng cho chỉ báo sau này
   const [maLength, setMaLength] = useState(20);
@@ -523,10 +531,10 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
       series.setData(chartBars);
       if (chartBars.length) series.applyOptions({ priceLineColor: candleColor(chartBars[chartBars.length - 1]) });
       const volumeBars = chartBars;
-      volumeSeriesRef.current?.setData(volumeBars.map((bar) => ({
+      volumeSeriesRef.current?.setData(volumeBars.map((bar, index) => ({
         time: bar.time,
         value: bar.volume,
-        color: bar.close >= bar.open ? "rgba(99, 200, 155, 0.55)" : "rgba(223, 95, 104, 0.55)",
+        color: volumeColor(bar, index > 0 ? volumeBars[index - 1].close : undefined),
       })));
       const settings = maSettingsRef.current;
       volumeSmaSeriesRef.current?.setData(volumeMa(volumeBars, settings.length, settings.type, settings.smoothingLength));
@@ -619,9 +627,7 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
             volumeSeriesRef.current?.update({
               time: reconciled.time,
               value: reconciled.volume,
-              color: reconciled.close >= reconciled.open
-                ? "rgba(99, 200, 155, 0.55)"
-                : "rgba(223, 95, 104, 0.55)",
+              color: volumeColor(reconciled, previousCloseByTimeRef.current.get(Number(reconciled.time))),
             });
             refreshVolumeMa();
           }
@@ -648,6 +654,10 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
           return;
         }
         const isNewBucket = lastRealtimeBucketRef.current !== bucketNumber;
+        const previousBar = currentBarRef.current;
+        if (isNewBucket && previousBar) {
+          previousCloseByTimeRef.current.set(bucketNumber, previousBar.close);
+        }
 
         currentBarRef.current = mergeTick(currentBarRef.current, tick.price, tick.volume, bucket);
         lastRealtimeBucketRef.current = bucketNumber;
@@ -659,9 +669,7 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
           volumeSeriesRef.current?.update({
             time: currentBarRef.current.time,
             value: currentBarRef.current.volume,
-            color: currentBarRef.current.close >= currentBarRef.current.open
-              ? "rgba(99, 200, 155, 0.55)"
-              : "rgba(223, 95, 104, 0.55)",
+            color: volumeColor(currentBarRef.current, previousCloseByTimeRef.current.get(Number(currentBarRef.current.time))),
           });
         }
         barsByTimeRef.current.set(bucketNumber, currentBarRef.current);
@@ -740,6 +748,41 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
     document.addEventListener("fullscreenchange", onFullscreenChange);
     return () => document.removeEventListener("fullscreenchange", onFullscreenChange);
   }, []);
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(INDICATOR_SETTINGS_KEY) ?? "null") as {
+        activePriceIndicators?: unknown;
+        maLength?: unknown;
+        maType?: unknown;
+        smoothingLength?: unknown;
+      } | null;
+      if (saved) {
+        const validIds = new Set(PRICE_INDICATORS.map((indicator) => indicator.id));
+        if (Array.isArray(saved.activePriceIndicators)) {
+          const active = saved.activePriceIndicators.filter((id): id is string => typeof id === "string" && validIds.has(id));
+          setActivePriceIndicators(active);
+        }
+        if (typeof saved.maLength === "number") setMaLength(Math.max(2, Math.min(500, saved.maLength)));
+        if (saved.maType === "SMA" || saved.maType === "EMA" || saved.maType === "WMA") setMaType(saved.maType);
+        if (typeof saved.smoothingLength === "number") setSmoothingLength(Math.max(1, Math.min(500, saved.smoothingLength)));
+      }
+    } catch {
+      // Keep defaults when storage is unavailable or contains malformed data.
+    } finally {
+      setIndicatorSettingsLoaded(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!indicatorSettingsLoaded) return;
+    localStorage.setItem(INDICATOR_SETTINGS_KEY, JSON.stringify({
+      activePriceIndicators,
+      maLength,
+      maType,
+      smoothingLength,
+    }));
+  }, [activePriceIndicators, indicatorSettingsLoaded, maLength, maType, smoothingLength]);
 
   useEffect(() => {
     chartRef.current?.priceScale("left").applyOptions({
