@@ -29,7 +29,6 @@ Sau khi chạy lệnh, mở địa chỉ được hiển thị trong terminal, t
 - Hiển thị khối lượng giao dịch
 - Hỗ trợ một số công cụ vẽ và chỉ báo kỹ thuật
 - Lưu và khôi phục các đối tượng vẽ trên biểu đồ
-- Cho phép chuyển đổi giữa Lightweight Charts và KLineChart (Sẽ xoá)
 
 ## Cấu trúc dự án
 
@@ -37,7 +36,6 @@ Sau khi chạy lệnh, mở địa chỉ được hiển thị trong terminal, t
 - `app/layout.tsx`: Bố cục chung của ứng dụng
 - `app/globals.css`: Các quy tắc giao diện dùng chung
 - `components/Chart.tsx`: Biểu đồ sử dụng Lightweight Charts
-- `components/KLineChart.tsx`: Biểu đồ sử dụng KLineChart (Sẽ xoá)
 - `lib/dchart-api.ts`: Gọi API để lấy dữ liệu lịch sử
 - `lib/dchart-socket.ts`: Kết nối WebSocket để nhận giá trực tiếp
 - `lib/bar-builder.ts`: Gom các tick giá thành dữ liệu nến OHLCV
