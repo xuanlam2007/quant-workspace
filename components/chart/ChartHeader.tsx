@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { ConnStatus } from "@/lib/dchart-socket";
 import { RESOLUTIONS, STUDY_CATALOG, SYMBOLS, TIMEFRAME_GROUPS, type StudyId } from "./chart-config";
 
@@ -42,6 +43,7 @@ export function ChartHeader({
   onDownloadSnapshot,
   onToggleFullscreen,
 }: ChartHeaderProps) {
+  const [symbolMenuOpen, setSymbolMenuOpen] = useState(false);
   const normalizedSearch = indicatorSearch.trim().toLocaleLowerCase("vi");
   const filteredStudies = STUDY_CATALOG.filter((study) =>
     `${study.label} ${study.description}`.toLocaleLowerCase("vi").includes(normalizedSearch)
@@ -51,12 +53,43 @@ export function ChartHeader({
     <header className="chart-header">
       <div className="symbol-row">
         <div className="product-mark" title="VNDIRECT chart workspace" aria-label="VNDIRECT chart workspace">D</div>
-        <select value={symbol} onChange={(event) => onSymbolChange(event.target.value)}>
-          {SYMBOLS.map((item) => <option key={item} value={item}>{item}</option>)}
-        </select>
-        <details className="timeframe-menu" open={timeframeMenuOpen} onToggle={(event) => onTimeframeMenuToggle(event.currentTarget.open)}>
+        <details
+          className="selector-menu symbol-menu"
+          open={symbolMenuOpen}
+          onToggle={(event) => {
+            const open = event.currentTarget.open;
+            setSymbolMenuOpen(open);
+            if (open) onTimeframeMenuToggle(false);
+          }}
+        >
+          <summary>{symbol}</summary>
+          <div className="selector-menu__panel symbol-menu__panel">
+            {SYMBOLS.map((item) => (
+              <button
+                type="button"
+                key={item}
+                className={item === symbol ? "selector-menu__option selector-menu__option--active" : "selector-menu__option"}
+                onClick={() => {
+                  onSymbolChange(item);
+                  setSymbolMenuOpen(false);
+                }}
+              >
+                {item}
+              </button>
+            ))}
+          </div>
+        </details>
+        <details
+          className="selector-menu timeframe-menu"
+          open={timeframeMenuOpen}
+          onToggle={(event) => {
+            const open = event.currentTarget.open;
+            if (open) setSymbolMenuOpen(false);
+            onTimeframeMenuToggle(open);
+          }}
+        >
           <summary>{RESOLUTIONS.find((item) => item.value === resolution)?.label ?? "1D"}</summary>
-          <div className="timeframe-menu__panel">
+          <div className="selector-menu__panel timeframe-menu__panel">
             {TIMEFRAME_GROUPS.map((group) => (
               <div className="timeframe-menu__group" key={group.label}>
                 <div className="timeframe-menu__heading">{group.label}</div>
@@ -64,7 +97,7 @@ export function ChartHeader({
                   <button
                     type="button"
                     key={option.value}
-                    className={option.value === resolution ? "timeframe-menu__option timeframe-menu__option--active" : "timeframe-menu__option"}
+                    className={option.value === resolution ? "selector-menu__option selector-menu__option--active" : "selector-menu__option"}
                     onClick={() => onResolutionChange(option.value)}
                   >
                     {option.label}
