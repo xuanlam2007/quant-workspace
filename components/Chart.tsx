@@ -119,16 +119,24 @@ function candleColor(bar: Bar) {
 }
 
 
-function isVolumeSessionTime(time: Bar["time"]) {
+function isTradingSessionTime(time: Bar["time"], resolution: string) {
+  if (["D", "W", "M"].includes(resolution)) return true;
+
   const parts = new Intl.DateTimeFormat("en-GB", {
     timeZone: "Asia/Bangkok",
+    weekday: "short",
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
   }).formatToParts(new Date(Number(time) * 1000));
+  const weekday = parts.find((part) => part.type === "weekday")?.value;
+  if (weekday === "Sat" || weekday === "Sun") return false;
+
   const hour = Number(parts.find((part) => part.type === "hour")?.value ?? 0);
   const minute = Number(parts.find((part) => part.type === "minute")?.value ?? 0);
-  return hour < 14 || (hour === 14 && minute <= 45);
+  const minutes = hour * 60 + minute;
+  return (minutes >= 9 * 60 && minutes <= 11 * 60 + 30)
+    || (minutes >= 13 * 60 && minutes <= 14 * 60 + 45);
 }
 
 function formatVolume(value: number) {
@@ -494,9 +502,10 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
       const { from, to } = rangeForResolution(resolution, rangeDays);
       const bars = await fetchHistory(symbol, resolution, from, to);
       if (cancelled) return;
-      series.setData(bars);
-      if (bars.length) series.applyOptions({ priceLineColor: candleColor(bars[bars.length - 1]) });
-      const volumeBars = bars.filter((bar) => isVolumeSessionTime(bar.time));
+      const chartBars = bars.filter((bar) => isTradingSessionTime(bar.time, resolution));
+      series.setData(chartBars);
+      if (chartBars.length) series.applyOptions({ priceLineColor: candleColor(chartBars[chartBars.length - 1]) });
+      const volumeBars = chartBars;
       volumeSeriesRef.current?.setData(volumeBars.map((bar) => ({
         time: bar.time,
         value: bar.volume,
@@ -504,9 +513,9 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
       })));
       const settings = maSettingsRef.current;
       volumeSmaSeriesRef.current?.setData(volumeMa(volumeBars, settings.length));
-      if (bars.length) timelineSeriesRef.current?.setData(futureTimelinePoints(Number(bars[bars.length - 1].time), resolution));
-      barsByTimeRef.current = new Map(bars.map((bar) => [Number(bar.time), bar]));
-      previousCloseByTimeRef.current = new Map(bars.slice(1).map((bar, index) => [Number(bar.time), bars[index].close]));
+      if (chartBars.length) timelineSeriesRef.current?.setData(futureTimelinePoints(Number(chartBars[chartBars.length - 1].time), resolution));
+      barsByTimeRef.current = new Map(chartBars.map((bar) => [Number(bar.time), bar]));
+      previousCloseByTimeRef.current = new Map(chartBars.slice(1).map((bar, index) => [Number(bar.time), chartBars[index].close]));
       const visibleBars = INITIAL_VISIBLE_BARS[resolution] ?? 30;
 
       // Gọi lại sau khi kích thước biểu đồ ổn định để tránh nến bị nén
@@ -516,10 +525,10 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
         if (rangeDays !== undefined) {
           // Chế độ đặt sẵn hiển thị toàn bộ dữ liệu đã tải
           chart.timeScale().fitContent();
-        } else if (bars.length > visibleBars) {
+        } else if (chartBars.length > visibleBars) {
           chart.timeScale().setVisibleLogicalRange({
-            from: Math.max(0, bars.length - visibleBars),
-            to: bars.length + 6,
+            from: Math.max(0, chartBars.length - visibleBars),
+            to: chartBars.length + 6,
           });
         } else {
           chart.timeScale().fitContent();
@@ -536,8 +545,8 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
       const savedDrawings = localStorage.getItem(drawingKeyRef.current);
       if (savedDrawings) lineToolsRef.current?.importLineTools(savedDrawings);
       drawingHistoryRef.current = [savedDrawings ?? "[]"];
-      if (bars.length) {
-        currentBarRef.current = bars[bars.length - 1];
+      if (chartBars.length) {
+        currentBarRef.current = chartBars[chartBars.length - 1];
         setLastPrice(currentBarRef.current.close.toFixed(2));
         setVisibleBar(currentBarRef.current);
       }
@@ -545,7 +554,7 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
 
     const refreshVolumeMa = () => {
       const allBars = [...barsByTimeRef.current.values()]
-        .filter((bar) => isVolumeSessionTime(bar.time))
+        .filter((bar) => isTradingSessionTime(bar.time, resolution))
         .sort((a, b) => Number(a.time) - Number(b.time));
       const settings = maSettingsRef.current;
       volumeSmaSeriesRef.current?.setData(
@@ -584,7 +593,7 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
           barsByTimeRef.current.set(bucket, reconciled);
           seriesRef.current?.update(reconciled);
           seriesRef.current?.applyOptions({ priceLineColor: candleColor(reconciled) });
-          if (isVolumeSessionTime(reconciled.time)) {
+          if (isTradingSessionTime(reconciled.time, resolution)) {
             volumeSeriesRef.current?.update({
               time: reconciled.time,
               value: reconciled.volume,
@@ -612,6 +621,10 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
       (tick) => {
         const bucket = bucketStart(tick.time, resolution);
         const bucketNumber = Number(bucket);
+        if (!isTradingSessionTime(bucket, resolution)) {
+          setLastPrice(tick.price.toFixed(2));
+          return;
+        }
         const isNewBucket = lastRealtimeBucketRef.current !== bucketNumber;
 
         currentBarRef.current = mergeTick(currentBarRef.current, tick.price, tick.volume, bucket);
@@ -620,7 +633,7 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
 
         seriesRef.current?.update(currentBarRef.current);
         seriesRef.current?.applyOptions({ priceLineColor: candleColor(currentBarRef.current) });
-        if (isVolumeSessionTime(currentBarRef.current.time)) {
+        if (isTradingSessionTime(currentBarRef.current.time, resolution)) {
           volumeSeriesRef.current?.update({
             time: currentBarRef.current.time,
             value: currentBarRef.current.volume,
@@ -631,9 +644,9 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
         }
         barsByTimeRef.current.set(bucketNumber, currentBarRef.current);
 
-        if (isVolumeSessionTime(currentBarRef.current.time)) {
+        if (isTradingSessionTime(currentBarRef.current.time, resolution)) {
           const allBars = [...barsByTimeRef.current.values()]
-            .filter((bar) => isVolumeSessionTime(bar.time))
+            .filter((bar) => isTradingSessionTime(bar.time, resolution))
             .sort((a, b) => Number(a.time) - Number(b.time));
           const settings = maSettingsRef.current;
           const latestVolumeSma = volumeMa(allBars, settings.length).at(-1);
@@ -661,7 +674,7 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
 
   useEffect(() => {
     const bars = [...barsByTimeRef.current.values()]
-      .filter((bar) => isVolumeSessionTime(bar.time))
+      .filter((bar) => isTradingSessionTime(bar.time, resolution))
       .sort((a, b) => Number(a.time) - Number(b.time));
     volumeSmaSeriesRef.current?.setData(volumeMa(bars, maLength));
   }, [maLength, maType, smoothingLength]);
@@ -732,7 +745,7 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
   const changePercent = previousClose ? (change / previousClose) * 100 : 0;
   const quoteClass = change >= 0 ? "quote--up" : "quote--down";
   const sortedBars = [...barsByTimeRef.current.values()]
-    .filter((bar) => isVolumeSessionTime(bar.time))
+    .filter((bar) => isTradingSessionTime(bar.time, resolution))
     .sort((a, b) => Number(a.time) - Number(b.time));
   const currentVolumeMa = volumeMa(sortedBars, maLength).at(-1)?.value;
 
