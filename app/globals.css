@@ -37,7 +37,7 @@ header {
   background: var(--panel);
 }
 
-.chart-header { min-height: 52px; padding: 7px 10px; gap: 12px; }
+.chart-header { position: relative; z-index: 30; min-height: 52px; padding: 7px 10px; gap: 12px; }
 
 .product-mark {
   display: grid;
@@ -82,7 +82,7 @@ header {
 .header-icon-button svg { width: 18px; height: 18px; fill: currentColor; }
 .header-separator { width: 1px; height: 22px; margin: 0 2px; background: var(--border); }
 
-.indicator-menu { position: relative; z-index: 21; }
+.indicator-menu { position: relative; z-index: 40; }
 .indicator-menu > summary { display: flex; list-style: none; align-items: center; gap: 7px; }
 .indicator-menu > summary::-webkit-details-marker { display: none; }
 .indicator-menu > summary span {
@@ -99,18 +99,32 @@ header {
   position: absolute;
   top: calc(100% + 6px);
   left: 0;
-  width: 220px;
-  padding: 8px;
+  width: min(420px, calc(100vw - 24px));
+  overflow: hidden;
   border: 1px solid #343c4d;
-  border-radius: 7px;
-  background: #1b202c;
-  box-shadow: 0 12px 32px rgba(0,0,0,.46);
+  border-radius: 8px;
+  background: #1d222e;
+  box-shadow: 0 18px 48px rgba(0,0,0,.55);
 }
-.indicator-menu__heading { padding: 5px 7px 8px; color: #818b9e; font-size: 11px; letter-spacing: .05em; text-transform: uppercase; }
-.indicator-menu__option { display: flex; height: 34px; align-items: center; gap: 9px; padding: 0 7px; border-radius: 5px; color: #d7dce6; cursor: pointer; font-size: 13px; }
-.indicator-menu__option:hover { background: #252d3d; }
-.indicator-menu__option input { accent-color: #2962ff; }
-.indicator-menu__option i { width: 14px; height: 3px; border-radius: 2px; }
+.indicator-menu__title { display: flex; height: 58px; align-items: center; justify-content: space-between; padding: 0 18px; border-bottom: 1px solid #343c4d; }
+.indicator-menu__title strong { color: #eef1f6; font-size: 18px; }
+.indicator-menu__title button { width: 34px; height: 34px; border: 0; color: #c8cfdb; background: transparent; cursor: pointer; font: 300 28px/1 var(--font-ui); }
+.indicator-menu__title button:hover { color: #fff; }
+.indicator-menu__search { display: flex; height: 50px; align-items: center; gap: 10px; padding: 0 18px; border-bottom: 1px solid #343c4d; }
+.indicator-menu__search svg { width: 20px; height: 20px; flex: 0 0 20px; fill: #8b92a5; }
+.indicator-menu__search input { width: 100%; border: 0; outline: 0; color: #e6e8ec; background: transparent; font: 14px var(--font-ui); }
+.indicator-menu__search input::placeholder { color: #747d90; }
+.indicator-menu__heading { padding: 18px 18px 8px; color: #8b92a5; font-size: 11px; letter-spacing: .05em; text-transform: uppercase; }
+.indicator-menu__list { max-height: min(390px, calc(100vh - 190px)); overflow-y: auto; padding: 0 8px 10px; }
+.indicator-menu__option { display: flex; min-height: 48px; align-items: center; gap: 11px; padding: 6px 10px; border-radius: 5px; color: #d7dce6; cursor: pointer; font-size: 13px; }
+.indicator-menu__option:hover, .indicator-menu__option--active { background: #282f3e; }
+.indicator-menu__option input { position: absolute; opacity: 0; pointer-events: none; }
+.indicator-menu__option i { width: 16px; height: 3px; flex: 0 0 16px; border-radius: 2px; }
+.indicator-menu__option span { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 3px; }
+.indicator-menu__option b { overflow: hidden; color: #e3e7ef; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.indicator-menu__option small { color: #8f98aa; font: 11px var(--font-num); }
+.indicator-menu__option--active::after { content: "✓"; color: #6e9cff; font-weight: 700; }
+.indicator-menu__empty { padding: 28px 12px; color: #8b92a5; text-align: center; font-size: 13px; }
 
 .engine-switch {
   display: inline-flex;

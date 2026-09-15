@@ -111,22 +111,88 @@ function calculateMa(points: MaPoint[], length: number, type: MaType): MaPoint[]
 
 function volumeMa(bars: Bar[], length: number, type: MaType, smoothingLength: number) {
   const volumePoints = bars.map((bar) => ({ time: bar.time, value: bar.volume }));
-  const average = calculateMa(volumePoints, length, type);
-  return smoothingLength > 1 ? calculateMa(average, smoothingLength, "SMA") : average;
+  const average = calculateMa(volumePoints, length, "SMA");
+  return smoothingLength > 1 ? calculateMa(average, smoothingLength, type) : average;
 }
 
+type StudyId = "volume" | "ma" | "ema" | "macd" | "rsi" | "boll";
+
+const STUDY_CATALOG: Array<{ id: StudyId; label: string; description: string; color: string }> = [
+  { id: "volume", label: "Khối lượng", description: "20 SMA 9", color: "#1f6fd1" },
+  { id: "ma", label: "Moving Average", description: "MA 20, 50", color: "#f7941d" },
+  { id: "ema", label: "Moving Average Exponential", description: "EMA 10, 50, 200", color: "#49bee3" },
+  { id: "macd", label: "MACD", description: "12, 26, 9", color: "#2962ff" },
+  { id: "rsi", label: "Relative Strength Index", description: "RSI 14", color: "#7e57c2" },
+  { id: "boll", label: "Bollinger Bands", description: "20, 2", color: "#ff6d00" },
+];
+
 const PRICE_INDICATORS = [
-  { id: "SMA", label: "SMA 20", length: 20, type: "SMA" as const, color: "#bb6bd9" },
-  { id: "MA5", label: "MA 5", length: 5, type: "SMA" as const, color: "#f2c94c" },
-  { id: "MA10", label: "MA 10", length: 10, type: "SMA" as const, color: "#56ccf2" },
-  { id: "EMA12", label: "EMA 12", length: 12, type: "EMA" as const, color: "#f2994a" },
-  { id: "EMA26", label: "EMA 26", length: 26, type: "EMA" as const, color: "#2d9cdb" },
+  { id: "MA20", study: "ma" as const, length: 20, type: "SMA" as const, color: "#f7941d" },
+  { id: "MA50", study: "ma" as const, length: 50, type: "SMA" as const, color: "#1dcf6f" },
+  { id: "EMA10", study: "ema" as const, length: 10, type: "EMA" as const, color: "#49bee3" },
+  { id: "EMA50", study: "ema" as const, length: 50, type: "EMA" as const, color: "#1dcf6f" },
+  { id: "EMA200", study: "ema" as const, length: 200, type: "EMA" as const, color: "#d452e9" },
 ];
 
 const INDICATOR_SETTINGS_KEY = "vndirect-chart:indicator-settings";
 
 function priceIndicatorData(bars: Bar[], length: number, type: MaType) {
   return calculateMa(bars.map((bar) => ({ time: bar.time, value: bar.close })), length, type);
+}
+
+function bollingerData(bars: Bar[], band: "upper" | "middle" | "lower", length = 20, multiplier = 2): MaPoint[] {
+  if (bars.length < length) return [];
+  return bars.slice(length - 1).map((bar, outputIndex) => {
+    const window = bars.slice(outputIndex, outputIndex + length);
+    const mean = window.reduce((sum, item) => sum + item.close, 0) / length;
+    const deviation = Math.sqrt(window.reduce((sum, item) => sum + (item.close - mean) ** 2, 0) / length);
+    const value = band === "upper" ? mean + multiplier * deviation : band === "lower" ? mean - multiplier * deviation : mean;
+    return { time: bar.time, value };
+  });
+}
+
+function macdData(bars: Bar[]) {
+  const close = bars.map((bar) => ({ time: bar.time, value: bar.close }));
+  const fastByTime = new Map(calculateMa(close, 12, "EMA").map((point) => [Number(point.time), point.value]));
+  const macd = calculateMa(close, 26, "EMA").flatMap((point) => {
+    const fast = fastByTime.get(Number(point.time));
+    return fast === undefined ? [] : [{ time: point.time, value: fast - point.value }];
+  });
+  const signal = calculateMa(macd, 9, "EMA");
+  const signalByTime = new Map(signal.map((point) => [Number(point.time), point.value]));
+  const histogram = macd.flatMap((point) => {
+    const signalValue = signalByTime.get(Number(point.time));
+    if (signalValue === undefined) return [];
+    const value = point.value - signalValue;
+    return [{ time: point.time, value, color: value >= 0 ? "rgba(83,185,135,.65)" : "rgba(235,77,92,.65)" }];
+  });
+  return { macd, signal, histogram };
+}
+
+function rsiData(bars: Bar[], length = 14): MaPoint[] {
+  if (bars.length <= length) return [];
+  let averageGain = 0;
+  let averageLoss = 0;
+  for (let index = 1; index <= length; index++) {
+    const change = bars[index].close - bars[index - 1].close;
+    averageGain += Math.max(change, 0);
+    averageLoss += Math.max(-change, 0);
+  }
+  averageGain /= length;
+  averageLoss /= length;
+  const values: MaPoint[] = [];
+  const append = (index: number) => {
+    const value = averageLoss === 0 ? 100 : 100 - 100 / (1 + averageGain / averageLoss);
+    values.push({ time: bars[index].time, value });
+  };
+  append(length);
+  for (let index = length + 1; index < bars.length; index++) {
+    const change = bars[index].close - bars[index - 1].close;
+    averageGain = (averageGain * (length - 1) + Math.max(change, 0)) / length;
+    averageLoss = (averageLoss * (length - 1) + Math.max(-change, 0)) / length;
+    append(index);
+  }
+  return values;
 }
 
 function candleColor(bar: Bar) {
@@ -208,6 +274,16 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const volumeSmaSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const priceIndicatorSeriesRef = useRef(new Map<string, ISeriesApi<"Line">>());
+  const macdSeriesRef = useRef<{
+    histogram: ISeriesApi<"Histogram">;
+    macd: ISeriesApi<"Line">;
+    signal: ISeriesApi<"Line">;
+  } | null>(null);
+  const rsiSeriesRef = useRef<{
+    rsi: ISeriesApi<"Line">;
+    upper: ISeriesApi<"Line">;
+    lower: ISeriesApi<"Line">;
+  } | null>(null);
   const timelineSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const lineToolsRef = useRef<ILineToolsPlugin | null>(null);
   const currentBarRef = useRef<Bar | undefined>(undefined);
@@ -238,8 +314,10 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
   const [rangeDays, setRangeDays] = useState<number | undefined>(undefined);
   const [scaleMode, setScaleMode] = useState<"normal" | "percent" | "log">("normal");
   const [autoScale, setAutoScale] = useState(true);
-  const [activePriceIndicators, setActivePriceIndicators] = useState<string[]>(["SMA"]);
+  const [activeStudies, setActiveStudies] = useState<StudyId[]>(["volume"]);
   const [indicatorSettingsLoaded, setIndicatorSettingsLoaded] = useState(false);
+  const [indicatorMenuOpen, setIndicatorMenuOpen] = useState(false);
+  const [indicatorSearch, setIndicatorSearch] = useState("");
   const [isFullscreen, setIsFullscreen] = useState(false);
   // Giữ thiết lập MA để dùng cho chỉ báo sau này
   const [maLength, setMaLength] = useState(20);
@@ -248,6 +326,30 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
   resolutionRef.current = resolution;
   maSettingsRef.current = { length: maLength, type: maType, smoothingLength };
   const [lastPrice, setLastPrice] = useState<string>("N/A");
+
+  const updateStudySeries = (bars: Bar[]) => {
+    PRICE_INDICATORS.forEach((indicator) => {
+      priceIndicatorSeriesRef.current.get(indicator.id)?.setData(
+        priceIndicatorData(bars, indicator.length, indicator.type)
+      );
+    });
+    priceIndicatorSeriesRef.current.get("BOLL_UPPER")?.setData(bollingerData(bars, "upper"));
+    priceIndicatorSeriesRef.current.get("BOLL_MIDDLE")?.setData(bollingerData(bars, "middle"));
+    priceIndicatorSeriesRef.current.get("BOLL_LOWER")?.setData(bollingerData(bars, "lower"));
+
+    if (macdSeriesRef.current) {
+      const values = macdData(bars);
+      macdSeriesRef.current.histogram.setData(values.histogram);
+      macdSeriesRef.current.macd.setData(values.macd);
+      macdSeriesRef.current.signal.setData(values.signal);
+    }
+    if (rsiSeriesRef.current) {
+      const values = rsiData(bars);
+      rsiSeriesRef.current.rsi.setData(values);
+      rsiSeriesRef.current.upper.setData(values.map((point) => ({ time: point.time, value: 70 })));
+      rsiSeriesRef.current.lower.setData(values.map((point) => ({ time: point.time, value: 30 })));
+    }
+  };
 
   // Tạo biểu đồ một lần khi gắn component
   useEffect(() => {
@@ -508,6 +610,8 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
       volumeSeriesRef.current = null;
       volumeSmaSeriesRef.current = null;
       priceIndicatorSeriesRef.current.clear();
+      macdSeriesRef.current = null;
+      rsiSeriesRef.current = null;
       timelineSeriesRef.current = null;
     };
   }, []);
@@ -538,11 +642,7 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
       })));
       const settings = maSettingsRef.current;
       volumeSmaSeriesRef.current?.setData(volumeMa(volumeBars, settings.length, settings.type, settings.smoothingLength));
-      PRICE_INDICATORS.forEach((indicator) => {
-        priceIndicatorSeriesRef.current.get(indicator.id)?.setData(
-          priceIndicatorData(chartBars, indicator.length, indicator.type)
-        );
-      });
+      updateStudySeries(chartBars);
       if (chartBars.length) timelineSeriesRef.current?.setData(futureTimelinePoints(Number(chartBars[chartBars.length - 1].time), resolution));
       barsByTimeRef.current = new Map(chartBars.map((bar) => [Number(bar.time), bar]));
       previousCloseByTimeRef.current = new Map(chartBars.slice(1).map((bar, index) => [Number(bar.time), chartBars[index].close]));
@@ -681,10 +781,7 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
           const settings = maSettingsRef.current;
           const latestVolumeSma = volumeMa(allBars, settings.length, settings.type, settings.smoothingLength).at(-1);
           if (latestVolumeSma) volumeSmaSeriesRef.current?.update(latestVolumeSma);
-          PRICE_INDICATORS.forEach((indicator) => {
-            const latest = priceIndicatorData(allBars, indicator.length, indicator.type).at(-1);
-            if (latest) priceIndicatorSeriesRef.current.get(indicator.id)?.update(latest);
-          });
+          updateStudySeries(allBars);
         }
 
         if (isNewBucket) reconcileCurrentBar(bucketNumber);
@@ -716,10 +813,10 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
   useEffect(() => {
     const chart = chartRef.current;
     if (!chart) return;
-    const active = new Set(activePriceIndicators);
+    const active = new Set(activeStudies);
     PRICE_INDICATORS.forEach((indicator) => {
       let series = priceIndicatorSeriesRef.current.get(indicator.id);
-      if (active.has(indicator.id) && !series) {
+      if (active.has(indicator.study) && !series) {
         series = chart.addSeries(LineSeries, {
           color: indicator.color,
           lineWidth: 2,
@@ -729,19 +826,75 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
           crosshairMarkerVisible: false,
         });
         priceIndicatorSeriesRef.current.set(indicator.id, series);
-      } else if (!active.has(indicator.id) && series) {
+      } else if (!active.has(indicator.study) && series) {
         chart.removeSeries(series);
         priceIndicatorSeriesRef.current.delete(indicator.id);
         series = undefined;
       }
-      if (series) {
-        const bars = [...barsByTimeRef.current.values()]
-          .filter((bar) => isTradingSessionTime(bar.time, resolution))
-          .sort((a, b) => Number(a.time) - Number(b.time));
-        series.setData(priceIndicatorData(bars, indicator.length, indicator.type));
+    });
+
+    const bollingerLines = [
+      { id: "BOLL_UPPER", color: "#2962ff" },
+      { id: "BOLL_MIDDLE", color: "#ff6d00" },
+      { id: "BOLL_LOWER", color: "#2962ff" },
+    ];
+    bollingerLines.forEach((indicator) => {
+      let series = priceIndicatorSeriesRef.current.get(indicator.id);
+      if (active.has("boll") && !series) {
+        series = chart.addSeries(LineSeries, {
+          color: indicator.color,
+          lineWidth: 2,
+          priceScaleId: "left",
+          lastValueVisible: false,
+          priceLineVisible: false,
+          crosshairMarkerVisible: false,
+        });
+        priceIndicatorSeriesRef.current.set(indicator.id, series);
+      } else if (!active.has("boll") && series) {
+        chart.removeSeries(series);
+        priceIndicatorSeriesRef.current.delete(indicator.id);
       }
     });
-  }, [activePriceIndicators, resolution]);
+
+    if (macdSeriesRef.current) {
+      chart.removeSeries(macdSeriesRef.current.histogram);
+      chart.removeSeries(macdSeriesRef.current.macd);
+      chart.removeSeries(macdSeriesRef.current.signal);
+      macdSeriesRef.current = null;
+    }
+    if (rsiSeriesRef.current) {
+      chart.removeSeries(rsiSeriesRef.current.rsi);
+      chart.removeSeries(rsiSeriesRef.current.upper);
+      chart.removeSeries(rsiSeriesRef.current.lower);
+      rsiSeriesRef.current = null;
+    }
+    while (chart.panes().length > 1) chart.removePane(chart.panes().length - 1);
+
+    let paneIndex = 1;
+    if (active.has("macd")) {
+      const histogram = chart.addSeries(HistogramSeries, { priceLineVisible: false, lastValueVisible: false }, paneIndex);
+      const macd = chart.addSeries(LineSeries, { color: "#2962ff", lineWidth: 2, priceLineVisible: false, lastValueVisible: false }, paneIndex);
+      const signal = chart.addSeries(LineSeries, { color: "#ff6d00", lineWidth: 2, priceLineVisible: false, lastValueVisible: false }, paneIndex);
+      macdSeriesRef.current = { histogram, macd, signal };
+      chart.panes()[paneIndex]?.setHeight(140);
+      paneIndex++;
+    }
+    if (active.has("rsi")) {
+      const rsi = chart.addSeries(LineSeries, { color: "#7e57c2", lineWidth: 2, priceLineVisible: false, lastValueVisible: false }, paneIndex);
+      const upper = chart.addSeries(LineSeries, { color: "#596273", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false }, paneIndex);
+      const lower = chart.addSeries(LineSeries, { color: "#596273", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false }, paneIndex);
+      rsiSeriesRef.current = { rsi, upper, lower };
+      chart.panes()[paneIndex]?.setHeight(140);
+    }
+
+    const volumeVisible = active.has("volume");
+    volumeSeriesRef.current?.applyOptions({ visible: volumeVisible });
+    volumeSmaSeriesRef.current?.applyOptions({ visible: volumeVisible });
+    const bars = [...barsByTimeRef.current.values()]
+      .filter((bar) => isTradingSessionTime(bar.time, resolution))
+      .sort((a, b) => Number(a.time) - Number(b.time));
+    updateStudySeries(bars);
+  }, [activeStudies, resolution]);
 
   useEffect(() => {
     const onFullscreenChange = () => setIsFullscreen(document.fullscreenElement !== null);
@@ -752,23 +905,23 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
   useEffect(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(INDICATOR_SETTINGS_KEY) ?? "null") as {
-        activePriceIndicators?: unknown;
+        activeStudies?: unknown;
         maLength?: unknown;
         maType?: unknown;
         smoothingLength?: unknown;
       } | null;
       if (saved) {
-        const validIds = new Set(PRICE_INDICATORS.map((indicator) => indicator.id));
-        if (Array.isArray(saved.activePriceIndicators)) {
-          const active = saved.activePriceIndicators.filter((id): id is string => typeof id === "string" && validIds.has(id));
-          setActivePriceIndicators(active);
+        const validIds = new Set(STUDY_CATALOG.map((indicator) => indicator.id));
+        if (Array.isArray(saved.activeStudies)) {
+          const active = saved.activeStudies.filter((id): id is StudyId => typeof id === "string" && validIds.has(id as StudyId));
+          setActiveStudies(active);
         }
         if (typeof saved.maLength === "number") setMaLength(Math.max(2, Math.min(500, saved.maLength)));
         if (saved.maType === "SMA" || saved.maType === "EMA" || saved.maType === "WMA") setMaType(saved.maType);
         if (typeof saved.smoothingLength === "number") setSmoothingLength(Math.max(1, Math.min(500, saved.smoothingLength)));
       }
     } catch {
-      // Keep defaults when storage is unavailable or contains malformed data.
+      // Giữ cấu hình mặc định khi dữ liệu lưu trữ không hợp lệ.
     } finally {
       setIndicatorSettingsLoaded(true);
     }
@@ -777,12 +930,12 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
   useEffect(() => {
     if (!indicatorSettingsLoaded) return;
     localStorage.setItem(INDICATOR_SETTINGS_KEY, JSON.stringify({
-      activePriceIndicators,
+      activeStudies,
       maLength,
       maType,
       smoothingLength,
     }));
-  }, [activePriceIndicators, indicatorSettingsLoaded, maLength, maType, smoothingLength]);
+  }, [activeStudies, indicatorSettingsLoaded, maLength, maType, smoothingLength]);
 
   useEffect(() => {
     chartRef.current?.priceScale("left").applyOptions({
@@ -858,11 +1011,16 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
     setRangeDays(preset.days);
   };
 
-  const togglePriceIndicator = (id: string) => {
-    setActivePriceIndicators((current) => current.includes(id)
+  const toggleStudy = (id: StudyId) => {
+    setActiveStudies((current) => current.includes(id)
       ? current.filter((item) => item !== id)
       : [...current, id]);
   };
+
+  const normalizedIndicatorSearch = indicatorSearch.trim().toLocaleLowerCase("vi");
+  const filteredStudies = STUDY_CATALOG.filter((study) =>
+    `${study.label} ${study.description}`.toLocaleLowerCase("vi").includes(normalizedIndicatorSearch)
+  );
 
   const downloadSnapshot = () => {
     const canvas = chartRef.current?.takeScreenshot();
@@ -910,17 +1068,28 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
               ))}
             </div>
           </details>
-          <details className="indicator-menu">
-            <summary className="header-button">Indicators <span>{activePriceIndicators.length}</span></summary>
+          <details className="indicator-menu" open={indicatorMenuOpen} onToggle={(event) => setIndicatorMenuOpen(event.currentTarget.open)}>
+            <summary className="header-button">Chỉ báo <span>{activeStudies.length}</span></summary>
             <div className="indicator-menu__panel">
-              <div className="indicator-menu__heading">Moving averages</div>
-              {PRICE_INDICATORS.map((indicator) => (
-                <label key={indicator.id} className="indicator-menu__option">
-                  <input type="checkbox" checked={activePriceIndicators.includes(indicator.id)} onChange={() => togglePriceIndicator(indicator.id)} />
-                  <i style={{ background: indicator.color }} />
-                  <span>{indicator.label}</span>
-                </label>
-              ))}
+              <div className="indicator-menu__title">
+                <strong>Các chỉ báo</strong>
+                <button type="button" aria-label="Đóng danh sách chỉ báo" onClick={() => setIndicatorMenuOpen(false)}>×</button>
+              </div>
+              <label className="indicator-menu__search">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m20.6 19.2-4.3-4.3a7.5 7.5 0 1 0-1.4 1.4l4.3 4.3 1.4-1.4ZM5 10.5a5.5 5.5 0 1 1 11 0 5.5 5.5 0 0 1-11 0Z" /></svg>
+                <input value={indicatorSearch} onChange={(event) => setIndicatorSearch(event.target.value)} placeholder="Tìm kiếm" autoFocus />
+              </label>
+              <div className="indicator-menu__heading">Tên chỉ báo</div>
+              <div className="indicator-menu__list">
+                {filteredStudies.map((study) => (
+                  <label key={study.id} className={activeStudies.includes(study.id) ? "indicator-menu__option indicator-menu__option--active" : "indicator-menu__option"}>
+                    <input type="checkbox" checked={activeStudies.includes(study.id)} onChange={() => toggleStudy(study.id)} />
+                    <i style={{ background: study.color }} />
+                    <span><b>{study.label}</b><small>{study.id === "volume" ? `${maLength} ${maType} ${smoothingLength}` : study.description}</small></span>
+                  </label>
+                ))}
+                {filteredStudies.length === 0 && <div className="indicator-menu__empty">Không tìm thấy chỉ báo</div>}
+              </div>
             </div>
           </details>
           <div className="engine-switch" role="group" aria-label="Chart engine">
@@ -992,7 +1161,7 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
               {previousClose !== undefined && <span className={quoteClass}>{change >= 0 ? "+" : ""}{change.toFixed(2)} ({changePercent.toFixed(2)}%)</span>}
               <span className="ohlcv-strip__volume">Vol <b>{quoteBar ? formatVolume(quoteBar.volume) : "N/A"}</b></span>
             </div>
-            <label className="ma-control" title="Volume MA settings">
+            {activeStudies.includes("volume") && <label className="ma-control" title="Volume MA settings">
               MA
               <input type="number" min="2" max="500" value={maLength} aria-label="MA length" onChange={(event) => setMaLength(Math.max(2, Math.min(500, Number(event.target.value) || 2)))} />
               <select value={maType} onChange={(event) => setMaType(event.target.value as MaType)} aria-label="MA type">
@@ -1001,14 +1170,14 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
                 <option value="WMA">WMA</option>
               </select>
               <input type="number" min="1" max="500" value={smoothingLength} aria-label="Smoothing length" onChange={(event) => setSmoothingLength(Math.max(1, Math.min(500, Number(event.target.value) || 1)))} />
-            </label>
+            </label>}
           </div>
-          <div className="indicator-data-row">
+          {activeStudies.includes("volume") && <div className="indicator-data-row">
             <span className="indicator-data__name">Khối lượng {maLength} {maType} {smoothingLength}</span>
             <span className="indicator-data__volume">{quoteBar ? formatVolume(quoteBar.volume) : "N/A"}</span>
             <span className="indicator-data__ma">{currentVolumeMa !== undefined ? formatVolume(currentVolumeMa) : "N/A"}</span>
             <span className="indicator-data__actions" title="Volume indicator controls">◉ ⚙ × ···</span>
-          </div>
+          </div>}
           <main id="chart" ref={containerRef} />
           <footer className="chart-footer">
             <div className="range-presets" aria-label="History range">
