@@ -109,9 +109,22 @@ function calculateMa(points: MaPoint[], length: number, type: MaType): MaPoint[]
   return values;
 }
 
-function volumeMa(bars: Bar[], length: number) {
+function volumeMa(bars: Bar[], length: number, type: MaType, smoothingLength: number) {
   const volumePoints = bars.map((bar) => ({ time: bar.time, value: bar.volume }));
-  return calculateMa(volumePoints, length, "SMA");
+  const average = calculateMa(volumePoints, length, type);
+  return smoothingLength > 1 ? calculateMa(average, smoothingLength, "SMA") : average;
+}
+
+const PRICE_INDICATORS = [
+  { id: "MA5", label: "MA 5", length: 5, type: "SMA" as const, color: "#f2c94c" },
+  { id: "MA10", label: "MA 10", length: 10, type: "SMA" as const, color: "#56ccf2" },
+  { id: "MA20", label: "MA 20", length: 20, type: "SMA" as const, color: "#bb6bd9" },
+  { id: "EMA12", label: "EMA 12", length: 12, type: "EMA" as const, color: "#f2994a" },
+  { id: "EMA26", label: "EMA 26", length: 26, type: "EMA" as const, color: "#2d9cdb" },
+];
+
+function priceIndicatorData(bars: Bar[], length: number, type: MaType) {
+  return calculateMa(bars.map((bar) => ({ time: bar.time, value: bar.close })), length, type);
 }
 
 function candleColor(bar: Bar) {
@@ -187,6 +200,7 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const volumeSmaSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const priceIndicatorSeriesRef = useRef(new Map<string, ISeriesApi<"Line">>());
   const timelineSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const lineToolsRef = useRef<ILineToolsPlugin | null>(null);
   const currentBarRef = useRef<Bar | undefined>(undefined);
@@ -217,6 +231,8 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
   const [rangeDays, setRangeDays] = useState<number | undefined>(undefined);
   const [scaleMode, setScaleMode] = useState<"normal" | "percent" | "log">("normal");
   const [autoScale, setAutoScale] = useState(true);
+  const [activePriceIndicators, setActivePriceIndicators] = useState<string[]>(["MA20"]);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   // Giữ thiết lập MA để dùng cho chỉ báo sau này
   const [maLength, setMaLength] = useState(20);
   const [maType, setMaType] = useState<MaType>("SMA");
@@ -483,6 +499,7 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
       seriesRef.current = null;
       volumeSeriesRef.current = null;
       volumeSmaSeriesRef.current = null;
+      priceIndicatorSeriesRef.current.clear();
       timelineSeriesRef.current = null;
     };
   }, []);
@@ -512,7 +529,12 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
         color: bar.close >= bar.open ? "rgba(99, 200, 155, 0.55)" : "rgba(223, 95, 104, 0.55)",
       })));
       const settings = maSettingsRef.current;
-      volumeSmaSeriesRef.current?.setData(volumeMa(volumeBars, settings.length));
+      volumeSmaSeriesRef.current?.setData(volumeMa(volumeBars, settings.length, settings.type, settings.smoothingLength));
+      PRICE_INDICATORS.forEach((indicator) => {
+        priceIndicatorSeriesRef.current.get(indicator.id)?.setData(
+          priceIndicatorData(chartBars, indicator.length, indicator.type)
+        );
+      });
       if (chartBars.length) timelineSeriesRef.current?.setData(futureTimelinePoints(Number(chartBars[chartBars.length - 1].time), resolution));
       barsByTimeRef.current = new Map(chartBars.map((bar) => [Number(bar.time), bar]));
       previousCloseByTimeRef.current = new Map(chartBars.slice(1).map((bar, index) => [Number(bar.time), chartBars[index].close]));
@@ -558,7 +580,7 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
         .sort((a, b) => Number(a.time) - Number(b.time));
       const settings = maSettingsRef.current;
       volumeSmaSeriesRef.current?.setData(
-        volumeMa(allBars, settings.length)
+        volumeMa(allBars, settings.length, settings.type, settings.smoothingLength)
       );
     };
 
@@ -649,8 +671,12 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
             .filter((bar) => isTradingSessionTime(bar.time, resolution))
             .sort((a, b) => Number(a.time) - Number(b.time));
           const settings = maSettingsRef.current;
-          const latestVolumeSma = volumeMa(allBars, settings.length).at(-1);
+          const latestVolumeSma = volumeMa(allBars, settings.length, settings.type, settings.smoothingLength).at(-1);
           if (latestVolumeSma) volumeSmaSeriesRef.current?.update(latestVolumeSma);
+          PRICE_INDICATORS.forEach((indicator) => {
+            const latest = priceIndicatorData(allBars, indicator.length, indicator.type).at(-1);
+            if (latest) priceIndicatorSeriesRef.current.get(indicator.id)?.update(latest);
+          });
         }
 
         if (isNewBucket) reconcileCurrentBar(bucketNumber);
@@ -676,8 +702,44 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
     const bars = [...barsByTimeRef.current.values()]
       .filter((bar) => isTradingSessionTime(bar.time, resolution))
       .sort((a, b) => Number(a.time) - Number(b.time));
-    volumeSmaSeriesRef.current?.setData(volumeMa(bars, maLength));
+    volumeSmaSeriesRef.current?.setData(volumeMa(bars, maLength, maType, smoothingLength));
   }, [maLength, maType, smoothingLength]);
+
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    const active = new Set(activePriceIndicators);
+    PRICE_INDICATORS.forEach((indicator) => {
+      let series = priceIndicatorSeriesRef.current.get(indicator.id);
+      if (active.has(indicator.id) && !series) {
+        series = chart.addSeries(LineSeries, {
+          color: indicator.color,
+          lineWidth: 2,
+          priceScaleId: "left",
+          lastValueVisible: false,
+          priceLineVisible: false,
+          crosshairMarkerVisible: false,
+        });
+        priceIndicatorSeriesRef.current.set(indicator.id, series);
+      } else if (!active.has(indicator.id) && series) {
+        chart.removeSeries(series);
+        priceIndicatorSeriesRef.current.delete(indicator.id);
+        series = undefined;
+      }
+      if (series) {
+        const bars = [...barsByTimeRef.current.values()]
+          .filter((bar) => isTradingSessionTime(bar.time, resolution))
+          .sort((a, b) => Number(a.time) - Number(b.time));
+        series.setData(priceIndicatorData(bars, indicator.length, indicator.type));
+      }
+    });
+  }, [activePriceIndicators, resolution]);
+
+  useEffect(() => {
+    const onFullscreenChange = () => setIsFullscreen(document.fullscreenElement !== null);
+    document.addEventListener("fullscreenchange", onFullscreenChange);
+    return () => document.removeEventListener("fullscreenchange", onFullscreenChange);
+  }, []);
 
   useEffect(() => {
     chartRef.current?.priceScale("left").applyOptions({
@@ -747,16 +809,37 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
   const sortedBars = [...barsByTimeRef.current.values()]
     .filter((bar) => isTradingSessionTime(bar.time, resolution))
     .sort((a, b) => Number(a.time) - Number(b.time));
-  const currentVolumeMa = volumeMa(sortedBars, maLength).at(-1)?.value;
+  const currentVolumeMa = volumeMa(sortedBars, maLength, maType, smoothingLength).at(-1)?.value;
 
   const applyRangePreset = (preset: (typeof RANGE_PRESETS)[number]) => {
     setRangeDays(preset.days);
   };
 
+  const togglePriceIndicator = (id: string) => {
+    setActivePriceIndicators((current) => current.includes(id)
+      ? current.filter((item) => item !== id)
+      : [...current, id]);
+  };
+
+  const downloadSnapshot = () => {
+    const canvas = chartRef.current?.takeScreenshot();
+    if (!canvas) return;
+    const link = document.createElement("a");
+    link.download = `${symbol}-${resolution}-${new Date().toISOString().slice(0, 10)}.png`;
+    link.href = canvas.toDataURL("image/png");
+    link.click();
+  };
+
+  const toggleFullscreen = async () => {
+    if (document.fullscreenElement) await document.exitFullscreen();
+    else await document.getElementById("app")?.requestFullscreen();
+  };
+
   return (
     <div id="app">
-      <header>
+      <header className="chart-header">
         <div className="symbol-row">
+          <div className="product-mark" title="VNDIRECT chart workspace" aria-label="VNDIRECT chart workspace">D</div>
           <select value={symbol} onChange={(e) => setSymbol(e.target.value)}>
             {SYMBOLS.map((s) => (
               <option key={s} value={s}>
@@ -784,6 +867,19 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
               ))}
             </div>
           </details>
+          <details className="indicator-menu">
+            <summary className="header-button">Indicators <span>{activePriceIndicators.length}</span></summary>
+            <div className="indicator-menu__panel">
+              <div className="indicator-menu__heading">Moving averages</div>
+              {PRICE_INDICATORS.map((indicator) => (
+                <label key={indicator.id} className="indicator-menu__option">
+                  <input type="checkbox" checked={activePriceIndicators.includes(indicator.id)} onChange={() => togglePriceIndicator(indicator.id)} />
+                  <i style={{ background: indicator.color }} />
+                  <span>{indicator.label}</span>
+                </label>
+              ))}
+            </div>
+          </details>
           <div className="engine-switch" role="group" aria-label="Chart engine">
             <button className="engine-switch--active">Lightweight</button>
             <button onClick={onSelectKLine}>KLineChart</button>
@@ -791,8 +887,15 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
         </div>
         <div className="status-row">
           <span className={"dot " + (status === "connected" ? "dot--on" : "dot--off")} />
-          <span>{status}</span>
+          <span className="connection-label">{status}</span>
           <span id="last-price">{lastPrice}</span>
+          <span className="header-separator" />
+          <button className="header-icon-button" title="Download chart snapshot" aria-label="Download chart snapshot" onClick={downloadSnapshot}>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 5 10 3h4l1.5 2H19a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h3.5ZM12 8a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9Zm0 2a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5Z" /></svg>
+          </button>
+          <button className={isFullscreen ? "header-icon-button header-button--active" : "header-icon-button"} title="Toggle fullscreen" aria-label="Toggle fullscreen" onClick={toggleFullscreen}>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6v2H6v4H4V4Zm10 0h6v6h-2V6h-4V4ZM4 14h2v4h4v2H4v-6Zm14 0h2v6h-6v-2h4v-4Z" /></svg>
+          </button>
         </div>
       </header>
       <div className="chart-shell">
