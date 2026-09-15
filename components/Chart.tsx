@@ -109,10 +109,10 @@ function calculateMa(points: MaPoint[], length: number, type: MaType): MaPoint[]
   return values;
 }
 
-function volumeMa(bars: Bar[], length: number, type: MaType, smoothingLength: number) {
+function volumeMa(bars: Bar[], length: number) {
   const volumePoints = bars.map((bar) => ({ time: bar.time, value: bar.volume }));
-  const average = calculateMa(volumePoints, length, "SMA");
-  return smoothingLength > 1 ? calculateMa(average, smoothingLength, type) : average;
+  // VNDirect hiển thị Volume MA gốc, đường làm mượt mặc định bị ẩn.
+  return calculateMa(volumePoints, length, "SMA");
 }
 
 type StudyId = "volume" | "ma" | "ema" | "macd" | "rsi" | "boll";
@@ -372,7 +372,7 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
       leftPriceScale: {
         visible: true,
         borderColor: "#262b38",
-        scaleMargins: { top: 0.08, bottom: 0.10 },
+        scaleMargins: { top: 0.05, bottom: 0.05 },
       },
       rightPriceScale: { visible: false, borderColor: "#262b38" },
       timeScale: {
@@ -641,7 +641,7 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
         color: volumeColor(bar, index > 0 ? volumeBars[index - 1].close : undefined),
       })));
       const settings = maSettingsRef.current;
-      volumeSmaSeriesRef.current?.setData(volumeMa(volumeBars, settings.length, settings.type, settings.smoothingLength));
+      volumeSmaSeriesRef.current?.setData(volumeMa(volumeBars, settings.length));
       updateStudySeries(chartBars);
       if (chartBars.length) timelineSeriesRef.current?.setData(futureTimelinePoints(Number(chartBars[chartBars.length - 1].time), resolution));
       barsByTimeRef.current = new Map(chartBars.map((bar) => [Number(bar.time), bar]));
@@ -688,7 +688,7 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
         .sort((a, b) => Number(a.time) - Number(b.time));
       const settings = maSettingsRef.current;
       volumeSmaSeriesRef.current?.setData(
-        volumeMa(allBars, settings.length, settings.type, settings.smoothingLength)
+        volumeMa(allBars, settings.length)
       );
     };
 
@@ -779,7 +779,7 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
             .filter((bar) => isTradingSessionTime(bar.time, resolution))
             .sort((a, b) => Number(a.time) - Number(b.time));
           const settings = maSettingsRef.current;
-          const latestVolumeSma = volumeMa(allBars, settings.length, settings.type, settings.smoothingLength).at(-1);
+          const latestVolumeSma = volumeMa(allBars, settings.length).at(-1);
           if (latestVolumeSma) volumeSmaSeriesRef.current?.update(latestVolumeSma);
           updateStudySeries(allBars);
         }
@@ -807,8 +807,8 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
     const bars = [...barsByTimeRef.current.values()]
       .filter((bar) => isTradingSessionTime(bar.time, resolution))
       .sort((a, b) => Number(a.time) - Number(b.time));
-    volumeSmaSeriesRef.current?.setData(volumeMa(bars, maLength, maType, smoothingLength));
-  }, [maLength, maType, smoothingLength]);
+    volumeSmaSeriesRef.current?.setData(volumeMa(bars, maLength));
+  }, [maLength]);
 
   useEffect(() => {
     const chart = chartRef.current;
@@ -1005,7 +1005,7 @@ export default function Chart({ onSelectKLine }: { onSelectKLine: () => void }) 
   const sortedBars = [...barsByTimeRef.current.values()]
     .filter((bar) => isTradingSessionTime(bar.time, resolution))
     .sort((a, b) => Number(a.time) - Number(b.time));
-  const currentVolumeMa = volumeMa(sortedBars, maLength, maType, smoothingLength).at(-1)?.value;
+  const currentVolumeMa = volumeMa(sortedBars, maLength).at(-1)?.value;
 
   const applyRangePreset = (preset: (typeof RANGE_PRESETS)[number]) => {
     setRangeDays(preset.days);
