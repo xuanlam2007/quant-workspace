@@ -9,8 +9,6 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "@klinecharts/extension": "^0.1.0",
-    "klinecharts": "^10.0.3",
     "lightweight-charts": "^5.2.1",
     "lightweight-charts-line-tools-core": "github:difurious/lightweight-charts-line-tools-core",
     "lightweight-charts-line-tools-fib-retracement": "github:difurious/lightweight-charts-line-tools-fib-retracement",
