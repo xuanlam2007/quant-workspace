@@ -14,7 +14,7 @@ const RESOLUTION_SECONDS: Record<string, number> = {
 
 export function bucketStart(epochMs: number, resolution: string): UTCTimestamp {
   const secs = RESOLUTION_SECONDS[resolution] ?? 60;
-  const t = Math.floor(epochMs / 1000);
+  const t = Math.floor(epochMs >= 1e12 ? epochMs / 1000 : epochMs);
   return (Math.floor(t / secs) * secs) as UTCTimestamp;
 }
 
@@ -26,12 +26,12 @@ export function mergeTick(
   bucket: UTCTimestamp
 ): Bar {
   if (!current || current.time !== bucket) {
-    // Dùng giá đầu tiên vì VN30 có thể tạo khoảng trống giữa các nến
+    const open = current?.close ?? price;
     return {
       time: bucket,
-      open: price,
-      high: price,
-      low: price,
+      open,
+      high: Math.max(open, price),
+      low: Math.min(open, price),
       close: price,
       volume,
     };
