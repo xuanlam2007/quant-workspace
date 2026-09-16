@@ -8,9 +8,9 @@ export function candleColor(bar: Bar) {
   return bar.close > bar.open ? "#53B987" : "#EB4D5C";
 }
 
-export function volumeColor(bar: Bar, previousClose?: number) {
-  const isGrowing = previousClose === undefined ? bar.close >= bar.open : bar.close >= previousClose;
-  return isGrowing ? "rgba(99, 200, 155, 0.55)" : "rgba(223, 95, 104, 0.55)";
+export function volumeColor(bar: Bar) {
+  const isGrowing = bar.close >= bar.open;
+  return isGrowing ? "rgba(83, 185, 135, 0.4)" : "rgba(235, 77, 92, 0.4)";
 }
 
 export function isTradingSessionTime(time: Bar["time"], resolution: string) {
