@@ -177,6 +177,7 @@ export default function Chart() {
       layout: {
         background: { type: ColorType.Solid, color: "#131722" },
         textColor: "#8b92a5",
+        attributionLogo: false,
       },
       localization: {
         timeFormatter: formatChartTime,
