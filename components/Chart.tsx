@@ -88,6 +88,16 @@ export default function Chart() {
   const maSettingsRef = useRef<{ length: number; type: MaType; smoothingLength: number }>({ length: 20, type: "SMA", smoothingLength: 9 });
   const drawingGestureRef = useRef(false);
   const autoScaleRef = useRef(true);
+  const panFrameRef = useRef<number | undefined>(undefined);
+  const panGestureRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    currentX: number;
+    currentY: number;
+    priceRange: { from: number; to: number };
+    logicalRange: { from: number; to: number };
+  } | null>(null);
 
   const [symbol, setSymbol] = useState(SYMBOLS[0]);
   const [resolution, setResolution] = useState("D");
@@ -185,7 +195,7 @@ export default function Chart() {
       },
       handleScroll: {
         mouseWheel: true,
-        pressedMouseMove: true,
+        pressedMouseMove: false,
         horzTouchDrag: true,
         vertTouchDrag: true,
       },
@@ -273,6 +283,92 @@ export default function Chart() {
     });
     lineToolsRef.current = lineTools;
 
+    const applyPan = () => {
+      panFrameRef.current = undefined;
+      const gesture = panGestureRef.current;
+      if (!gesture) return;
+
+      const paneWidth = Math.max(1, chart.paneSize().width);
+      const paneHeight = Math.max(1, chart.paneSize().height);
+      const logicalSpan = gesture.logicalRange.to - gesture.logicalRange.from;
+      const logicalDelta = ((gesture.currentX - gesture.startX) / paneWidth) * logicalSpan;
+      const priceSpan = gesture.priceRange.to - gesture.priceRange.from;
+      const priceDelta = ((gesture.currentY - gesture.startY) / paneHeight) * priceSpan;
+
+      chart.timeScale().setVisibleLogicalRange({
+        from: gesture.logicalRange.from - logicalDelta,
+        to: gesture.logicalRange.to - logicalDelta,
+      });
+      chart.priceScale("left").setVisibleRange({
+        from: gesture.priceRange.from + priceDelta,
+        to: gesture.priceRange.to + priceDelta,
+      });
+    };
+
+    const schedulePan = () => {
+      if (panFrameRef.current === undefined) {
+        // Gộp cập nhật kéo theo khung hình để tránh giật.
+        panFrameRef.current = requestAnimationFrame(applyPan);
+      }
+    };
+
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.button !== 0 || drawingGestureRef.current) return;
+      const selectedTools = lineToolsRef.current?.getSelectedLineTools();
+      if (selectedTools && selectedTools !== "[]") return;
+
+      const element = containerRef.current;
+      if (!element) return;
+      const rect = element.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const y = event.clientY - rect.top;
+      const leftScaleWidth = chart.priceScale("left").width();
+      const rightScaleWidth = chart.priceScale("right").width();
+      if (x <= leftScaleWidth || x >= rect.width - rightScaleWidth || y >= chart.paneSize().height) return;
+
+      const priceRange = chart.priceScale("left").getVisibleRange();
+      const logicalRange = chart.timeScale().getVisibleLogicalRange();
+      if (!priceRange || !logicalRange) return;
+
+      panGestureRef.current = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        currentX: event.clientX,
+        currentY: event.clientY,
+        priceRange: { from: Number(priceRange.from), to: Number(priceRange.to) },
+        logicalRange: { from: Number(logicalRange.from), to: Number(logicalRange.to) },
+      };
+      autoScaleRef.current = false;
+      chart.priceScale("left").setVisibleRange(priceRange);
+      setAutoScale(false);
+      element.setPointerCapture(event.pointerId);
+      event.preventDefault();
+    };
+
+    const onPointerMove = (event: PointerEvent) => {
+      const gesture = panGestureRef.current;
+      if (!gesture || gesture.pointerId !== event.pointerId) return;
+
+      gesture.currentX = event.clientX;
+      gesture.currentY = event.clientY;
+      schedulePan();
+      event.preventDefault();
+    };
+
+    const finishPan = (event: PointerEvent) => {
+      const gesture = panGestureRef.current;
+      const element = containerRef.current;
+      if (!gesture || gesture.pointerId !== event.pointerId || !element) return;
+
+      if (panFrameRef.current !== undefined) {
+        cancelAnimationFrame(panFrameRef.current);
+        applyPan();
+      }
+      panGestureRef.current = null;
+      if (element.hasPointerCapture(event.pointerId)) element.releasePointerCapture(event.pointerId);
+    };
+
     const onAxisWheel = (event: WheelEvent) => {
       const element = containerRef.current;
       if (!element || event.deltaY === 0) return;
@@ -314,6 +410,10 @@ export default function Chart() {
 
     const element = containerRef.current;
     if (!element) return;
+    element.addEventListener("pointerdown", onPointerDown);
+    element.addEventListener("pointermove", onPointerMove);
+    element.addEventListener("pointerup", finishPan);
+    element.addEventListener("pointercancel", finishPan);
     element.addEventListener("wheel", onAxisWheel, { capture: true, passive: false });
     window.addEventListener("mouseup", clearMouseGesture);
 
@@ -332,6 +432,13 @@ export default function Chart() {
     requestAnimationFrame(syncChartSize);
 
     return () => {
+      if (panFrameRef.current !== undefined) cancelAnimationFrame(panFrameRef.current);
+      panFrameRef.current = undefined;
+      panGestureRef.current = null;
+      element.removeEventListener("pointerdown", onPointerDown);
+      element.removeEventListener("pointermove", onPointerMove);
+      element.removeEventListener("pointerup", finishPan);
+      element.removeEventListener("pointercancel", finishPan);
       element.removeEventListener("wheel", onAxisWheel, true);
       window.removeEventListener("mouseup", clearMouseGesture);
       resizeObserver.disconnect();
