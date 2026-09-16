@@ -39,7 +39,7 @@ export async function fetchHistory(
   const data: RawHistory = await res.json();
   if (data.s !== "ok" || !data.t?.length) return [];
 
-  return data.t.map((t, i) => ({
+  const bars = data.t.map((t, i) => ({
     time: t as UTCTimestamp,
     open: data.o[i],
     high: data.h[i],
@@ -47,4 +47,8 @@ export async function fetchHistory(
     close: data.c[i],
     volume: data.v[i],
   }));
+
+  return ["D", "W", "M"].includes(resolution)
+    ? bars
+    : bars.filter((bar) => bar.volume > 0);
 }
