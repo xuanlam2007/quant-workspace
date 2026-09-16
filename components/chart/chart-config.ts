@@ -62,14 +62,6 @@ export const PRICE_INDICATORS = [
   { id: "EMA200", study: "ema" as const, length: 200, type: "EMA" as const, color: "#d452e9" },
 ];
 
-export const INITIAL_VISIBLE_BARS: Record<string, number> = {
-  "1": 30,
-  "5": 36,
-  "15": 32,
-  "60": 30,
-  D: 90,
-  W: 104,
-  M: 60,
-};
+export const DEFAULT_VISIBLE_BARS = 90;
 
 export const INDICATOR_SETTINGS_KEY = "vndirect-chart:indicator-settings";
