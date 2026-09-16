@@ -58,6 +58,25 @@ import {
 } from "./chart/chart-utils";
 import { useIndicatorSettings } from "./chart/useIndicatorSettings";
 
+const DAILY_TICK_FORMATTER = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Asia/Bangkok",
+  day: "2-digit",
+  month: "short",
+});
+const INTRADAY_TICK_FORMATTER = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Asia/Bangkok",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+
+function latestVolumeMaPoint(bars: Bar[], length: number) {
+  if (bars.length < length) return undefined;
+  let total = 0;
+  for (let index = bars.length - length; index < bars.length; index++) total += bars[index].volume;
+  return { time: bars[bars.length - 1].time, value: total / length };
+}
+
 export default function Chart() {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -88,15 +107,15 @@ export default function Chart() {
   const maSettingsRef = useRef<{ length: number; type: MaType; smoothingLength: number }>({ length: 20, type: "SMA", smoothingLength: 9 });
   const drawingGestureRef = useRef(false);
   const autoScaleRef = useRef(true);
-  const panFrameRef = useRef<number | undefined>(undefined);
+  const flushRealtimeRef = useRef<() => void>(() => undefined);
+  const lastRenderedRealtimeBucketRef = useRef<number | undefined>(undefined);
+  const lastCandleColorRef = useRef<string | undefined>(undefined);
   const panGestureRef = useRef<{
     pointerId: number;
     startX: number;
     startY: number;
-    currentX: number;
-    currentY: number;
-    priceRange: { from: number; to: number };
-    logicalRange: { from: number; to: number };
+    active: boolean;
+    captureTarget: Element;
   } | null>(null);
 
   const [symbol, setSymbol] = useState(SYMBOLS[0]);
@@ -178,6 +197,7 @@ export default function Chart() {
         borderColor: "#262b38",
         scaleMargins: { top: 0.02, bottom: 0 },
       },
+      defaultVisiblePriceScaleId: "left",
       timeScale: {
         timeVisible: true,
         secondsVisible: false,
@@ -188,14 +208,14 @@ export default function Chart() {
         fixRightEdge: false,
         lockVisibleTimeRangeOnResize: true,
         rightBarStaysOnScroll: false,
-        tickMarkFormatter: (time: Time) => new Intl.DateTimeFormat("en-GB", ["D", "W", "M"].includes(resolutionRef.current)
-          ? { timeZone: "Asia/Bangkok", day: "2-digit", month: "short" }
-          : { timeZone: "Asia/Bangkok", hour: "2-digit", minute: "2-digit", hour12: false }
+        tickMarkFormatter: (time: Time) => (["D", "W", "M"].includes(resolutionRef.current)
+          ? DAILY_TICK_FORMATTER
+          : INTRADAY_TICK_FORMATTER
         ).format(new Date(Number(time) * 1000)),
       },
       handleScroll: {
         mouseWheel: true,
-        pressedMouseMove: false,
+        pressedMouseMove: true,
         horzTouchDrag: true,
         vertTouchDrag: true,
       },
@@ -256,6 +276,7 @@ export default function Chart() {
     timelineSeriesRef.current = timelineSeries;
 
     chart.subscribeCrosshairMove((param) => {
+      if (panGestureRef.current?.active) return;
       const time = param.time ? Number(param.time) : undefined;
       setVisibleBar(time ? barsByTimeRef.current.get(time) : currentBarRef.current);
     });
@@ -283,39 +304,13 @@ export default function Chart() {
     });
     lineToolsRef.current = lineTools;
 
-    const applyPan = () => {
-      panFrameRef.current = undefined;
-      const gesture = panGestureRef.current;
-      if (!gesture) return;
-
-      const paneWidth = Math.max(1, chart.paneSize().width);
-      const paneHeight = Math.max(1, chart.paneSize().height);
-      const logicalSpan = gesture.logicalRange.to - gesture.logicalRange.from;
-      const logicalDelta = ((gesture.currentX - gesture.startX) / paneWidth) * logicalSpan;
-      const priceSpan = gesture.priceRange.to - gesture.priceRange.from;
-      const priceDelta = ((gesture.currentY - gesture.startY) / paneHeight) * priceSpan;
-
-      chart.timeScale().setVisibleLogicalRange({
-        from: gesture.logicalRange.from - logicalDelta,
-        to: gesture.logicalRange.to - logicalDelta,
-      });
-      chart.priceScale("left").setVisibleRange({
-        from: gesture.priceRange.from + priceDelta,
-        to: gesture.priceRange.to + priceDelta,
-      });
-    };
-
-    const schedulePan = () => {
-      if (panFrameRef.current === undefined) {
-        // Gộp cập nhật kéo theo khung hình để tránh giật.
-        panFrameRef.current = requestAnimationFrame(applyPan);
-      }
-    };
-
     const onPointerDown = (event: PointerEvent) => {
-      if (event.button !== 0 || drawingGestureRef.current) return;
+      if (event.button !== 0) return;
       const selectedTools = lineToolsRef.current?.getSelectedLineTools();
-      if (selectedTools && selectedTools !== "[]") return;
+      if (drawingGestureRef.current || (selectedTools && selectedTools !== "[]")) {
+        chart.applyOptions({ handleScroll: { pressedMouseMove: false } });
+        return;
+      }
 
       const element = containerRef.current;
       if (!element) return;
@@ -327,46 +322,39 @@ export default function Chart() {
       if (x <= leftScaleWidth || x >= rect.width - rightScaleWidth || y >= chart.paneSize().height) return;
 
       const priceRange = chart.priceScale("left").getVisibleRange();
-      const logicalRange = chart.timeScale().getVisibleLogicalRange();
-      if (!priceRange || !logicalRange) return;
+      if (!priceRange) return;
+      const captureTarget = event.target instanceof Element ? event.target : element;
+      chart.priceScale("left").setVisibleRange(priceRange);
 
       panGestureRef.current = {
         pointerId: event.pointerId,
         startX: event.clientX,
         startY: event.clientY,
-        currentX: event.clientX,
-        currentY: event.clientY,
-        priceRange: { from: Number(priceRange.from), to: Number(priceRange.to) },
-        logicalRange: { from: Number(logicalRange.from), to: Number(logicalRange.to) },
+        active: false,
+        captureTarget,
       };
-      autoScaleRef.current = false;
-      chart.priceScale("left").setVisibleRange(priceRange);
-      setAutoScale(false);
-      element.setPointerCapture(event.pointerId);
-      event.preventDefault();
+      captureTarget.setPointerCapture(event.pointerId);
     };
 
     const onPointerMove = (event: PointerEvent) => {
       const gesture = panGestureRef.current;
       if (!gesture || gesture.pointerId !== event.pointerId) return;
+      if (!gesture.active && event.clientX === gesture.startX && event.clientY === gesture.startY) return;
 
-      gesture.currentX = event.clientX;
-      gesture.currentY = event.clientY;
-      schedulePan();
-      event.preventDefault();
+      gesture.active = true;
+      autoScaleRef.current = false;
     };
 
     const finishPan = (event: PointerEvent) => {
       const gesture = panGestureRef.current;
-      const element = containerRef.current;
-      if (!gesture || gesture.pointerId !== event.pointerId || !element) return;
+      if (!gesture || gesture.pointerId !== event.pointerId) return;
 
-      if (panFrameRef.current !== undefined) {
-        cancelAnimationFrame(panFrameRef.current);
-        applyPan();
-      }
       panGestureRef.current = null;
-      if (element.hasPointerCapture(event.pointerId)) element.releasePointerCapture(event.pointerId);
+      if (gesture.active) {
+        setAutoScale(false);
+        flushRealtimeRef.current();
+      }
+      if (gesture.captureTarget.hasPointerCapture(event.pointerId)) gesture.captureTarget.releasePointerCapture(event.pointerId);
     };
 
     const onAxisWheel = (event: WheelEvent) => {
@@ -406,6 +394,7 @@ export default function Chart() {
 
     const clearMouseGesture = () => {
       drawingGestureRef.current = false;
+      chart.applyOptions({ handleScroll: { pressedMouseMove: true } });
     };
 
     const element = containerRef.current;
@@ -432,8 +421,6 @@ export default function Chart() {
     requestAnimationFrame(syncChartSize);
 
     return () => {
-      if (panFrameRef.current !== undefined) cancelAnimationFrame(panFrameRef.current);
-      panFrameRef.current = undefined;
       panGestureRef.current = null;
       element.removeEventListener("pointerdown", onPointerDown);
       element.removeEventListener("pointermove", onPointerMove);
@@ -473,7 +460,12 @@ export default function Chart() {
       if (cancelled) return;
       const chartBars = bars.filter((bar) => isTradingSessionTime(bar.time, resolution));
       series.setData(chartBars);
-      if (chartBars.length) series.applyOptions({ priceLineColor: candleColor(chartBars[chartBars.length - 1]) });
+      if (chartBars.length) {
+        const color = candleColor(chartBars[chartBars.length - 1]);
+        series.applyOptions({ priceLineColor: color });
+        lastCandleColorRef.current = color;
+        lastRenderedRealtimeBucketRef.current = Number(chartBars[chartBars.length - 1].time);
+      }
       const volumeBars = chartBars;
       volumeSeriesRef.current?.setData(volumeBars.map((bar) => ({
         time: bar.time,
@@ -546,13 +538,48 @@ export default function Chart() {
       : undefined;
 
     feedRef.current?.close();
+
+    const renderRealtimeBar = (bar: Bar) => {
+      const bucketNumber = Number(bar.time);
+      const isNewRenderedBucket = lastRenderedRealtimeBucketRef.current !== bucketNumber;
+      if (isNewRenderedBucket) timelineSeriesRef.current?.setData(futureTimelinePoints(bucketNumber, resolution));
+
+      seriesRef.current?.update(bar);
+      const color = candleColor(bar);
+      if (color !== lastCandleColorRef.current) {
+        seriesRef.current?.applyOptions({ priceLineColor: color });
+        lastCandleColorRef.current = color;
+      }
+      volumeSeriesRef.current?.update({
+        time: bar.time,
+        value: bar.volume,
+        color: volumeColor(bar),
+      });
+
+      const allBars = [...barsByTimeRef.current.values()];
+      const latestVolumeSma = latestVolumeMaPoint(allBars, maSettingsRef.current.length);
+      if (latestVolumeSma) volumeSmaSeriesRef.current?.update(latestVolumeSma);
+      if (priceIndicatorSeriesRef.current.size > 0 || macdSeriesRef.current || rsiSeriesRef.current) {
+        updateStudySeries(allBars);
+      }
+
+      lastRenderedRealtimeBucketRef.current = bucketNumber;
+      setLastPrice(bar.close.toFixed(2));
+      setVisibleBar(bar);
+    };
+
+    flushRealtimeRef.current = () => {
+      const bar = currentBarRef.current;
+      if (bar) renderRealtimeBar(bar);
+    };
+
     feedRef.current = connectPriceFeed(
       symbol,
       (tick) => {
         const bucket = bucketStart(tick.time, resolution);
         const bucketNumber = Number(bucket);
         if (!isTradingSessionTime(bucket, resolution)) {
-          setLastPrice(tick.price.toFixed(2));
+          if (!panGestureRef.current?.active) setLastPrice(tick.price.toFixed(2));
           return;
         }
         const isNewBucket = lastRealtimeBucketRef.current !== bucketNumber;
@@ -564,37 +591,15 @@ export default function Chart() {
 
         currentBarRef.current = mergeTick(currentBarRef.current, tick.price, tick.volume, bucket);
         lastRealtimeBucketRef.current = bucketNumber;
-        if (isNewBucket) timelineSeriesRef.current?.setData(futureTimelinePoints(bucketNumber, resolution));
-
-        seriesRef.current?.update(currentBarRef.current);
-        seriesRef.current?.applyOptions({ priceLineColor: candleColor(currentBarRef.current) });
-        if (isTradingSessionTime(currentBarRef.current.time, resolution)) {
-          volumeSeriesRef.current?.update({
-            time: currentBarRef.current.time,
-            value: currentBarRef.current.volume,
-            color: volumeColor(currentBarRef.current),
-          });
-        }
         barsByTimeRef.current.set(bucketNumber, currentBarRef.current);
-
-        if (isTradingSessionTime(currentBarRef.current.time, resolution)) {
-          const allBars = [...barsByTimeRef.current.values()]
-            .filter((bar) => isTradingSessionTime(bar.time, resolution))
-            .sort((a, b) => Number(a.time) - Number(b.time));
-          const settings = maSettingsRef.current;
-          const latestVolumeSma = volumeMa(allBars, settings.length).at(-1);
-          if (latestVolumeSma) volumeSmaSeriesRef.current?.update(latestVolumeSma);
-          updateStudySeries(allBars);
-        }
-
-        setLastPrice(tick.price.toFixed(2));
-        setVisibleBar(currentBarRef.current);
+        if (!panGestureRef.current?.active) renderRealtimeBar(currentBarRef.current);
       },
       setStatus
     );
 
     return () => {
       cancelled = true;
+      flushRealtimeRef.current = () => undefined;
       feedRef.current?.close();
       feedRef.current = null;
     };

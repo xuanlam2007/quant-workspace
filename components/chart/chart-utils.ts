@@ -1,5 +1,22 @@
 import type { Bar } from "@/lib/dchart-api";
 
+const TRADING_TIME_FORMATTER = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Asia/Bangkok",
+  weekday: "short",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+const CHART_TIME_FORMATTER = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Asia/Bangkok",
+  day: "2-digit",
+  month: "short",
+  year: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+
 export function drawingStorageKey(symbol: string, resolution: string) {
   return `vndirect-chart:drawings:${symbol}:${resolution}`;
 }
@@ -16,13 +33,7 @@ export function volumeColor(bar: Bar) {
 export function isTradingSessionTime(time: Bar["time"], resolution: string) {
   if (["D", "W", "M"].includes(resolution)) return true;
 
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    timeZone: "Asia/Bangkok",
-    weekday: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).formatToParts(new Date(Number(time) * 1000));
+  const parts = TRADING_TIME_FORMATTER.formatToParts(new Date(Number(time) * 1000));
   const weekday = parts.find((part) => part.type === "weekday")?.value;
   if (weekday === "Sat" || weekday === "Sun") return false;
 
@@ -42,15 +53,7 @@ export function formatVolume(value: number) {
 export function formatChartTime(time: unknown) {
   const timestamp = Number(time);
   if (!Number.isFinite(timestamp)) return "";
-  return new Intl.DateTimeFormat("en-GB", {
-    timeZone: "Asia/Bangkok",
-    day: "2-digit",
-    month: "short",
-    year: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(new Date(timestamp * 1000));
+  return CHART_TIME_FORMATTER.format(new Date(timestamp * 1000));
 }
 
 export function rangeForResolution(resolution: string, rangeDays?: number): { from: number; to: number } {
