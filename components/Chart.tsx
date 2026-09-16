@@ -38,7 +38,7 @@ import { ChartHeader } from "./chart/ChartHeader";
 import { DrawingToolbar } from "./chart/DrawingToolbar";
 import { MarketDataPanel } from "./chart/MarketDataPanel";
 import {
-  INITIAL_VISIBLE_BARS,
+  DEFAULT_VISIBLE_BARS,
   PRICE_INDICATORS,
   SYMBOLS,
   type MaType,
@@ -81,20 +81,13 @@ export default function Chart() {
   const barsByTimeRef = useRef(new Map<number, Bar>());
   const previousCloseByTimeRef = useRef(new Map<number, number>());
   const feedRef = useRef<ReturnType<typeof connectPriceFeed> | null>(null);
-  const reconcileTimerRef = useRef<number | undefined>(undefined);
   const lastRealtimeBucketRef = useRef<number | undefined>(undefined);
   const drawingKeyRef = useRef("");
   const drawingHistoryRef = useRef<string[]>(["[]"]);
   const resolutionRef = useRef("D");
   const maSettingsRef = useRef<{ length: number; type: MaType; smoothingLength: number }>({ length: 20, type: "SMA", smoothingLength: 9 });
   const drawingGestureRef = useRef(false);
-  const verticalPanRef = useRef<{
-    startX: number;
-    startY: number;
-    startPriceRange: { from: number; to: number };
-    startLogicalRange: { from: number; to: number };
-    mode: "pending" | "pan";
-  } | null>(null);
+  const autoScaleRef = useRef(true);
 
   const [symbol, setSymbol] = useState(SYMBOLS[0]);
   const [resolution, setResolution] = useState("D");
@@ -120,6 +113,7 @@ export default function Chart() {
   } = useIndicatorSettings();
   resolutionRef.current = resolution;
   maSettingsRef.current = { length: maLength, type: maType, smoothingLength };
+  autoScaleRef.current = autoScale;
   const [lastPrice, setLastPrice] = useState<string>("N/A");
 
   const updateStudySeries = (bars: Bar[]) => {
@@ -169,7 +163,11 @@ export default function Chart() {
         borderColor: "#262b38",
         scaleMargins: { top: 0.05, bottom: 0.05 },
       },
-      rightPriceScale: { visible: false, borderColor: "#262b38" },
+      rightPriceScale: {
+        visible: true,
+        borderColor: "#262b38",
+        scaleMargins: { top: 0.02, bottom: 0 },
+      },
       timeScale: {
         timeVisible: true,
         secondsVisible: false,
@@ -186,18 +184,34 @@ export default function Chart() {
         ).format(new Date(Number(time) * 1000)),
       },
       handleScroll: {
-        mouseWheel: false,
+        mouseWheel: true,
         pressedMouseMove: true,
         horzTouchDrag: true,
         vertTouchDrag: true,
       },
       handleScale: {
-        mouseWheel: false,
+        mouseWheel: true,
         pinch: true,
         axisPressedMouseMove: { time: true, price: true },
         axisDoubleClickReset: { time: true, price: true },
       },
       autoSize: true,
+    });
+    const volumeSeries = chart.addSeries(HistogramSeries, {
+      priceFormat: { type: "volume" },
+      priceScaleId: "right",
+      lastValueVisible: false,
+      priceLineVisible: false,
+    });
+    const volumeSmaSeries = chart.addSeries(LineSeries, {
+      color: "rgba(4, 150, 255, 0.5)",
+      lineWidth: 3,
+      lineType: LineType.Simple,
+      priceScaleId: "right",
+      priceFormat: { type: "volume" },
+      lastValueVisible: false,
+      priceLineVisible: false,
+      crosshairMarkerVisible: false,
     });
     const series = chart.addSeries(CandlestickSeries, {
       priceScaleId: "left",
@@ -211,21 +225,6 @@ export default function Chart() {
       lastValueVisible: true,
       priceFormat: { type: "price", precision: 2, minMove: 0.01 },
     });
-    const volumeSeries = chart.addSeries(HistogramSeries, {
-      priceFormat: { type: "volume" },
-      priceScaleId: "volume",
-      lastValueVisible: false,
-      priceLineVisible: false,
-    });
-    const volumeSmaSeries = chart.addSeries(LineSeries, {
-      color: "#1f6fd1",
-      lineWidth: 3,
-      lineType: LineType.Simple,
-      priceScaleId: "volume",
-      lastValueVisible: false,
-      priceLineVisible: false,
-      crosshairMarkerVisible: false,
-    });
     const timelineSeries = chart.addSeries(LineSeries, {
       priceScaleId: "",
       lineVisible: false,
@@ -233,9 +232,9 @@ export default function Chart() {
       priceLineVisible: false,
       crosshairMarkerVisible: false,
     });
-    chart.priceScale("volume").applyOptions({
+    chart.priceScale("right").applyOptions({
       // Giữ biểu đồ khối lượng trong vùng chính như VNDirect
-      scaleMargins: { top: 0.04, bottom: 0 },
+      scaleMargins: { top: 0.02, bottom: 0 },
       visible: true,
       autoScale: true,
     });
@@ -274,107 +273,48 @@ export default function Chart() {
     });
     lineToolsRef.current = lineTools;
 
-    // Bổ sung thao tác kéo dọc để dịch vùng giá đang xem
-    const onMouseDown = (event: MouseEvent) => {
-      if (event.button !== 0 || drawingGestureRef.current) return;
-      const selectedTools = lineToolsRef.current?.getSelectedLineTools();
-      if (selectedTools && selectedTools !== "[]") return;
+    const onAxisWheel = (event: WheelEvent) => {
       const element = containerRef.current;
-      const currentSeries = seriesRef.current;
-      if (!element || !currentSeries) return;
+      if (!element || event.deltaY === 0) return;
 
       const rect = element.getBoundingClientRect();
-      const x = event.clientX - rect.left;
-      const y = event.clientY - rect.top;
-      const drawingWidth = chart.paneSize().width;
-      // Để Lightweight Charts xử lý thao tác trên trục
-      if (x < 55 || x > drawingWidth - 4 || y < 0 || y > chart.paneSize().height) return;
+      const pointerX = event.clientX - rect.left;
+      const leftScale = chart.priceScale("left");
+      const rightScale = chart.priceScale("right");
+      const scale = pointerX <= leftScale.width()
+        ? leftScale
+        : pointerX >= rect.width - rightScale.width()
+          ? rightScale
+          : null;
+      if (!scale) return;
 
-      const visibleRange = chart.priceScale("left").getVisibleRange();
-      const logicalRange = chart.timeScale().getVisibleLogicalRange();
-      if (!visibleRange || !logicalRange) return;
-      verticalPanRef.current = {
-        startX: x,
-        startY: y,
-        startPriceRange: { from: Number(visibleRange.from), to: Number(visibleRange.to) },
-        startLogicalRange: { from: Number(logicalRange.from), to: Number(logicalRange.to) },
-        mode: "pending",
-      };
-    };
-
-    const onMouseMove = (event: MouseEvent) => {
-      const gesture = verticalPanRef.current;
-      if (!gesture) return;
-      const element = containerRef.current;
-      const currentSeries = seriesRef.current;
-      if (!element || !currentSeries) return;
-
-      const rect = element.getBoundingClientRect();
-      const x = event.clientX - rect.left;
-      const y = event.clientY - rect.top;
-      const dx = Math.abs(x - gesture.startX);
-      const dy = Math.abs(y - gesture.startY);
-
-      if (gesture.mode === "pending" && Math.max(dx, dy) < 4) return;
-      if (gesture.mode === "pending") {
-        gesture.mode = "pan";
-        chart.applyOptions({ handleScroll: { pressedMouseMove: false } });
-      }
-
-      const paneWidth = Math.max(1, chart.paneSize().width);
-      const paneHeight = Math.max(1, chart.paneSize().height);
-      const logicalWidth = gesture.startLogicalRange.to - gesture.startLogicalRange.from;
-      const logicalDelta = ((x - gesture.startX) / paneWidth) * logicalWidth;
-      const priceHeight = gesture.startPriceRange.to - gesture.startPriceRange.from;
-      const priceDelta = ((y - gesture.startY) / paneHeight) * priceHeight;
-
-      chart.timeScale().setVisibleLogicalRange({
-        from: gesture.startLogicalRange.from - logicalDelta,
-        to: gesture.startLogicalRange.to - logicalDelta,
-      });
-      chart.priceScale("left").setVisibleRange({
-        from: gesture.startPriceRange.from + priceDelta,
-        to: gesture.startPriceRange.to + priceDelta,
-      });
-      event.preventDefault();
-    };
-
-    const onWheel = (event: WheelEvent) => {
-      const currentChart = chartRef.current;
-      if (!currentChart) return;
-
-      event.preventDefault();
-
-      const range = currentChart.timeScale().getVisibleLogicalRange();
+      const range = scale.getVisibleRange();
       if (!range) return;
+      const height = Math.max(1, chart.paneSize().height);
+      const pointerY = Math.max(0, Math.min(height, event.clientY - rect.top));
+      const startPoint = height - pointerY;
+      const targetPoint = Math.max(0, startPoint - 15 * Math.sign(event.deltaY));
+      const padding = (height - 1) * 0.2;
+      const scaleFactor = Math.max((startPoint + padding) / (targetPoint + padding), 0.1);
+      const center = (Number(range.from) + Number(range.to)) / 2;
+      const halfRange = ((Number(range.to) - Number(range.from)) * scaleFactor) / 2;
 
-      const currentWidth = range.to - range.from;
-      const factor = event.deltaY > 0 ? 1.07 : 1 / 1.07;
-      const nextWidth = Math.max(8, Math.min(300, currentWidth * factor));
-      const bars = [...barsByTimeRef.current.values()].sort((a, b) => Number(a.time) - Number(b.time));
-      const lastBarIndex = Math.max(0, bars.length - 1);
-      const rightPadding = Math.min(6, Math.max(2, nextWidth * 0.08));
-      const rightEdge = Math.min(range.to, lastBarIndex + rightPadding);
-
-      currentChart.timeScale().setVisibleLogicalRange({
-        from: rightEdge - nextWidth,
-        to: rightEdge,
-      });
+      scale.setVisibleRange({ from: center - halfRange, to: center + halfRange });
+      if (scale === leftScale) {
+        autoScaleRef.current = false;
+        setAutoScale(false);
+      }
+      event.preventDefault();
+      event.stopPropagation();
     };
 
     const clearMouseGesture = () => {
-      if (verticalPanRef.current?.mode === "pan") {
-        chart.applyOptions({ handleScroll: { pressedMouseMove: true } });
-      }
-      verticalPanRef.current = null;
       drawingGestureRef.current = false;
     };
 
     const element = containerRef.current;
     if (!element) return;
-    element.addEventListener("mousedown", onMouseDown);
-    element.addEventListener("wheel", onWheel, { passive: false });
-    window.addEventListener("mousemove", onMouseMove, { passive: false });
+    element.addEventListener("wheel", onAxisWheel, { capture: true, passive: false });
     window.addEventListener("mouseup", clearMouseGesture);
 
     // Đồng bộ kích thước biểu đồ và plugin ngay từ lần bố trí đầu tiên
@@ -392,9 +332,7 @@ export default function Chart() {
     requestAnimationFrame(syncChartSize);
 
     return () => {
-      element.removeEventListener("mousedown", onMouseDown);
-      element.removeEventListener("wheel", onWheel);
-      window.removeEventListener("mousemove", onMouseMove);
+      element.removeEventListener("wheel", onAxisWheel, true);
       window.removeEventListener("mouseup", clearMouseGesture);
       resizeObserver.disconnect();
       lineTools.destroy();
@@ -430,18 +368,19 @@ export default function Chart() {
       series.setData(chartBars);
       if (chartBars.length) series.applyOptions({ priceLineColor: candleColor(chartBars[chartBars.length - 1]) });
       const volumeBars = chartBars;
-      volumeSeriesRef.current?.setData(volumeBars.map((bar, index) => ({
+      volumeSeriesRef.current?.setData(volumeBars.map((bar) => ({
         time: bar.time,
         value: bar.volume,
-        color: volumeColor(bar, index > 0 ? volumeBars[index - 1].close : undefined),
+        color: volumeColor(bar),
       })));
+      chart.priceScale("right").setAutoScale(true);
       const settings = maSettingsRef.current;
       volumeSmaSeriesRef.current?.setData(volumeMa(volumeBars, settings.length));
       updateStudySeries(chartBars);
       if (chartBars.length) timelineSeriesRef.current?.setData(futureTimelinePoints(Number(chartBars[chartBars.length - 1].time), resolution));
       barsByTimeRef.current = new Map(chartBars.map((bar) => [Number(bar.time), bar]));
       previousCloseByTimeRef.current = new Map(chartBars.slice(1).map((bar, index) => [Number(bar.time), chartBars[index].close]));
-      const visibleBars = INITIAL_VISIBLE_BARS[resolution] ?? 30;
+      const visibleBars = DEFAULT_VISIBLE_BARS;
 
       // Gọi lại sau khi kích thước biểu đồ ổn định để tránh nến bị nén
       const focusLatestBars = () => {
@@ -459,13 +398,20 @@ export default function Chart() {
           chart.timeScale().fitContent();
         }
 
-        // Bật lại tự động co giãn sau khi đổi mã hoặc khung thời gian
-        chart.priceScale("left").applyOptions({ autoScale: true });
+        chart.priceScale("left").setAutoScale(true);
       };
 
       focusLatestBars();
       requestAnimationFrame(() => {
-        requestAnimationFrame(focusLatestBars);
+        requestAnimationFrame(() => {
+          focusLatestBars();
+          if (!autoScaleRef.current) {
+            const priceScale = chart.priceScale("left");
+            const priceRange = priceScale.getVisibleRange();
+            if (priceRange) priceScale.setVisibleRange(priceRange);
+            else priceScale.setAutoScale(false);
+          }
+        });
       });
       const savedDrawings = localStorage.getItem(drawingKeyRef.current);
       if (savedDrawings) lineToolsRef.current?.importLineTools(savedDrawings);
@@ -487,52 +433,6 @@ export default function Chart() {
       );
     };
 
-    const reconcileCurrentBar = (bucket: number) => {
-      if (reconcileTimerRef.current !== undefined) {
-        window.clearTimeout(reconcileTimerRef.current);
-      }
-
-      // Lấy lại OHLC phút vừa mở để giá mở cửa và màu nến khớp VNDirect
-      reconcileTimerRef.current = window.setTimeout(async () => {
-        reconcileTimerRef.current = undefined;
-        try {
-          const from = bucket - 5 * 60;
-          const to = Math.floor(Date.now() / 1000) + 60;
-          const recentBars = await fetchHistory(symbol, resolution, from, to);
-          if (cancelled) return;
-
-          const authoritative = recentBars.find((bar) => Number(bar.time) === bucket);
-          const live = currentBarRef.current;
-          if (!authoritative || !live || Number(live.time) !== bucket) return;
-
-          const reconciled: Bar = {
-            time: live.time,
-            open: authoritative.open,
-            high: Math.max(authoritative.high, live.high),
-            low: Math.min(authoritative.low, live.low),
-            close: live.close,
-            volume: Math.max(authoritative.volume, live.volume),
-          };
-
-          currentBarRef.current = reconciled;
-          barsByTimeRef.current.set(bucket, reconciled);
-          seriesRef.current?.update(reconciled);
-          seriesRef.current?.applyOptions({ priceLineColor: candleColor(reconciled) });
-          if (isTradingSessionTime(reconciled.time, resolution)) {
-            volumeSeriesRef.current?.update({
-              time: reconciled.time,
-              value: reconciled.volume,
-              color: volumeColor(reconciled, previousCloseByTimeRef.current.get(Number(reconciled.time))),
-            });
-            refreshVolumeMa();
-          }
-          setVisibleBar(reconciled);
-        } catch {
-          // Tiếp tục nhận dữ liệu nếu đối chiếu lịch sử thất bại
-        }
-      }, 1200);
-    };
-
     const currentBar = currentBarRef.current as Bar | undefined;
     lastRealtimeBucketRef.current = currentBar
       ? Number(currentBar.time)
@@ -550,6 +450,7 @@ export default function Chart() {
         }
         const isNewBucket = lastRealtimeBucketRef.current !== bucketNumber;
         const previousBar = currentBarRef.current;
+        if (previousBar && bucketNumber < Number(previousBar.time)) return;
         if (isNewBucket && previousBar) {
           previousCloseByTimeRef.current.set(bucketNumber, previousBar.close);
         }
@@ -564,7 +465,7 @@ export default function Chart() {
           volumeSeriesRef.current?.update({
             time: currentBarRef.current.time,
             value: currentBarRef.current.volume,
-            color: volumeColor(currentBarRef.current, previousCloseByTimeRef.current.get(Number(currentBarRef.current.time))),
+            color: volumeColor(currentBarRef.current),
           });
         }
         barsByTimeRef.current.set(bucketNumber, currentBarRef.current);
@@ -579,8 +480,6 @@ export default function Chart() {
           updateStudySeries(allBars);
         }
 
-        if (isNewBucket) reconcileCurrentBar(bucketNumber);
-
         setLastPrice(tick.price.toFixed(2));
         setVisibleBar(currentBarRef.current);
       },
@@ -589,10 +488,6 @@ export default function Chart() {
 
     return () => {
       cancelled = true;
-      if (reconcileTimerRef.current !== undefined) {
-        window.clearTimeout(reconcileTimerRef.current);
-        reconcileTimerRef.current = undefined;
-      }
       feedRef.current?.close();
       feedRef.current = null;
     };
@@ -698,10 +593,12 @@ export default function Chart() {
   }, []);
 
   useEffect(() => {
-    chartRef.current?.priceScale("left").applyOptions({
-      autoScale,
+    const priceScale = chartRef.current?.priceScale("left");
+    if (!priceScale) return;
+    priceScale.applyOptions({
       mode: scaleMode === "percent" ? PriceScaleMode.Percentage : scaleMode === "log" ? PriceScaleMode.Logarithmic : PriceScaleMode.Normal,
     });
+    priceScale.setAutoScale(autoScale);
   }, [autoScale, scaleMode]);
 
   useEffect(() => {
