@@ -34,16 +34,74 @@ export const RANGE_PRESETS = [
 
 export type RangePreset = (typeof RANGE_PRESETS)[number];
 
-export const DRAWING_TOOLS: Array<{ type: LineToolType; label: string; title: string }> = [
-  { type: "TrendLine", label: "╱", title: "Trend line" },
-  { type: "Ray", label: "→", title: "Ray" },
-  { type: "HorizontalLine", label: "-", title: "Horizontal line" },
-  { type: "HorizontalRay", label: "⇢", title: "Horizontal ray" },
-  { type: "Rectangle", label: "▭", title: "Rectangle" },
-  { type: "FibRetracement", label: "F", title: "Fibonacci retracement" },
-  { type: "PriceRange", label: "↕", title: "Price range" },
-  { type: "LongShortPosition", label: "R", title: "Long / short position" },
-  { type: "Text", label: "T", title: "Text note" },
+export type DrawingIcon =
+  | "trend" | "arrow" | "ray" | "extended" | "horizontal" | "horizontalRay"
+  | "vertical" | "cross" | "fib" | "rectangle" | "text" | "callout"
+  | "priceRange" | "position";
+
+export interface DrawingToolOption {
+  type: LineToolType;
+  icon: DrawingIcon;
+  title: string;
+}
+
+export interface DrawingToolGroup {
+  id: string;
+  icon: DrawingIcon;
+  title: string;
+  tools: DrawingToolOption[];
+}
+
+export const DRAWING_TOOL_GROUPS: DrawingToolGroup[] = [
+  {
+    id: "lines",
+    icon: "trend",
+    title: "Đường xu hướng",
+    tools: [
+      { type: "TrendLine", icon: "trend", title: "Đường xu hướng" },
+      { type: "Arrow", icon: "arrow", title: "Mũi tên" },
+      { type: "Ray", icon: "ray", title: "Tia" },
+      { type: "ExtendedLine", icon: "extended", title: "Đường kéo dài" },
+      { type: "HorizontalLine", icon: "horizontal", title: "Đường ngang" },
+      { type: "HorizontalRay", icon: "horizontalRay", title: "Tia ngang" },
+      { type: "VerticalLine", icon: "vertical", title: "Đường dọc" },
+      { type: "CrossLine", icon: "cross", title: "Đường chữ thập" },
+    ],
+  },
+  {
+    id: "fibonacci",
+    icon: "fib",
+    title: "Gann và Fibonacci",
+    tools: [
+      { type: "FibRetracement", icon: "fib", title: "Fibonacci thoái lui" },
+    ],
+  },
+  {
+    id: "geometry",
+    icon: "rectangle",
+    title: "Hình học",
+    tools: [
+      { type: "Rectangle", icon: "rectangle", title: "Hình chữ nhật" },
+    ],
+  },
+  {
+    id: "annotations",
+    icon: "text",
+    title: "Chú thích",
+    tools: [
+      { type: "Text", icon: "text", title: "Văn bản" },
+      { type: "Callout", icon: "callout", title: "Chú thích có đường dẫn" },
+    ],
+  },
+  {
+    id: "measurement",
+    icon: "position",
+    title: "Dự báo và đo lường",
+    tools: [
+      { type: "LongShortPosition", icon: "position", title: "Vị thế mua hoặc bán" },
+      { type: "PriceRange", icon: "priceRange", title: "Biên độ giá" },
+    ],
+  },
 ];
 
 export const STUDY_CATALOG: Array<{ id: StudyId; label: string; description: string; color: string }> = [
