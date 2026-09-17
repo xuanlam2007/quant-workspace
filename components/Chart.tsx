@@ -15,21 +15,9 @@ import {
   type Time,
 } from "lightweight-charts";
 import {
-  createLineToolsPlugin,
   type ILineToolsPlugin,
   type LineToolType,
 } from "lightweight-charts-line-tools-core";
-import {
-  LineToolHorizontalLine,
-  LineToolHorizontalRay,
-  LineToolRay,
-  LineToolTrendLine,
-} from "lightweight-charts-line-tools-lines";
-import { LineToolRectangle } from "lightweight-charts-line-tools-rectangle";
-import { LineToolFibRetracement } from "lightweight-charts-line-tools-fib-retracement";
-import { LineToolPriceRange } from "lightweight-charts-line-tools-price-range";
-import { LineToolLongShortPosition } from "lightweight-charts-line-tools-long-short-position";
-import { LineToolText } from "lightweight-charts-line-tools-text";
 import { fetchHistory, type Bar } from "@/lib/dchart-api";
 import { connectPriceFeed, type ConnStatus } from "@/lib/dchart-socket";
 import { bucketStart, mergeTick } from "@/lib/bar-builder";
@@ -37,6 +25,7 @@ import { ChartFooter } from "./chart/ChartFooter";
 import { ChartHeader } from "./chart/ChartHeader";
 import { DrawingToolbar } from "./chart/DrawingToolbar";
 import { MarketDataPanel } from "./chart/MarketDataPanel";
+import { createDrawingTools } from "./chart/chart-drawing";
 import {
   DEFAULT_VISIBLE_BARS,
   PRICE_INDICATORS,
@@ -106,6 +95,10 @@ export default function Chart() {
   const resolutionRef = useRef("D");
   const maSettingsRef = useRef<{ length: number; type: MaType; smoothingLength: number }>({ length: 20, type: "SMA", smoothingLength: 9 });
   const drawingGestureRef = useRef(false);
+  const activeDrawingToolRef = useRef<LineToolType | null>(null);
+  const stayInDrawingModeRef = useRef(false);
+  const eraserModeRef = useRef(false);
+  const hiddenDrawingsRef = useRef<string | null>(null);
   const autoScaleRef = useRef(true);
   const flushRealtimeRef = useRef<() => void>(() => undefined);
   const lastRenderedRealtimeBucketRef = useRef<number | undefined>(undefined);
@@ -123,6 +116,11 @@ export default function Chart() {
   const [timeframeMenuOpen, setTimeframeMenuOpen] = useState(false);
   const [status, setStatus] = useState<ConnStatus>("disconnected");
   const [drawingsLocked, setDrawingsLocked] = useState(false);
+  const [activeDrawingTool, setActiveDrawingTool] = useState<LineToolType | null>(null);
+  const [eraserMode, setEraserMode] = useState(false);
+  const [magnetMode, setMagnetMode] = useState<0 | 1 | 2>(0);
+  const [stayInDrawingMode, setStayInDrawingMode] = useState(false);
+  const [drawingsHidden, setDrawingsHidden] = useState(false);
   const [visibleBar, setVisibleBar] = useState<Bar | undefined>(undefined);
   const [rangeDays, setRangeDays] = useState<number | undefined>(undefined);
   const [scaleMode, setScaleMode] = useState<ScaleMode>("normal");
@@ -143,6 +141,9 @@ export default function Chart() {
   resolutionRef.current = resolution;
   maSettingsRef.current = { length: maLength, type: maType, smoothingLength };
   autoScaleRef.current = autoScale;
+  activeDrawingToolRef.current = activeDrawingTool;
+  stayInDrawingModeRef.current = stayInDrawingMode;
+  eraserModeRef.current = eraserMode;
   const [lastPrice, setLastPrice] = useState<string>("N/A");
 
   const updateStudySeries = (bars: Bar[]) => {
@@ -282,19 +283,9 @@ export default function Chart() {
       setVisibleBar(time ? barsByTimeRef.current.get(time) : currentBarRef.current);
     });
 
-    const lineTools = createLineToolsPlugin(chart, series);
-    lineTools.registerLineTool("TrendLine", LineToolTrendLine);
-    lineTools.registerLineTool("Ray", LineToolRay);
-    lineTools.registerLineTool("HorizontalLine", LineToolHorizontalLine);
-    lineTools.registerLineTool("HorizontalRay", LineToolHorizontalRay);
-    lineTools.registerLineTool("Rectangle", LineToolRectangle);
-    lineTools.registerLineTool("FibRetracement", LineToolFibRetracement);
-    lineTools.registerLineTool("PriceRange", LineToolPriceRange);
-    lineTools.registerLineTool("LongShortPosition", LineToolLongShortPosition);
-    lineTools.registerLineTool("Text", LineToolText);
-    // Giữ con trỏ và điểm vẽ đúng vị trí chuột
+    const lineTools = createDrawingTools(chart, series);
     lineTools.setMagnetThreshold(0);
-    lineTools.subscribeLineToolsAfterEdit(() => {
+    const persistDrawingState = () => {
       const drawingState = lineTools.exportLineTools();
       if (drawingHistoryRef.current.at(-1) !== drawingState) {
         drawingHistoryRef.current.push(drawingState);
@@ -302,6 +293,28 @@ export default function Chart() {
       if (drawingKeyRef.current) {
         localStorage.setItem(drawingKeyRef.current, drawingState);
       }
+    };
+    lineTools.subscribeLineToolsAfterEdit((event) => {
+      persistDrawingState();
+      if (event.stage !== "lineToolFinished") return;
+
+      const currentTool = activeDrawingToolRef.current;
+      if (stayInDrawingModeRef.current && currentTool) {
+        requestAnimationFrame(() => {
+          drawingGestureRef.current = true;
+          lineTools.addLineTool(currentTool);
+        });
+        return;
+      }
+
+      drawingGestureRef.current = false;
+      activeDrawingToolRef.current = null;
+      setActiveDrawingTool(null);
+    });
+    lineTools.subscribeLineToolsSingleClick((event) => {
+      if (!eraserModeRef.current || event.selectionState !== "selected") return;
+      lineTools.removeLineToolsById([event.selectedLineTool.id]);
+      persistDrawingState();
     });
     lineToolsRef.current = lineTools;
 
@@ -393,11 +406,6 @@ export default function Chart() {
       event.stopPropagation();
     };
 
-    const clearMouseGesture = () => {
-      drawingGestureRef.current = false;
-      chart.applyOptions({ handleScroll: { pressedMouseMove: true } });
-    };
-
     const element = containerRef.current;
     if (!element) return;
     element.addEventListener("pointerdown", onPointerDown);
@@ -405,7 +413,6 @@ export default function Chart() {
     element.addEventListener("pointerup", finishPan);
     element.addEventListener("pointercancel", finishPan);
     element.addEventListener("wheel", onAxisWheel, { capture: true, passive: false });
-    window.addEventListener("mouseup", clearMouseGesture);
 
     // Đồng bộ kích thước biểu đồ và plugin ngay từ lần bố trí đầu tiên
     const syncChartSize = () => {
@@ -428,7 +435,6 @@ export default function Chart() {
       element.removeEventListener("pointerup", finishPan);
       element.removeEventListener("pointercancel", finishPan);
       element.removeEventListener("wheel", onAxisWheel, true);
-      window.removeEventListener("mouseup", clearMouseGesture);
       resizeObserver.disconnect();
       lineTools.destroy();
       lineToolsRef.current = null;
@@ -453,6 +459,8 @@ export default function Chart() {
     let cancelled = false;
     currentBarRef.current = undefined;
     drawingKeyRef.current = drawingStorageKey(symbol, resolution);
+    hiddenDrawingsRef.current = null;
+    setDrawingsHidden(false);
     lineToolsRef.current?.removeAllLineTools();
 
     (async () => {
@@ -745,33 +753,94 @@ export default function Chart() {
   }, []);
 
   const startDrawing = (type: LineToolType) => {
-    if (!drawingsLocked) {
-      drawingGestureRef.current = true;
-      // Tắt hút điểm riêng cho từng công cụ để điểm neo không tự nhảy
-      lineToolsRef.current?.addLineTool(type);
+    if (drawingsLocked || !lineToolsRef.current) return;
+    if (drawingsHidden && hiddenDrawingsRef.current) {
+      lineToolsRef.current.importLineTools(hiddenDrawingsRef.current);
+      hiddenDrawingsRef.current = null;
+      setDrawingsHidden(false);
     }
+    drawingGestureRef.current = true;
+    activeDrawingToolRef.current = type;
+    eraserModeRef.current = false;
+    setActiveDrawingTool(type);
+    setEraserMode(false);
+    lineToolsRef.current.addLineTool(type);
+  };
+
+  const selectCursor = () => {
+    const lineTools = lineToolsRef.current;
+    drawingGestureRef.current = false;
+    activeDrawingToolRef.current = null;
+    eraserModeRef.current = false;
+    setActiveDrawingTool(null);
+    setEraserMode(false);
+    if (lineTools) {
+      lineTools.setLocked(true);
+      lineTools.setLocked(drawingsLocked);
+    }
+    chartRef.current?.applyOptions({ handleScroll: { pressedMouseMove: true } });
+  };
+
+  const selectEraser = () => {
+    selectCursor();
+    eraserModeRef.current = true;
+    setEraserMode(true);
+  };
+
+  const toggleMagnet = () => {
+    setMagnetMode((current) => {
+      const next = ((current + 1) % 3) as 0 | 1 | 2;
+      lineToolsRef.current?.setMagnetThreshold(next === 0 ? 0 : next === 1 ? 10 : 24);
+      return next;
+    });
+  };
+
+  const toggleDrawingLock = () => {
+    if (!drawingsLocked) selectCursor();
+    setDrawingsLocked((locked) => !locked);
+  };
+
+  const toggleDrawingsVisibility = () => {
+    const lineTools = lineToolsRef.current;
+    if (!lineTools) return;
+    selectCursor();
+    if (drawingsHidden) {
+      if (hiddenDrawingsRef.current) lineTools.importLineTools(hiddenDrawingsRef.current);
+      hiddenDrawingsRef.current = null;
+      setDrawingsHidden(false);
+      return;
+    }
+
+    hiddenDrawingsRef.current = lineTools.exportLineTools();
+    lineTools.removeAllLineTools();
+    setDrawingsHidden(true);
+  };
+
+  const zoomInChart = () => {
+    const timeScale = chartRef.current?.timeScale();
+    const range = timeScale?.getVisibleLogicalRange();
+    if (!timeScale || !range) return;
+    const center = (range.from + range.to) / 2;
+    const halfSpan = (range.to - range.from) * 0.4;
+    timeScale.setVisibleLogicalRange({ from: center - halfSpan, to: center + halfSpan });
   };
 
   const clearDrawings = () => {
     lineToolsRef.current?.removeAllLineTools();
+    hiddenDrawingsRef.current = null;
+    setDrawingsHidden(false);
     drawingHistoryRef.current.push("[]");
     if (drawingKeyRef.current) localStorage.removeItem(drawingKeyRef.current);
-  };
-
-  const undoDrawings = () => {
-    if (drawingHistoryRef.current.length <= 1 || !lineToolsRef.current) return;
-    drawingHistoryRef.current.pop();
-    const previousState = drawingHistoryRef.current.at(-1) ?? "[]";
-    lineToolsRef.current.removeAllLineTools();
-    lineToolsRef.current.importLineTools(previousState);
-    if (drawingKeyRef.current) localStorage.setItem(drawingKeyRef.current, previousState);
   };
 
   const deleteSelectedDrawing = () => {
     const beforeDelete = lineToolsRef.current?.exportLineTools();
     lineToolsRef.current?.removeSelectedLineTools();
     const drawingState = lineToolsRef.current?.exportLineTools();
-    if (drawingState && drawingState !== beforeDelete) drawingHistoryRef.current.push(drawingState);
+    if (drawingState && drawingState !== beforeDelete) {
+      drawingHistoryRef.current.push(drawingState);
+      if (drawingKeyRef.current) localStorage.setItem(drawingKeyRef.current, drawingState);
+    }
   };
 
   const quoteBar = visibleBar ?? currentBarRef.current;
@@ -833,10 +902,20 @@ export default function Chart() {
       />
       <div className="chart-shell">
         <DrawingToolbar
+          activeTool={activeDrawingTool}
+          eraserMode={eraserMode}
           locked={drawingsLocked}
+          magnetMode={magnetMode}
+          stayInDrawingMode={stayInDrawingMode}
+          drawingsHidden={drawingsHidden}
+          onSelectCursor={selectCursor}
+          onSelectEraser={selectEraser}
           onStartDrawing={startDrawing}
-          onUndo={undoDrawings}
-          onToggleLock={() => setDrawingsLocked((locked) => !locked)}
+          onToggleMagnet={toggleMagnet}
+          onToggleStayInDrawingMode={() => setStayInDrawingMode((enabled) => !enabled)}
+          onToggleLock={toggleDrawingLock}
+          onToggleVisibility={toggleDrawingsVisibility}
+          onZoomIn={zoomInChart}
           onDeleteSelected={deleteSelectedDrawing}
           onClear={clearDrawings}
         />
@@ -855,7 +934,11 @@ export default function Chart() {
             onMaTypeChange={setMaType}
             onSmoothingLengthChange={setSmoothingLength}
           />
-          <main id="chart" ref={containerRef} />
+          <main
+            id="chart"
+            ref={containerRef}
+            className={activeDrawingTool || eraserMode ? "chart--tool-active" : "chart--pan"}
+          />
           <ChartFooter
             rangeDays={rangeDays}
             scaleMode={scaleMode}
