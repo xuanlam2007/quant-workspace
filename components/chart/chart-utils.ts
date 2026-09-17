@@ -58,7 +58,7 @@ export function formatChartTime(time: unknown) {
 
 export function rangeForResolution(resolution: string, rangeDays?: number): { from: number; to: number } {
   const to = Math.floor(Date.now() / 1000);
-  const daysBack = rangeDays ?? (resolution === "M" ? 3650 : resolution === "W" ? 1825 : resolution === "D" ? 730 : resolution === "60" ? 30 : 5);
+  const daysBack = rangeDays ?? (resolution === "M" ? 3650 : resolution === "W" ? 1825 : resolution === "D" ? 730 : resolution === "60" ? 30 : 10);
   return { from: to - daysBack * 86400, to };
 }
 
