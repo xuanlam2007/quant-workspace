@@ -16,16 +16,25 @@ import {
 } from "lightweight-charts";
 import {
   type ILineToolsPlugin,
+  type LineToolExport,
   type LineToolType,
 } from "lightweight-charts-line-tools-core";
 import { fetchHistory, type Bar } from "@/lib/dchart-api";
 import { connectPriceFeed, type ConnStatus } from "@/lib/dchart-socket";
 import { bucketStart, mergeTick } from "@/lib/bar-builder";
-import { ChartFooter } from "./chart/ChartFooter";
-import { ChartHeader } from "./chart/ChartHeader";
-import { DrawingToolbar } from "./chart/DrawingToolbar";
-import { MarketDataPanel } from "./chart/MarketDataPanel";
-import { createDrawingTools } from "./chart/chart-drawing";
+import { ChartFooter } from "./chart/layout/ChartFooter";
+import { ChartHeader } from "./chart/layout/ChartHeader";
+import { MarketDataPanel } from "./chart/layout/MarketDataPanel";
+import { DrawingToolbar } from "./chart/drawing/DrawingToolbar";
+import { DrawingPropertiesToolbar } from "./chart/drawing/DrawingPropertiesToolbar";
+import { PriceRangeStats } from "./chart/drawing/PriceRangeStats";
+import { TextToolDialog } from "./chart/drawing/TextToolDialog";
+import { createDrawingTools } from "./chart/drawing/chart-drawing";
+import {
+  drawingPreset,
+  normalizeDrawingState,
+  priceRangeAppearance,
+} from "./chart/drawing/drawing-presets";
 import {
   DEFAULT_VISIBLE_BARS,
   PRICE_INDICATORS,
@@ -34,8 +43,8 @@ import {
   type RangePreset,
   type ScaleMode,
   type StudyId,
-} from "./chart/chart-config";
-import { bollingerData, macdData, priceIndicatorData, rsiData, volumeMa } from "./chart/chart-indicators";
+} from "./chart/config/chart-config";
+import { bollingerData, macdData, priceIndicatorData, rsiData, volumeMa } from "./chart/indicators/chart-indicators";
 import {
   candleColor,
   drawingStorageKey,
@@ -44,8 +53,8 @@ import {
   isTradingSessionTime,
   rangeForResolution,
   volumeColor,
-} from "./chart/chart-utils";
-import { useIndicatorSettings } from "./chart/useIndicatorSettings";
+} from "./chart/core/chart-utils";
+import { useIndicatorSettings } from "./chart/indicators/useIndicatorSettings";
 
 const DAILY_TICK_FORMATTER = new Intl.DateTimeFormat("en-GB", {
   timeZone: "Asia/Bangkok",
@@ -121,6 +130,9 @@ export default function Chart() {
   const [magnetMode, setMagnetMode] = useState<0 | 1 | 2>(0);
   const [stayInDrawingMode, setStayInDrawingMode] = useState(false);
   const [drawingsHidden, setDrawingsHidden] = useState(false);
+  const [selectedDrawing, setSelectedDrawing] = useState<LineToolExport<LineToolType> | null>(null);
+  const [textDialogOpen, setTextDialogOpen] = useState(false);
+  const [drawingViewportVersion, setDrawingViewportVersion] = useState(0);
   const [visibleBar, setVisibleBar] = useState<Bar | undefined>(undefined);
   const [rangeDays, setRangeDays] = useState<number | undefined>(undefined);
   const [scaleMode, setScaleMode] = useState<ScaleMode>("normal");
@@ -295,6 +307,13 @@ export default function Chart() {
       }
     };
     lineTools.subscribeLineToolsAfterEdit((event) => {
+      let selectedLineTool = event.selectedLineTool;
+      const appearance = priceRangeAppearance(selectedLineTool);
+      if (appearance) {
+        selectedLineTool = { ...selectedLineTool, options: appearance as typeof selectedLineTool.options };
+        lineTools.applyLineToolOptions(selectedLineTool);
+      }
+      setSelectedDrawing(selectedLineTool);
       persistDrawingState();
       if (event.stage !== "lineToolFinished") return;
 
@@ -302,7 +321,7 @@ export default function Chart() {
       if (stayInDrawingModeRef.current && currentTool) {
         requestAnimationFrame(() => {
           drawingGestureRef.current = true;
-          lineTools.addLineTool(currentTool);
+          lineTools.addLineTool(currentTool, undefined, drawingPreset(currentTool));
         });
         return;
       }
@@ -312,10 +331,26 @@ export default function Chart() {
       setActiveDrawingTool(null);
     });
     lineTools.subscribeLineToolsSingleClick((event) => {
-      if (!eraserModeRef.current || event.selectionState !== "selected") return;
-      lineTools.removeLineToolsById([event.selectedLineTool.id]);
-      persistDrawingState();
+      if (event.selectionState === "deselected") {
+        setSelectedDrawing(null);
+        return;
+      }
+      if (eraserModeRef.current) {
+        lineTools.removeLineToolsById([event.selectedLineTool.id]);
+        setSelectedDrawing(null);
+        persistDrawingState();
+        return;
+      }
+      if (event.selectedLineTool.points && event.selectedLineTool.options) {
+        setSelectedDrawing(event.selectedLineTool as LineToolExport<LineToolType>);
+      }
     });
+    lineTools.subscribeLineToolsDoubleClick((event) => {
+      setSelectedDrawing(event.selectedLineTool);
+      if (event.selectedLineTool.toolType === "Text") setTextDialogOpen(true);
+    });
+    const refreshDrawingOverlays = () => setDrawingViewportVersion((current) => current + 1);
+    chart.timeScale().subscribeVisibleLogicalRangeChange(refreshDrawingOverlays);
     lineToolsRef.current = lineTools;
 
     const onPointerDown = (event: PointerEvent) => {
@@ -436,6 +471,7 @@ export default function Chart() {
       element.removeEventListener("pointercancel", finishPan);
       element.removeEventListener("wheel", onAxisWheel, true);
       resizeObserver.disconnect();
+      chart.timeScale().unsubscribeVisibleLogicalRangeChange(refreshDrawingOverlays);
       lineTools.destroy();
       lineToolsRef.current = null;
       chart.remove();
@@ -461,6 +497,8 @@ export default function Chart() {
     drawingKeyRef.current = drawingStorageKey(symbol, resolution);
     hiddenDrawingsRef.current = null;
     setDrawingsHidden(false);
+    setSelectedDrawing(null);
+    setTextDialogOpen(false);
     lineToolsRef.current?.removeAllLineTools();
 
     (async () => {
@@ -522,8 +560,16 @@ export default function Chart() {
         });
       });
       const savedDrawings = localStorage.getItem(drawingKeyRef.current);
-      if (savedDrawings) lineToolsRef.current?.importLineTools(savedDrawings);
-      drawingHistoryRef.current = [savedDrawings ?? "[]"];
+      const normalizedDrawings = savedDrawings
+        ? normalizeDrawingState(savedDrawings)
+        : "[]";
+      if (savedDrawings) {
+        lineToolsRef.current?.importLineTools(normalizedDrawings);
+        if (normalizedDrawings !== savedDrawings) {
+          localStorage.setItem(drawingKeyRef.current, normalizedDrawings);
+        }
+      }
+      drawingHistoryRef.current = [normalizedDrawings];
       if (chartBars.length) {
         currentBarRef.current = chartBars[chartBars.length - 1];
         setLastPrice(currentBarRef.current.close.toFixed(2));
@@ -764,7 +810,7 @@ export default function Chart() {
     eraserModeRef.current = false;
     setActiveDrawingTool(type);
     setEraserMode(false);
-    lineToolsRef.current.addLineTool(type);
+    lineToolsRef.current.addLineTool(type, undefined, drawingPreset(type));
   };
 
   const selectCursor = () => {
@@ -833,14 +879,40 @@ export default function Chart() {
     if (drawingKeyRef.current) localStorage.removeItem(drawingKeyRef.current);
   };
 
-  const deleteSelectedDrawing = () => {
-    const beforeDelete = lineToolsRef.current?.exportLineTools();
-    lineToolsRef.current?.removeSelectedLineTools();
-    const drawingState = lineToolsRef.current?.exportLineTools();
-    if (drawingState && drawingState !== beforeDelete) {
-      drawingHistoryRef.current.push(drawingState);
-      if (drawingKeyRef.current) localStorage.setItem(drawingKeyRef.current, drawingState);
-    }
+  const clearIndicators = () => setActiveStudies([]);
+
+  const clearChartObjects = () => {
+    clearDrawings();
+    clearIndicators();
+  };
+
+  const persistCurrentDrawings = () => {
+    const lineTools = lineToolsRef.current;
+    if (!lineTools) return;
+    const drawingState = lineTools.exportLineTools();
+    if (drawingHistoryRef.current.at(-1) !== drawingState) drawingHistoryRef.current.push(drawingState);
+    if (drawingKeyRef.current) localStorage.setItem(drawingKeyRef.current, drawingState);
+  };
+
+  const updateSelectedDrawing = (drawing: LineToolExport<LineToolType>) => {
+    if (!lineToolsRef.current?.applyLineToolOptions(drawing)) return;
+    setSelectedDrawing(drawing);
+    persistCurrentDrawings();
+  };
+
+  const toggleSelectedDrawingLock = () => {
+    if (!selectedDrawing) return;
+    updateSelectedDrawing({
+      ...selectedDrawing,
+      options: { ...selectedDrawing.options, editable: selectedDrawing.options.editable === false } as typeof selectedDrawing.options,
+    });
+  };
+
+  const deleteSelectedDrawingById = () => {
+    if (!selectedDrawing || !lineToolsRef.current) return;
+    lineToolsRef.current.removeLineToolsById([selectedDrawing.id]);
+    setSelectedDrawing(null);
+    persistCurrentDrawings();
   };
 
   const quoteBar = visibleBar ?? currentBarRef.current;
@@ -916,8 +988,9 @@ export default function Chart() {
           onToggleLock={toggleDrawingLock}
           onToggleVisibility={toggleDrawingsVisibility}
           onZoomIn={zoomInChart}
-          onDeleteSelected={deleteSelectedDrawing}
           onClear={clearDrawings}
+          onClearIndicators={clearIndicators}
+          onClearAll={clearChartObjects}
         />
         <div className="chart-stage">
           <MarketDataPanel
@@ -939,6 +1012,27 @@ export default function Chart() {
             ref={containerRef}
             className={activeDrawingTool || eraserMode ? "chart--tool-active" : "chart--pan"}
           />
+          {selectedDrawing && (
+            <DrawingPropertiesToolbar
+              drawing={selectedDrawing}
+              onChange={updateSelectedDrawing}
+              onOpenSettings={() => {
+                if (selectedDrawing.toolType === "Text") setTextDialogOpen(true);
+              }}
+              onToggleLock={toggleSelectedDrawingLock}
+              onDelete={deleteSelectedDrawingById}
+            />
+          )}
+          {selectedDrawing?.toolType === "PriceRange" && chartRef.current && seriesRef.current && (
+            <PriceRangeStats
+              drawing={selectedDrawing}
+              chart={chartRef.current}
+              series={seriesRef.current}
+              chartTop={containerRef.current?.offsetTop ?? 40}
+              bars={sortedBars}
+              viewportVersion={drawingViewportVersion}
+            />
+          )}
           <ChartFooter
             rangeDays={rangeDays}
             scaleMode={scaleMode}
@@ -949,6 +1043,19 @@ export default function Chart() {
           />
         </div>
       </div>
+      {selectedDrawing?.toolType === "Text" && textDialogOpen && (
+        <TextToolDialog
+          text={selectedDrawing.options.text}
+          onCancel={() => setTextDialogOpen(false)}
+          onConfirm={(text) => {
+            updateSelectedDrawing({
+              ...selectedDrawing,
+              options: { ...selectedDrawing.options, text } as typeof selectedDrawing.options,
+            });
+            setTextDialogOpen(false);
+          }}
+        />
+      )}
     </div>
   );
 }
