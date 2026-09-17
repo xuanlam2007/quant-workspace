@@ -1,5 +1,5 @@
 import type { Bar } from "@/lib/dchart-api";
-import type { MaType } from "./chart-config";
+import type { MaType } from "../config/chart-config";
 
 export type MaPoint = { time: Bar["time"]; value: number };
 
