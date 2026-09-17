@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { INDICATOR_SETTINGS_KEY, STUDY_CATALOG, type MaType, type StudyId } from "./chart-config";
+import { INDICATOR_SETTINGS_KEY, STUDY_CATALOG, type MaType, type StudyId } from "../config/chart-config";
 
 export function useIndicatorSettings() {
   const [activeStudies, setActiveStudies] = useState<StudyId[]>(["volume"]);
