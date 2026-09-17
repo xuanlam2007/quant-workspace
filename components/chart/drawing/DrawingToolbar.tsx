@@ -3,7 +3,7 @@ import type { LineToolType } from "lightweight-charts-line-tools-core";
 import {
   DRAWING_TOOL_GROUPS,
   type DrawingToolGroup,
-} from "./chart-config";
+} from "../config/chart-config";
 import {
   VNDIRECT_TOOLBAR_ICONS,
   type VndirectToolbarIconName,
@@ -27,8 +27,9 @@ interface DrawingToolbarProps {
   onToggleLock: () => void;
   onToggleVisibility: () => void;
   onZoomIn: () => void;
-  onDeleteSelected: () => void;
   onClear: () => void;
+  onClearIndicators: () => void;
+  onClearAll: () => void;
 }
 
 function ToolbarIcon({ name }: { name: ToolbarIconName }) {
@@ -42,7 +43,11 @@ function ToolbarIcon({ name }: { name: ToolbarIconName }) {
 }
 
 function activeGroupIcon(group: DrawingToolGroup, activeTool: LineToolType | null) {
-  return group.tools.find((tool) => tool.type === activeTool)?.icon ?? group.icon;
+  return group.tools.find((tool) => tool.type === activeTool && tool.available !== false)?.icon ?? group.icon;
+}
+
+function activeGroupTool(group: DrawingToolGroup, activeTool: LineToolType | null) {
+  return group.tools.find((tool) => tool.type === activeTool && tool.available !== false) ?? group.tools[0];
 }
 
 export function DrawingToolbar({
@@ -60,8 +65,9 @@ export function DrawingToolbar({
   onToggleLock,
   onToggleVisibility,
   onZoomIn,
-  onDeleteSelected,
   onClear,
+  onClearIndicators,
+  onClearAll,
 }: DrawingToolbarProps) {
   const toolbarRef = useRef<HTMLElement>(null);
   const [openMenu, setOpenMenu] = useState<string | null>(null);
@@ -91,13 +97,24 @@ export function DrawingToolbar({
     <aside ref={toolbarRef} className="drawing-toolbar" aria-label="Công cụ vẽ">
       <div className="toolbar-group">
         <button
-          className={`toolbar-button ${activeTool === null && !eraserMode ? "toolbar-button--active" : ""}`}
-          title="Chế độ con trỏ"
+          className={`toolbar-button toolbar-button--split ${activeTool === null && !eraserMode ? "toolbar-button--active" : ""}`}
+          data-tooltip="Chế độ con trỏ"
+          data-tooltip-placement="right"
           aria-label="Chế độ con trỏ"
+          onClick={onSelectCursor}
+        >
+          <ToolbarIcon name={eraserMode ? "eraser" : "cursor"} />
+        </button>
+        <button
+          className="toolbar-menu-trigger"
+          data-tooltip="Các chế độ con trỏ"
+          data-tooltip-placement="right"
+          aria-label="Mở các chế độ con trỏ"
+          aria-haspopup="menu"
           aria-expanded={openMenu === "cursor"}
           onClick={() => toggleMenu("cursor")}
         >
-          <ToolbarIcon name={eraserMode ? "eraser" : "cursor"} />
+          <span aria-hidden="true" />
         </button>
         {openMenu === "cursor" && (
           <div className="toolbar-menu" role="menu">
@@ -113,27 +130,45 @@ export function DrawingToolbar({
 
       {DRAWING_TOOL_GROUPS.map((group) => {
         const selected = group.tools.some((tool) => tool.type === activeTool);
+        const defaultTool = activeGroupTool(group, activeTool);
         return (
           <div className="toolbar-group" key={group.id}>
             <button
-              className={`toolbar-button ${selected ? "toolbar-button--active" : ""}`}
-              title={group.title}
-              aria-label={group.title}
-              aria-expanded={openMenu === group.id}
-              onClick={() => toggleMenu(group.id)}
+              className={`toolbar-button toolbar-button--split ${selected ? "toolbar-button--active" : ""}`}
+              data-tooltip={defaultTool.id === "trend-line" ? "Đường Xu hướng    Shift · Vẽ một đường thẳng với góc 45 độ" : defaultTool.title}
+              data-tooltip-placement="right"
+              aria-label={`Chọn ${defaultTool.title}`}
+              onClick={() => selectTool(defaultTool.type)}
               disabled={locked}
             >
               <ToolbarIcon name={activeGroupIcon(group, activeTool)} />
             </button>
+            {group.tools.length > 1 && (
+              <button
+                className="toolbar-menu-trigger"
+                data-tooltip={`Các công cụ ${group.title}`}
+                data-tooltip-placement="right"
+                aria-label={`Mở các công cụ ${group.title}`}
+                aria-haspopup="menu"
+                aria-expanded={openMenu === group.id}
+                onClick={() => toggleMenu(group.id)}
+                disabled={locked}
+              >
+                <span aria-hidden="true" />
+              </button>
+            )}
             {openMenu === group.id && (
               <div className="toolbar-menu" role="menu">
                 <div className="toolbar-menu__title">{group.title}</div>
                 {group.tools.map((tool) => (
                   <button
                     className={activeTool === tool.type ? "toolbar-menu__active" : ""}
-                    key={tool.type}
+                    key={tool.id}
                     role="menuitem"
                     onClick={() => selectTool(tool.type)}
+                    disabled={tool.available === false}
+                    aria-disabled={tool.available === false}
+                    data-tooltip={tool.available === false ? "Chưa được package line-tools hiện tại hỗ trợ" : undefined}
                   >
                     <ToolbarIcon name={tool.icon} /><span>{tool.title}</span>
                   </button>
@@ -145,15 +180,16 @@ export function DrawingToolbar({
       })}
 
       <span className="toolbar-divider" />
-      <button className="toolbar-button" title="Đo biên độ giá" aria-label="Đo biên độ giá" onClick={() => selectTool("PriceRange")} disabled={locked}>
+      <button className="toolbar-button" data-tooltip="Đo biên độ giá" data-tooltip-placement="right" aria-label="Đo biên độ giá" onClick={() => selectTool("PriceRange")} disabled={locked}>
         <ToolbarIcon name="measure" />
       </button>
-      <button className="toolbar-button" title="Phóng to" aria-label="Phóng to" onClick={onZoomIn}>
+      <button className="toolbar-button" data-tooltip="Phóng to" data-tooltip-placement="right" aria-label="Phóng to" onClick={onZoomIn}>
         <ToolbarIcon name="zoom" />
       </button>
       <button
         className={`toolbar-button ${magnetMode > 0 ? "toolbar-button--active" : ""}`}
-        title={`Nam châm: ${magnetMode === 0 ? "tắt" : magnetMode === 1 ? "yếu" : "mạnh"}`}
+        data-tooltip={`Nam châm: ${magnetMode === 0 ? "tắt" : magnetMode === 1 ? "yếu" : "mạnh"}`}
+        data-tooltip-placement="right"
         aria-label="Thay đổi chế độ nam châm"
         onClick={onToggleMagnet}
         disabled={locked}
@@ -163,7 +199,8 @@ export function DrawingToolbar({
       </button>
       <button
         className={`toolbar-button ${stayInDrawingMode ? "toolbar-button--active" : ""}`}
-        title="Giữ chế độ vẽ"
+        data-tooltip="Giữ chế độ vẽ"
+        data-tooltip-placement="right"
         aria-label="Giữ chế độ vẽ"
         aria-pressed={stayInDrawingMode}
         onClick={onToggleStayInDrawingMode}
@@ -173,7 +210,8 @@ export function DrawingToolbar({
       </button>
       <button
         className={`toolbar-button ${locked ? "toolbar-button--active" : ""}`}
-        title={locked ? "Mở khóa bản vẽ" : "Khóa bản vẽ"}
+        data-tooltip={locked ? "Mở khóa bản vẽ" : "Khóa bản vẽ"}
+        data-tooltip-placement="right"
         aria-label={locked ? "Mở khóa bản vẽ" : "Khóa bản vẽ"}
         onClick={onToggleLock}
       >
@@ -181,7 +219,8 @@ export function DrawingToolbar({
       </button>
       <button
         className={`toolbar-button ${drawingsHidden ? "toolbar-button--active" : ""}`}
-        title={drawingsHidden ? "Hiện bản vẽ" : "Ẩn bản vẽ"}
+        data-tooltip={drawingsHidden ? "Hiện bản vẽ" : "Ẩn bản vẽ"}
+        data-tooltip-placement="right"
         aria-label={drawingsHidden ? "Hiện bản vẽ" : "Ẩn bản vẽ"}
         onClick={onToggleVisibility}
       >
@@ -190,18 +229,30 @@ export function DrawingToolbar({
 
       <div className="toolbar-group">
         <button
-          className="toolbar-button toolbar-button--danger"
-          title="Xóa bản vẽ"
-          aria-label="Xóa bản vẽ"
-          aria-expanded={openMenu === "delete"}
-          onClick={() => toggleMenu("delete")}
+          className="toolbar-button toolbar-button--split toolbar-button--danger"
+          data-tooltip="Xóa tất cả bản vẽ"
+          data-tooltip-placement="right"
+          aria-label="Xóa tất cả bản vẽ"
+          onClick={onClear}
         >
           <ToolbarIcon name="trash" />
         </button>
+        <button
+          className="toolbar-menu-trigger"
+          data-tooltip="Các tùy chọn xóa"
+          data-tooltip-placement="right"
+          aria-label="Mở các tùy chọn xóa"
+          aria-haspopup="menu"
+          aria-expanded={openMenu === "delete"}
+          onClick={() => toggleMenu("delete")}
+        >
+          <span aria-hidden="true" />
+        </button>
         {openMenu === "delete" && (
           <div className="toolbar-menu toolbar-menu--bottom" role="menu">
-            <button role="menuitem" onClick={() => { onDeleteSelected(); setOpenMenu(null); }}>Xóa bản vẽ đã chọn</button>
-            <button className="toolbar-menu__danger" role="menuitem" onClick={() => { onClear(); setOpenMenu(null); }}>Xóa tất cả bản vẽ</button>
+            <button role="menuitem" onClick={() => { onClear(); setOpenMenu(null); }}>Xóa tất cả bản vẽ</button>
+            <button role="menuitem" onClick={() => { onClearIndicators(); setOpenMenu(null); }}>Xóa tất cả chỉ báo</button>
+            <button className="toolbar-menu__danger" role="menuitem" onClick={() => { onClearAll(); setOpenMenu(null); }}>Xóa bản vẽ và chỉ báo</button>
           </div>
         )}
       </div>
