@@ -309,10 +309,10 @@ select {
 .toolbar-menu-trigger {
   position: absolute;
   top: 0;
-  right: -4px;
+  left: 100%;
   z-index: 2;
   display: grid;
-  width: 12px;
+  width: 8px;
   height: 34px;
   place-items: center;
   padding: 0;
@@ -322,7 +322,7 @@ select {
   background: transparent;
   cursor: pointer;
   opacity: 0;
-  transform: translateX(3px);
+  transform: translateX(-2px);
   transition: opacity 100ms ease, transform 100ms ease;
 }
 
@@ -330,7 +330,7 @@ select {
 .toolbar-group:focus-within > .toolbar-menu-trigger,
 .toolbar-menu-trigger[aria-expanded="true"] {
   opacity: 1;
-  transform: translateX(0);
+  transform: translateX(-1px);
 }
 
 .toolbar-menu-trigger:hover {
@@ -338,12 +338,59 @@ select {
   background: transparent;
 }
 
-.toolbar-menu-trigger span {
-  width: 0;
-  height: 0;
-  border-top: 4px solid transparent;
-  border-bottom: 4px solid transparent;
-  border-left: 5px solid currentColor;
+.toolbar-menu-trigger svg {
+  display: block;
+  width: 5px;
+  height: 8px;
+  fill: currentColor;
+}
+
+.toolbar-tooltip {
+  position: absolute;
+  top: 50%;
+  left: calc(100% + 8px);
+  z-index: 300;
+  display: flex;
+  width: max-content;
+  max-width: 420px;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 7px;
+  border: 1px solid #454c59;
+  border-radius: 3px;
+  color: #d8dde7;
+  background: #363b47;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, .35);
+  font: 500 12px/1.25 var(--font-ui);
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-3px, -50%);
+  transition: opacity 80ms ease 420ms, transform 80ms ease 420ms;
+  white-space: nowrap;
+}
+
+.toolbar-tooltip strong {
+  color: #fff;
+  font-weight: 600;
+}
+
+.toolbar-tooltip kbd {
+  padding: 0 3px;
+  border: 1px solid #f2a23a;
+  border-radius: 2px;
+  color: #f2a23a;
+  background: transparent;
+  font: 500 12px/1.2 var(--font-ui);
+}
+
+.toolbar-tooltip__description {
+  color: #f2a23a;
+}
+
+.toolbar-button:hover > .toolbar-tooltip,
+.toolbar-button:focus-visible > .toolbar-tooltip {
+  opacity: 1;
+  transform: translate(0, -50%);
 }
 
 .toolbar-icon {
