@@ -322,7 +322,7 @@ select {
   background: transparent;
   cursor: pointer;
   opacity: 0;
-  transform: translateX(-2px);
+  transform: translateX(0);
   transition: opacity 100ms ease, transform 100ms ease;
 }
 
@@ -330,7 +330,7 @@ select {
 .toolbar-group:focus-within > .toolbar-menu-trigger,
 .toolbar-menu-trigger[aria-expanded="true"] {
   opacity: 1;
-  transform: translateX(-1px);
+  transform: translateX(0);
 }
 
 .toolbar-menu-trigger:hover {
@@ -340,8 +340,8 @@ select {
 
 .toolbar-menu-trigger svg {
   display: block;
-  width: 5px;
-  height: 8px;
+  width: 4px;
+  height: 7px;
   fill: currentColor;
 }
 
@@ -372,6 +372,13 @@ select {
 .toolbar-tooltip strong {
   color: #fff;
   font-weight: 600;
+}
+
+.toolbar-tooltip__divider {
+  align-self: stretch;
+  width: 1px;
+  margin: -4px 0;
+  background: #59606e;
 }
 
 .toolbar-tooltip kbd {
