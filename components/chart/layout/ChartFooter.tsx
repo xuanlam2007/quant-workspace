@@ -1,4 +1,4 @@
-import { RANGE_PRESETS, type RangePreset, type ScaleMode } from "./chart-config";
+import { RANGE_PRESETS, type RangePreset, type ScaleMode } from "../config/chart-config";
 
 interface ChartFooterProps {
   rangeDays?: number;
@@ -18,7 +18,7 @@ export function ChartFooter({ rangeDays, scaleMode, autoScale, onRangeChange, on
             {preset.label}
           </button>
         ))}
-        <button title="Return to the selected timeframe's default history" onClick={() => onRangeChange()}>↻</button>
+        <button data-tooltip="Trở về phạm vi mặc định của khung thời gian" aria-label="Trở về phạm vi mặc định" onClick={() => onRangeChange()}>↻</button>
       </div>
       <div className="chart-footer__settings">
         <span>UTC+7</span>
