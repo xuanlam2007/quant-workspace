@@ -1,6 +1,6 @@
 import type { Bar } from "@/lib/dchart-api";
-import { RESOLUTIONS, type MaType } from "./chart-config";
-import { formatVolume } from "./chart-utils";
+import { RESOLUTIONS, type MaType } from "../config/chart-config";
+import { formatVolume } from "../core/chart-utils";
 
 interface MarketDataPanelProps {
   symbol: string;
@@ -50,7 +50,7 @@ export function MarketDataPanel({
           <span className="ohlcv-strip__volume">Vol <b>{quoteBar ? formatVolume(quoteBar.volume) : "N/A"}</b></span>
         </div>
         {volumeEnabled && (
-          <label className="ma-control" title="Volume MA settings">
+          <label className="ma-control" data-tooltip="Cài đặt MA khối lượng">
             MA
             <input type="number" min="2" max="500" value={maLength} aria-label="MA length" onChange={(event) => onMaLengthChange(Math.max(2, Math.min(500, Number(event.target.value) || 2)))} />
             <select value={maType} onChange={(event) => onMaTypeChange(event.target.value as MaType)} aria-label="MA type">
@@ -67,7 +67,7 @@ export function MarketDataPanel({
           <span className="indicator-data__name">Khối lượng {maLength} {maType} {smoothingLength}</span>
           <span className="indicator-data__volume">{quoteBar ? formatVolume(quoteBar.volume) : "N/A"}</span>
           <span className="indicator-data__ma">{currentVolumeMa !== undefined ? formatVolume(currentVolumeMa) : "N/A"}</span>
-          <span className="indicator-data__actions" title="Volume indicator controls">◉ ⚙ × ···</span>
+          <span className="indicator-data__actions" data-tooltip="Điều khiển chỉ báo khối lượng">◉ ⚙ × ···</span>
         </div>
       )}
     </>
