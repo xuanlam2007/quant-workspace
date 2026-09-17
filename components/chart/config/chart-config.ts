@@ -37,12 +37,15 @@ export type RangePreset = (typeof RANGE_PRESETS)[number];
 export type DrawingIcon =
   | "trend" | "arrow" | "ray" | "extended" | "horizontal" | "horizontalRay"
   | "vertical" | "cross" | "fib" | "rectangle" | "text" | "callout"
-  | "priceRange" | "position";
+  | "priceRange" | "position" | "positionShort" | "prediction" | "dateRange"
+  | "datePriceRange" | "barsPattern" | "ghostFeed" | "projection" | "volumeProfile";
 
 export interface DrawingToolOption {
+  id: string;
   type: LineToolType;
   icon: DrawingIcon;
   title: string;
+  available?: boolean;
 }
 
 export interface DrawingToolGroup {
@@ -58,14 +61,14 @@ export const DRAWING_TOOL_GROUPS: DrawingToolGroup[] = [
     icon: "trend",
     title: "Đường xu hướng",
     tools: [
-      { type: "TrendLine", icon: "trend", title: "Đường xu hướng" },
-      { type: "Arrow", icon: "arrow", title: "Mũi tên" },
-      { type: "Ray", icon: "ray", title: "Tia" },
-      { type: "ExtendedLine", icon: "extended", title: "Đường kéo dài" },
-      { type: "HorizontalLine", icon: "horizontal", title: "Đường ngang" },
-      { type: "HorizontalRay", icon: "horizontalRay", title: "Tia ngang" },
-      { type: "VerticalLine", icon: "vertical", title: "Đường dọc" },
-      { type: "CrossLine", icon: "cross", title: "Đường chữ thập" },
+      { id: "trend-line", type: "TrendLine", icon: "trend", title: "Đường xu hướng" },
+      { id: "arrow", type: "Arrow", icon: "arrow", title: "Mũi tên" },
+      { id: "ray", type: "Ray", icon: "ray", title: "Tia" },
+      { id: "extended-line", type: "ExtendedLine", icon: "extended", title: "Đường kéo dài" },
+      { id: "horizontal-line", type: "HorizontalLine", icon: "horizontal", title: "Đường ngang" },
+      { id: "horizontal-ray", type: "HorizontalRay", icon: "horizontalRay", title: "Tia ngang" },
+      { id: "vertical-line", type: "VerticalLine", icon: "vertical", title: "Đường dọc" },
+      { id: "cross-line", type: "CrossLine", icon: "cross", title: "Đường chữ thập" },
     ],
   },
   {
@@ -73,7 +76,7 @@ export const DRAWING_TOOL_GROUPS: DrawingToolGroup[] = [
     icon: "fib",
     title: "Gann và Fibonacci",
     tools: [
-      { type: "FibRetracement", icon: "fib", title: "Fibonacci thoái lui" },
+      { id: "fib-retracement", type: "FibRetracement", icon: "fib", title: "Fibonacci thoái lui" },
     ],
   },
   {
@@ -81,7 +84,7 @@ export const DRAWING_TOOL_GROUPS: DrawingToolGroup[] = [
     icon: "rectangle",
     title: "Hình học",
     tools: [
-      { type: "Rectangle", icon: "rectangle", title: "Hình chữ nhật" },
+      { id: "rectangle", type: "Rectangle", icon: "rectangle", title: "Hình chữ nhật" },
     ],
   },
   {
@@ -89,8 +92,8 @@ export const DRAWING_TOOL_GROUPS: DrawingToolGroup[] = [
     icon: "text",
     title: "Chú thích",
     tools: [
-      { type: "Text", icon: "text", title: "Văn bản" },
-      { type: "Callout", icon: "callout", title: "Chú thích có đường dẫn" },
+      { id: "text", type: "Text", icon: "text", title: "Văn bản" },
+      { id: "callout", type: "Callout", icon: "callout", title: "Chú thích có đường dẫn" },
     ],
   },
   {
@@ -98,8 +101,16 @@ export const DRAWING_TOOL_GROUPS: DrawingToolGroup[] = [
     icon: "position",
     title: "Dự báo và đo lường",
     tools: [
-      { type: "LongShortPosition", icon: "position", title: "Vị thế mua hoặc bán" },
-      { type: "PriceRange", icon: "priceRange", title: "Biên độ giá" },
+      { id: "long-position", type: "LongShortPosition", icon: "position", title: "Thế giá lên" },
+      { id: "short-position", type: "LongShortPosition", icon: "positionShort", title: "Thế giá xuống" },
+      { id: "prediction", type: "LongShortPosition", icon: "prediction", title: "Dự đoán", available: false },
+      { id: "date-range", type: "PriceRange", icon: "dateRange", title: "Phạm vi Ngày", available: false },
+      { id: "price-range", type: "PriceRange", icon: "priceRange", title: "Khoảng Giá" },
+      { id: "date-price-range", type: "PriceRange", icon: "datePriceRange", title: "Phạm vi Ngày và Giá", available: false },
+      { id: "bars-pattern", type: "Path", icon: "barsPattern", title: "Mẫu hình Thanh", available: false },
+      { id: "ghost-feed", type: "Path", icon: "ghostFeed", title: "Mô hình Ghost Feed", available: false },
+      { id: "projection", type: "TrendLine", icon: "projection", title: "Phép chiếu", available: false },
+      { id: "fixed-range-volume", type: "Rectangle", icon: "volumeProfile", title: "Cố định Range Volume Profile", available: false },
     ],
   },
 ];
