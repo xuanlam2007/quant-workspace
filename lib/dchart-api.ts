@@ -21,6 +21,30 @@ interface RawHistory {
   s: "ok" | "no_data" | "error";
 }
 
+function aggregateDailyBars(bars: Bar[], resolution: "W" | "M"): Bar[] {
+  const grouped = new Map<number, Bar>();
+
+  for (const bar of bars) {
+    const date = new Date(Number(bar.time) * 1000);
+    const time = resolution === "W"
+      ? Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() - ((date.getUTCDay() + 6) % 7)) / 1000
+      : Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1) / 1000;
+    const current = grouped.get(time);
+
+    if (!current) {
+      grouped.set(time, { ...bar, time: time as UTCTimestamp });
+      continue;
+    }
+
+    current.high = Math.max(current.high, bar.high);
+    current.low = Math.min(current.low, bar.low);
+    current.close = bar.close;
+    current.volume += bar.volume;
+  }
+
+  return [...grouped.values()];
+}
+
 /** Lấy một trang dữ liệu lịch sử để khởi tạo biểu đồ */
 export async function fetchHistory(
   symbol: string,
@@ -28,8 +52,10 @@ export async function fetchHistory(
   from: number,
   to: number
 ): Promise<Bar[]> {
+  // API chỉ cung cấp nến ngày, thư viện VNDIRECT tự tổng hợp tuần và tháng.
+  const requestResolution = resolution === "W" || resolution === "M" ? "D" : resolution;
   const params = new URLSearchParams({
-    resolution,
+    resolution: requestResolution,
     symbol,
     from: String(from),
     to: String(to),
@@ -48,7 +74,7 @@ export async function fetchHistory(
     volume: data.v[i],
   }));
 
-  return ["D", "W", "M"].includes(resolution)
-    ? bars
-    : bars.filter((bar) => bar.volume > 0);
+  return resolution === "W" || resolution === "M"
+    ? aggregateDailyBars(bars, resolution)
+    : bars;
 }
