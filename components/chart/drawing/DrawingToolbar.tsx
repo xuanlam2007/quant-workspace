@@ -54,8 +54,8 @@ function ToolTooltip({ title, hotkey, description }: { title: string; hotkey?: s
   return (
     <span className="toolbar-tooltip" role="tooltip">
       <strong>{title}</strong>
-      {hotkey && <kbd>{hotkey}</kbd>}
-      {description && <span className="toolbar-tooltip__description">· {description}</span>}
+      {hotkey && <><span className="toolbar-tooltip__divider" /><kbd>{hotkey}</kbd></>}
+      {description && <span className="toolbar-tooltip__description">- {description}</span>}
     </span>
   );
 }
@@ -147,7 +147,9 @@ export function DrawingToolbar({
       </div>
 
       {DRAWING_TOOL_GROUPS.map((group) => {
-        const selected = group.tools.some((tool) => tool.type === activeTool);
+        const selected = group.tools.some(
+          (tool) => tool.type === activeTool && tool.available !== false,
+        );
         const defaultTool = activeGroupTool(group, activeTool);
         return (
           <div className="toolbar-group" key={group.id}>
