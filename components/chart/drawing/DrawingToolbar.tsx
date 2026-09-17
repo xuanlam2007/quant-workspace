@@ -42,6 +42,24 @@ function ToolbarIcon({ name }: { name: ToolbarIconName }) {
   );
 }
 
+function MenuCaret() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 10 16" width="10" height="16">
+      <path d="M.6 1.4 2 0l8 8-8 8-1.4-1.4 6.389-6.532L.6 1.4Z" />
+    </svg>
+  );
+}
+
+function ToolTooltip({ title, hotkey, description }: { title: string; hotkey?: string; description?: string }) {
+  return (
+    <span className="toolbar-tooltip" role="tooltip">
+      <strong>{title}</strong>
+      {hotkey && <kbd>{hotkey}</kbd>}
+      {description && <span className="toolbar-tooltip__description">· {description}</span>}
+    </span>
+  );
+}
+
 function activeGroupIcon(group: DrawingToolGroup, activeTool: LineToolType | null) {
   return group.tools.find((tool) => tool.type === activeTool && tool.available !== false)?.icon ?? group.icon;
 }
@@ -114,7 +132,7 @@ export function DrawingToolbar({
           aria-expanded={openMenu === "cursor"}
           onClick={() => toggleMenu("cursor")}
         >
-          <span aria-hidden="true" />
+          <MenuCaret />
         </button>
         {openMenu === "cursor" && (
           <div className="toolbar-menu" role="menu">
@@ -135,13 +153,16 @@ export function DrawingToolbar({
           <div className="toolbar-group" key={group.id}>
             <button
               className={`toolbar-button toolbar-button--split ${selected ? "toolbar-button--active" : ""}`}
-              data-tooltip={defaultTool.id === "trend-line" ? "Đường Xu hướng    Shift · Vẽ một đường thẳng với góc 45 độ" : defaultTool.title}
-              data-tooltip-placement="right"
               aria-label={`Chọn ${defaultTool.title}`}
               onClick={() => selectTool(defaultTool.type)}
               disabled={locked}
             >
               <ToolbarIcon name={activeGroupIcon(group, activeTool)} />
+              <ToolTooltip
+                title={defaultTool.id === "trend-line" ? "Đường Xu hướng" : defaultTool.title}
+                hotkey={defaultTool.id === "trend-line" ? "Shift" : undefined}
+                description={defaultTool.id === "trend-line" ? "Vẽ một đường thẳng với góc 45 độ" : undefined}
+              />
             </button>
             {group.tools.length > 1 && (
               <button
@@ -154,7 +175,7 @@ export function DrawingToolbar({
                 onClick={() => toggleMenu(group.id)}
                 disabled={locked}
               >
-                <span aria-hidden="true" />
+                <MenuCaret />
               </button>
             )}
             {openMenu === group.id && (
@@ -186,6 +207,7 @@ export function DrawingToolbar({
       <button className="toolbar-button" data-tooltip="Phóng to" data-tooltip-placement="right" aria-label="Phóng to" onClick={onZoomIn}>
         <ToolbarIcon name="zoom" />
       </button>
+      <span className="toolbar-divider" />
       <button
         className={`toolbar-button ${magnetMode > 0 ? "toolbar-button--active" : ""}`}
         data-tooltip={`Nam châm: ${magnetMode === 0 ? "tắt" : magnetMode === 1 ? "yếu" : "mạnh"}`}
@@ -227,6 +249,7 @@ export function DrawingToolbar({
         <ToolbarIcon name={drawingsHidden ? "hide" : "show"} />
       </button>
 
+      <span className="toolbar-divider" />
       <div className="toolbar-group">
         <button
           className="toolbar-button toolbar-button--split toolbar-button--danger"
@@ -246,7 +269,7 @@ export function DrawingToolbar({
           aria-expanded={openMenu === "delete"}
           onClick={() => toggleMenu("delete")}
         >
-          <span aria-hidden="true" />
+          <MenuCaret />
         </button>
         {openMenu === "delete" && (
           <div className="toolbar-menu toolbar-menu--bottom" role="menu">
