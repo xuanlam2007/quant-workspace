@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { ConnStatus } from "@/lib/dchart-socket";
-import { RESOLUTIONS, STUDY_CATALOG, SYMBOLS, TIMEFRAME_GROUPS, type StudyId } from "./chart-config";
+import { RESOLUTIONS, STUDY_CATALOG, SYMBOLS, TIMEFRAME_GROUPS, type StudyId } from "../config/chart-config";
 
 interface ChartHeaderProps {
   symbol: string;
@@ -52,7 +52,7 @@ export function ChartHeader({
   return (
     <header className="chart-header">
       <div className="symbol-row">
-        <div className="product-mark" title="VNDIRECT chart workspace" aria-label="VNDIRECT chart workspace">D</div>
+        <div className="product-mark" data-tooltip="Không gian biểu đồ VNDIRECT" aria-label="Không gian biểu đồ VNDIRECT">D</div>
         <details
           className="selector-menu symbol-menu"
           open={symbolMenuOpen}
@@ -137,10 +137,10 @@ export function ChartHeader({
         <span className="connection-label">{status}</span>
         <span id="last-price">{lastPrice}</span>
         <span className="header-separator" />
-        <button className="header-icon-button" title="Download chart snapshot" aria-label="Download chart snapshot" onClick={onDownloadSnapshot}>
+        <button className="header-icon-button" data-tooltip="Tải ảnh biểu đồ" aria-label="Tải ảnh biểu đồ" onClick={onDownloadSnapshot}>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 5 10 3h4l1.5 2H19a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h3.5ZM12 8a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9Zm0 2a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5Z" /></svg>
         </button>
-        <button className={isFullscreen ? "header-icon-button header-button--active" : "header-icon-button"} title="Toggle fullscreen" aria-label="Toggle fullscreen" onClick={onToggleFullscreen}>
+        <button className={isFullscreen ? "header-icon-button header-button--active" : "header-icon-button"} data-tooltip={isFullscreen ? "Thoát toàn màn hình" : "Toàn màn hình"} aria-label={isFullscreen ? "Thoát toàn màn hình" : "Toàn màn hình"} onClick={onToggleFullscreen}>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6v2H6v4H4V4Zm10 0h6v6h-2V6h-4V4ZM4 14h2v4h4v2H4v-6Zm14 0h2v6h-6v-2h4v-4Z" /></svg>
         </button>
       </div>
