@@ -247,30 +247,31 @@ select {
 .drawing-toolbar::-webkit-scrollbar { display: none; }
 
 .drawing-toolbar {
-  width: 48px;
-  flex: 0 0 48px;
+  width: 54px;
+  flex: 0 0 54px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
-  padding: 8px 6px;
+  gap: 3px;
+  padding: 7px;
   border-right: 1px solid var(--border);
   background: var(--panel);
-  z-index: 2;
+  overflow: visible;
+  z-index: 30;
 }
 
 .toolbar-button {
+  position: relative;
   display: grid;
   place-items: center;
-  width: 34px;
+  width: 38px;
   height: 34px;
   padding: 0;
   border: 1px solid transparent;
-  border-radius: 5px;
+  border-radius: 4px;
   color: var(--text);
   background: transparent;
   cursor: pointer;
-  font: 600 16px/1 var(--font-ui);
 }
 
 .toolbar-button:hover:not(:disabled),
@@ -291,16 +292,95 @@ select {
 }
 
 .toolbar-divider {
-  width: 24px;
+  width: 38px;
   height: 1px;
-  margin: 4px 0;
+  margin: 3px 0;
   background: var(--border);
+}
+
+.toolbar-group {
+  position: relative;
+}
+
+.toolbar-icon {
+  width: 22px;
+  height: 22px;
+  pointer-events: none;
+}
+
+.toolbar-badge {
+  position: absolute;
+  right: 2px;
+  bottom: 1px;
+  color: #aeb8ca;
+  font: 600 8px/1 var(--font-mono);
+}
+
+.toolbar-menu {
+  position: absolute;
+  top: 0;
+  left: 43px;
+  width: max-content;
+  min-width: 210px;
+  max-height: min(420px, calc(100vh - 130px));
+  padding: 6px;
+  border: 1px solid #3a4356;
+  border-radius: 5px;
+  background: #1b202c;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  overflow-y: auto;
+  z-index: 100;
+}
+
+.toolbar-menu--bottom {
+  top: auto;
+  bottom: 0;
+}
+
+.toolbar-menu__title {
+  padding: 7px 9px 5px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.toolbar-menu button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 36px;
+  padding: 6px 9px;
+  border: 0;
+  border-radius: 4px;
+  color: var(--text);
+  background: transparent;
+  cursor: pointer;
+  font: 500 13px/1.25 var(--font-ui);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.toolbar-menu button:hover,
+.toolbar-menu__active {
+  background: #2a3141 !important;
+}
+
+.toolbar-menu__danger {
+  color: #ff727d !important;
 }
 
 main#chart {
   flex: 1;
   min-width: 0;
   position: relative;
+}
+
+main#chart.chart--pan,
+main#chart.chart--pan canvas {
+  cursor: crosshair !important;
 }
 
 .chart-stage {
@@ -412,8 +492,9 @@ main#chart {
   .product-mark, .header-separator { display: none; }
   .chart-header { padding-inline: 7px; }
   .symbol-row { gap: 5px; }
-  .drawing-toolbar { width: 42px; flex-basis: 42px; padding-inline: 4px; }
+  .drawing-toolbar { width: 46px; flex-basis: 46px; padding-inline: 4px; }
   .toolbar-button { width: 32px; height: 32px; }
+  .toolbar-menu { left: 37px; }
   #last-price { min-width: 62px; font-size: 13px; }
   .status-row { gap: 4px; }
 }
