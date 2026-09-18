@@ -53,7 +53,7 @@ export function DrawingAxisRangeHighlight({
         <div
           className="drawing-axis-range drawing-axis-range--time"
           style={{
-            left: xStart,
+            left: priceScaleWidth + xStart,
             top: chartTop + paneHeight,
             width: xEnd - xStart,
             height: timeScaleHeight,
