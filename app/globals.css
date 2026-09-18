@@ -348,26 +348,29 @@ header {
 }
 
 .symbol-search-modal__input-row {
+  position: relative;
   display: flex;
-  height: 46px;
+  height: 40px;
   align-items: center;
-  gap: 10px;
-  padding: 0 20px;
-  border-bottom: 1px solid #2a2e39;
+  padding: 0 16px 0 47px;
+  border-top: 1px solid #434651;
+  border-bottom: 1px solid #434651;
   background: transparent;
+  box-sizing: content-box;
 }
 
 .symbol-search-modal__search-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: #787b86;
-  flex-shrink: 0;
+  position: absolute;
+  top: calc(50% - 9px);
+  left: 20px;
+  height: 18px;
+  color: #a3a6af;
+  pointer-events: none;
 }
 
 .symbol-search-modal__search-icon svg {
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   display: block;
 }
 
@@ -377,34 +380,18 @@ header {
   border: 0;
   outline: 0;
   background: transparent;
-  color: #d1d4dc;
-  font-size: 14px;
+  color: #a3a6af;
+  font-size: 16px;
   font-weight: 400;
   font-family: var(--font-ui);
+  line-height: 24px;
   padding: 0;
   box-sizing: border-box;
 }
 
 .symbol-search-modal__input::placeholder {
-  color: #787b86;
-}
-
-.symbol-search-modal__clear-btn {
-  background: transparent;
-  border: none;
-  color: #787b86;
-  cursor: pointer;
-  padding: 4px;
-  border-radius: 4px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  transition: color var(--motion-fast);
-}
-
-.symbol-search-modal__clear-btn:hover {
-  color: #f0f3fa;
+  color: #434651;
+  font-weight: 400;
 }
 
 .symbol-search-modal__table-header {
@@ -485,8 +472,9 @@ header {
 
 .symbol-search-modal__cell-meta {
   display: flex;
+  height: 100%;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   font-size: 12px;
   white-space: nowrap;
   padding-right: 6px;
@@ -496,6 +484,7 @@ header {
   color: #787b86;
   font-size: 12px;
   font-weight: 400;
+  line-height: 21px;
   text-transform: uppercase;
 }
 
@@ -503,6 +492,7 @@ header {
   color: #f0f3fa;
   font-weight: 500;
   font-size: 14px;
+  line-height: 21px;
 }
 
 .symbol-search-modal__empty {
@@ -564,15 +554,18 @@ header {
 }
 
 .indicator-search-icon {
-  display: inline-flex;
-  align-items: center;
-  color: #787b86;
-  margin-right: 6px;
+  position: absolute;
+  top: calc(50% - 9px);
+  left: 20px;
+  height: 18px;
+  color: #a3a6af;
+  pointer-events: none;
 }
 
 .indicator-search-icon svg {
-  width: 16px;
-  height: 16px;
+  display: block;
+  width: 18px;
+  height: 18px;
 }
 
 .indicator-menu__panel {
@@ -590,10 +583,10 @@ header {
 .indicator-menu__title strong { color: #eef1f6; font-size: 16px; }
 .indicator-menu__title button { width: 30px; height: 30px; border: 0; color: #c8cfdb; background: transparent; cursor: pointer; font: 300 24px/1 var(--font-ui); }
 .indicator-menu__title button:hover { color: #fff; }
-.indicator-menu__search { display: flex; height: 44px; align-items: center; gap: 8px; padding: 0 16px; border-bottom: 1px solid #343c4d; }
-.indicator-menu__search svg { width: 16px; height: 16px; flex: 0 0 16px; fill: #8b92a5; }
-.indicator-menu__search input { width: 100%; border: 0; outline: 0; color: #e6e8ec; background: transparent; font: 13px var(--font-ui); }
-.indicator-menu__search input::placeholder { color: #747d90; }
+.indicator-menu__search { position: relative; display: flex; height: 40px; align-items: center; padding: 0 16px 0 47px; border-top: 1px solid #434651; border-bottom: 1px solid #434651; box-sizing: content-box; }
+.indicator-menu__search svg { width: 18px; height: 18px; flex: 0 0 18px; }
+.indicator-menu__search input { width: 100%; height: 24px; border: 0; outline: 0; color: #a3a6af; background: transparent; font: 400 16px/24px var(--font-ui); padding: 0; }
+.indicator-menu__search input::placeholder { color: #434651; font-weight: 400; }
 .indicator-menu__heading { padding: 14px 16px 6px; color: #8b92a5; font-size: 11px; letter-spacing: .05em; text-transform: uppercase; }
 .indicator-menu__list { max-height: min(390px, calc(100vh - 190px)); overflow-y: auto; padding: 0 8px 10px; }
 .indicator-menu__option { display: flex; min-height: 44px; align-items: center; gap: 11px; padding: 6px 10px; border-radius: 5px; color: #d7dce6; cursor: pointer; font-size: 13px; }
