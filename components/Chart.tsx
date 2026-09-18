@@ -134,6 +134,9 @@ export default function Chart() {
   const [drawingsHidden, setDrawingsHidden] = useState(false);
   const [selectedDrawing, setSelectedDrawing] = useState<LineToolExport<LineToolType> | null>(null);
   const [textDialogOpen, setTextDialogOpen] = useState(false);
+  const [editingTextDrawing, setEditingTextDrawing] = useState<LineToolExport<LineToolType> | null>(null);
+  const textDialogOpenRef = useRef(false);
+  textDialogOpenRef.current = textDialogOpen;
   const [drawingViewportVersion, setDrawingViewportVersion] = useState(0);
   const [visibleBar, setVisibleBar] = useState<Bar | undefined>(undefined);
   const [rangeDays, setRangeDays] = useState<number | undefined>(undefined);
@@ -214,6 +217,13 @@ export default function Chart() {
   activeDrawingToolRef.current = activeDrawingTool;
   stayInDrawingModeRef.current = stayInDrawingMode;
   eraserModeRef.current = eraserMode;
+  textDialogOpenRef.current = textDialogOpen;
+
+  const openTextDialog = useCallback((drawing: LineToolExport<LineToolType>) => {
+    setEditingTextDrawing(drawing);
+    setTextDialogOpen(true);
+  }, []);
+
   const [lastPrice, setLastPrice] = useState<string>("N/A");
 
   const updateStudySeries = (bars: Bar[]) => {
@@ -370,7 +380,7 @@ export default function Chart() {
       if (event.stage !== "lineToolFinished") return;
 
       if (selectedLineTool.toolType === "Text") {
-        setTextDialogOpen(true);
+        openTextDialog(selectedLineTool);
       }
 
       const currentTool = activeDrawingToolRef.current;
@@ -387,6 +397,7 @@ export default function Chart() {
       setActiveDrawingTool(null);
     });
     lineTools.subscribeLineToolsSingleClick((event) => {
+      if (textDialogOpenRef.current) return;
       if (event.selectionState === "deselected") {
         setSelectedDrawing(null);
         return;
@@ -403,7 +414,7 @@ export default function Chart() {
     });
     lineTools.subscribeLineToolsDoubleClick((event) => {
       setSelectedDrawing(event.selectedLineTool);
-      if (event.selectedLineTool.toolType === "Text") setTextDialogOpen(true);
+      if (event.selectedLineTool.toolType === "Text") openTextDialog(event.selectedLineTool);
     });
     const refreshDrawingOverlays = () => setDrawingViewportVersion((current) => current + 1);
     chart.timeScale().subscribeVisibleLogicalRangeChange(refreshDrawingOverlays);
@@ -559,6 +570,7 @@ export default function Chart() {
     setDrawingsHidden(false);
     setSelectedDrawing(null);
     setTextDialogOpen(false);
+    setEditingTextDrawing(null);
     lineToolsRef.current?.removeAllLineTools();
 
     (async () => {
@@ -1170,7 +1182,7 @@ export default function Chart() {
               anchor={drawingToolbarAnchor}
               onChange={updateSelectedDrawing}
               onOpenSettings={() => {
-                if (selectedDrawing.toolType === "Text") setTextDialogOpen(true);
+                if (selectedDrawing.toolType === "Text") openTextDialog(selectedDrawing);
               }}
               onToggleLock={toggleSelectedDrawingLock}
               onDelete={deleteSelectedDrawingById}
@@ -1196,16 +1208,21 @@ export default function Chart() {
           />
         </div>
       </div>
-      {selectedDrawing?.toolType === "Text" && textDialogOpen && (
+      {editingTextDrawing?.toolType === "Text" && textDialogOpen && (
         <TextToolDialog
-          text={selectedDrawing.options.text}
-          onCancel={() => setTextDialogOpen(false)}
-          onConfirm={(text) => {
-            updateSelectedDrawing({
-              ...selectedDrawing,
-              options: { ...selectedDrawing.options, text } as typeof selectedDrawing.options,
-            });
+          text={editingTextDrawing.options.text}
+          onCancel={() => {
             setTextDialogOpen(false);
+            setEditingTextDrawing(null);
+          }}
+          onConfirm={(text) => {
+            const updated = {
+              ...editingTextDrawing,
+              options: { ...editingTextDrawing.options, text } as typeof editingTextDrawing.options,
+            };
+            updateSelectedDrawing(updated);
+            setTextDialogOpen(false);
+            setEditingTextDrawing(null);
           }}
         />
       )}
