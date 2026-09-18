@@ -4,7 +4,6 @@ import {
   type ILineToolsPlugin,
 } from "lightweight-charts-line-tools-core";
 import {
-  LineToolArrow,
   LineToolCallout,
   LineToolCrossLine,
   LineToolExtendedLine,
@@ -14,6 +13,8 @@ import {
   LineToolTrendLine,
   LineToolVerticalLine,
 } from "lightweight-charts-line-tools-lines";
+import { installAnchorHoverEnhancement } from "./custom-anchor";
+import { LineToolSharpArrow } from "./custom-arrow";
 import { LineToolRectangle } from "lightweight-charts-line-tools-rectangle";
 import { LineToolFibRetracement } from "lightweight-charts-line-tools-fib-retracement";
 import { LineToolPriceRange } from "lightweight-charts-line-tools-price-range";
@@ -56,9 +57,10 @@ export function createDrawingTools(
   chart: IChartApi,
   series: ISeriesApi<"Candlestick", Time>
 ): ILineToolsPlugin {
+  installAnchorHoverEnhancement();
   const lineTools = createLineToolsPlugin(createPaneCoordinateChart(chart), series);
   lineTools.registerLineTool("TrendLine", LineToolTrendLine);
-  lineTools.registerLineTool("Arrow", LineToolArrow);
+  lineTools.registerLineTool("Arrow", LineToolSharpArrow);
   lineTools.registerLineTool("Ray", LineToolRay);
   lineTools.registerLineTool("ExtendedLine", LineToolExtendedLine);
   lineTools.registerLineTool("HorizontalLine", LineToolHorizontalLine);
