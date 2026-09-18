@@ -556,43 +556,48 @@ main#chart.chart--tool-active canvas {
 
 .drawing-properties {
   position: absolute;
-  z-index: 80;
+  z-index: 120;
   display: flex;
-  height: 38px;
+  height: 44px;
   align-items: center;
-  gap: 4px;
-  padding: 3px 5px;
-  border: 1px solid #2d3443;
-  border-radius: 5px;
-  background: #1f2430;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, .42);
+  gap: 0;
+  padding: 4px;
+  border: 1px solid #2c3342;
+  border-radius: 6px;
+  color: #d1d4dc;
+  background: #1e222d;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, .46);
+  font: 14px/1 var(--font-ui);
+  white-space: nowrap;
 }
 
-.drawing-properties button,
-.drawing-properties select {
-  height: 30px;
+.drawing-properties button {
+  height: 34px;
+  padding: 0;
   border: 1px solid transparent;
   border-radius: 4px;
-  color: #d8dde7;
+  color: #d1d4dc;
   background: transparent;
-  font: 12px var(--font-ui);
+  font: 14px/1 var(--font-ui);
+  cursor: pointer;
 }
 
 .drawing-properties button:hover,
-.drawing-properties select:hover {
-  border-color: #3b4354;
-  background: #2a3141;
+.drawing-properties button[aria-expanded="true"] {
+  background: #2a2e39;
 }
 
-.drawing-properties select {
-  min-width: 54px;
-  padding: 0 5px;
-  color-scheme: dark;
+.drawing-properties__menu-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
 }
 
 .drawing-properties__drag {
-  width: 17px;
-  color: #657086 !important;
+  display: grid;
+  width: 20px;
+  place-items: center;
+  color: #636b7d !important;
   cursor: grab;
   touch-action: none;
 }
@@ -601,94 +606,236 @@ main#chart.chart--tool-active canvas {
   cursor: grabbing;
 }
 
-.drawing-properties__color {
-  position: relative;
+.drawing-properties__tool {
+  display: grid;
+  width: 36px;
+  height: 34px;
+  place-items: center;
+}
+
+.drawing-properties__icon {
   display: block;
-  width: 30px;
-  height: 30px;
-  border-radius: 4px;
-  cursor: pointer;
+  width: 28px;
+  height: 28px;
 }
 
-.drawing-properties__color::after {
-  position: absolute;
-  right: 5px;
-  bottom: 1px;
-  left: 5px;
-  height: 3px;
-  border-radius: 2px;
-  background: #2962ff;
-  content: "";
-  pointer-events: none;
-}
-
-.drawing-properties__color input,
-.text-tool-color input {
+.drawing-properties__icon svg {
+  display: block;
   width: 100%;
   height: 100%;
-  padding: 5px;
+}
+
+.drawing-properties__icon--drag,
+.drawing-properties__icon--drag svg {
+  width: 8px;
+  height: 12px;
+}
+
+.drawing-properties__settings-icon {
+  display: block;
+  width: 28px;
+  height: 28px;
+}
+
+.drawing-properties__icon-button,
+.drawing-properties__color-button {
+  display: grid;
+  width: 40px;
+  place-items: center;
+}
+
+.drawing-properties__color-button {
+  width: 36px;
+}
+
+.drawing-properties__color-swatch {
+  width: 20px;
+  height: 14px;
+  border: 1px solid rgba(255, 255, 255, .2);
+  border-radius: 1px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .24);
+}
+
+.drawing-properties__control {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 8px !important;
+}
+
+.drawing-properties__control--width {
+  min-width: 62px;
+}
+
+.drawing-properties__control--style {
+  min-width: 42px;
+}
+
+.drawing-properties__line-icon {
+  width: 18px;
+  min-width: 18px;
+  overflow: visible;
+}
+
+.drawing-properties__style-icon {
+  width: 28px;
+  height: 28px;
+}
+
+.drawing-properties__menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 140;
+  padding: 4px 0;
+  border: 1px solid #2c3342;
+  border-radius: 5px;
+  background: #1f2430;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .5);
+}
+
+.drawing-properties__option-menu {
+  min-width: 98px;
+}
+
+.drawing-properties__option-menu button {
+  display: flex;
+  width: 100%;
+  height: 40px;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 12px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 0;
+  color: #c5cad5;
+}
+
+.drawing-properties__option-menu button:hover {
+  background: #2a3141;
+}
+
+.drawing-properties__option-menu button.is-active {
+  color: #fff;
+  background: #2962ff;
+}
+
+.drawing-properties__style-menu {
+  min-width: 142px;
+}
+
+.drawing-properties__color-menu {
+  display: grid;
+  width: 184px;
+  grid-template-columns: repeat(5, 28px);
+  gap: 6px;
+  padding: 10px;
+}
+
+.drawing-properties__color-menu > button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 4px;
+}
+
+.drawing-properties__color-menu > button > span {
+  width: 18px;
+  height: 18px;
+  border: 1px solid rgba(255, 255, 255, .25);
+  border-radius: 50%;
+}
+
+.drawing-properties__color-menu > button.is-active {
+  border-color: #2962ff;
+  box-shadow: inset 0 0 0 1px #2962ff;
+}
+
+.drawing-properties__custom-color {
+  display: flex;
+  grid-column: 1 / -1;
+  height: 34px;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 6px;
+  border-top: 1px solid #343a48;
+  color: #c5cad5;
+  font-size: 12px;
+}
+
+.drawing-properties__custom-color input {
+  width: 32px;
+  height: 24px;
+  padding: 0;
   border: 0;
   background: transparent;
-  cursor: pointer;
 }
 
-.drawing-properties__button {
-  display: grid;
-  width: 32px;
-  place-items: center;
-  padding: 0;
-  cursor: pointer;
-}
-
-.drawing-properties .toolbar-icon {
-  width: 24px;
-  height: 24px;
-}
-
-.drawing-properties__popover {
-  position: absolute;
-  top: calc(100% + 7px);
+.drawing-properties__settings {
   right: 0;
+  left: auto;
   display: flex;
-  width: 220px;
+  width: 230px;
   flex-direction: column;
-  gap: 12px;
-  padding: 13px;
-  border: 1px solid #343c4d;
-  border-radius: 5px;
-  background: #202531;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, .42);
-  font: 13px var(--font-ui);
+  gap: 14px;
+  padding: 14px;
+  color: #c5cad5;
+  font-size: 13px;
 }
 
-.drawing-properties__popover label {
+.drawing-properties__settings strong {
+  color: #f0f3fa;
+  font-size: 14px;
+}
+
+.drawing-properties__settings label {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
 }
 
-.drawing-properties__popover input[type="color"] {
-  width: 44px;
-  height: 28px;
+.drawing-properties__settings input[type="color"] {
+  width: 40px;
+  height: 26px;
   border: 0;
   background: transparent;
 }
 
-.drawing-properties__popover--menu {
-  width: 175px;
-  gap: 3px;
-  padding: 5px;
+.drawing-properties__more-menu {
+  right: 0;
+  left: auto;
+  width: 219px;
+  padding: 8px 0;
 }
 
-.drawing-properties__popover--menu button {
+.drawing-properties__more-menu button {
+  display: flex;
   width: 100%;
-  padding: 0 10px;
+  height: 42px;
+  align-items: center;
+  gap: 10px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 0;
+  color: #d1d4dc;
+  font-size: 15px;
   text-align: left;
 }
 
-.drawing-properties__popover--menu .danger {
-  color: #ff727d;
+.drawing-properties__more-menu button:hover {
+  background: #2a3141;
+}
+
+.drawing-properties__more-menu .drawing-properties__icon {
+  width: 24px;
+  height: 24px;
+}
+
+.drawing-properties__more-menu .danger {
+  color: #ff5b63;
 }
 
 .price-range-stats {
