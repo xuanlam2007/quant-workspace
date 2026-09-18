@@ -144,6 +144,33 @@ export default function Chart() {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
+  const [isSymbolModalOpen, setIsSymbolModalOpen] = useState(false);
+  const [symbolSearchInitialQuery, setSymbolSearchInitialQuery] = useState("");
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+
+      if (e.ctrlKey || e.altKey || e.metaKey) return;
+
+      if (e.key.length === 1 && /^[a-zA-Z0-9]$/.test(e.key)) {
+        e.preventDefault();
+        setSymbolSearchInitialQuery(e.key.toUpperCase());
+        setIsSymbolModalOpen(true);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
   const {
     activeStudies,
     setActiveStudies,
@@ -1019,7 +1046,17 @@ export default function Chart() {
         isFullscreen={isFullscreen}
         canUndo={canUndo}
         canRedo={canRedo}
-        onSymbolChange={setSymbol}
+        isSymbolModalOpen={isSymbolModalOpen}
+        initialSearchQuery={symbolSearchInitialQuery}
+        onSymbolModalToggle={(open) => {
+          setIsSymbolModalOpen(open);
+          if (!open) setSymbolSearchInitialQuery("");
+        }}
+        onSymbolChange={(nextSymbol) => {
+          setSymbol(nextSymbol);
+          setIsSymbolModalOpen(false);
+          setSymbolSearchInitialQuery("");
+        }}
         onResolutionChange={(nextResolution) => {
           setRangeDays(undefined);
           setResolution(nextResolution);
