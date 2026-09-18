@@ -27,6 +27,7 @@ import { ChartHeader } from "./chart/layout/ChartHeader";
 import { MarketDataPanel } from "./chart/layout/MarketDataPanel";
 import { DrawingToolbar } from "./chart/drawing/DrawingToolbar";
 import { DrawingPropertiesToolbar } from "./chart/drawing/DrawingPropertiesToolbar";
+import { DrawingAxisRangeHighlight } from "./chart/drawing/DrawingAxisRangeHighlight";
 import { PriceRangeStats } from "./chart/drawing/PriceRangeStats";
 import { TextToolDialog } from "./chart/drawing/TextToolDialog";
 import { createDrawingTools } from "./chart/drawing/chart-drawing";
@@ -433,6 +434,7 @@ export default function Chart() {
       const halfRange = ((Number(range.to) - Number(range.from)) * scaleFactor) / 2;
 
       scale.setVisibleRange({ from: center - halfRange, to: center + halfRange });
+      refreshDrawingOverlays();
       if (scale === leftScale) {
         autoScaleRef.current = false;
         setAutoScale(false);
@@ -455,7 +457,10 @@ export default function Chart() {
       if (!element) return;
       const width = Math.round(element.clientWidth);
       const height = Math.round(element.clientHeight);
-      if (width > 0 && height > 0) chart.resize(width, height);
+      if (width > 0 && height > 0) {
+        chart.resize(width, height);
+        refreshDrawingOverlays();
+      }
     };
     const resizeObserver = new ResizeObserver(() => {
       requestAnimationFrame(syncChartSize);
@@ -1031,6 +1036,15 @@ export default function Chart() {
             ref={containerRef}
             className={activeDrawingTool || eraserMode ? "chart--tool-active" : "chart--pan"}
           />
+          {selectedDrawing && chartRef.current && seriesRef.current && (
+            <DrawingAxisRangeHighlight
+              drawing={selectedDrawing}
+              chart={chartRef.current}
+              series={seriesRef.current}
+              chartTop={containerRef.current?.offsetTop ?? 40}
+              viewportVersion={drawingViewportVersion}
+            />
+          )}
           {selectedDrawing && (
             <DrawingPropertiesToolbar
               drawing={selectedDrawing}
