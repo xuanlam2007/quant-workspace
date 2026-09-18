@@ -1,5 +1,13 @@
-import { useState } from "react";
-import { RESOLUTIONS, STUDY_CATALOG, SYMBOLS, TIMEFRAME_GROUPS, type StudyId } from "../config/chart-config";
+"use client";
+
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import {
+  RESOLUTIONS,
+  STUDY_CATALOG,
+  TIMEFRAME_GROUPS,
+  type StudyId,
+} from "../config/chart-config";
+import { SymbolSearchModal } from "./SymbolSearchModal";
 
 const HEADER_SVGS = {
   search: (
@@ -23,7 +31,7 @@ const HEADER_SVGS = {
   ),
   indicators: (
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 28" width="28" height="28" fill="none" aria-hidden="true">
-      <path stroke="currentColor" d="M20 17l-5 5M15 17l5 5M9 11.5h7M17.5 8a2.5 2.5 0 0 0-5 0v11a2.5 2.5 0 0 1-5 0" />
+      <path stroke="currentColor" strokeWidth="1.2" d="M20 17l-5 5M15 17l5 5M9 11.5h7M17.5 8a2.5 2.5 0 0 0-5 0v11a2.5 2.5 0 0 1-5 0" />
     </svg>
   ),
   undo: (
@@ -55,14 +63,20 @@ const HEADER_SVGS = {
     </svg>
   ),
   camera: (
-    <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" fill="currentColor" aria-hidden="true">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 28" width="28" height="28" fill="currentColor" aria-hidden="true">
       <path fillRule="evenodd" clipRule="evenodd" d="M11.118 6a.5.5 0 0 0-.447.276L9.809 8H5.5A1.5 1.5 0 0 0 4 9.5v10A1.5 1.5 0 0 0 5.5 21h16a1.5 1.5 0 0 0 1.5-1.5v-10A1.5 1.5 0 0 0 21.5 8h-4.309l-.862-1.724A.5.5 0 0 0 15.882 6h-4.764zm-1.342-.17A1.5 1.5 0 0 1 11.118 5h4.764a1.5 1.5 0 0 1 1.342.83L17.809 7H21.5A2.5 2.5 0 0 1 24 9.5v10a2.5 2.5 0 0 1-2.5 2.5h-16A2.5 2.5 0 0 1 3 19.5v-10A2.5 2.5 0 0 1 5.5 7h3.691l.585-1.17z" />
       <path fillRule="evenodd" clipRule="evenodd" d="M13.5 18a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zm0 1a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9z" />
     </svg>
   ),
 };
 
-interface ChartHeaderProps {
+interface TooltipPosition {
+  text: string;
+  left: number;
+  top: number;
+}
+
+export interface ChartHeaderProps {
   symbol: string;
   resolution: string;
   timeframeMenuOpen: boolean;
@@ -73,6 +87,9 @@ interface ChartHeaderProps {
   isFullscreen: boolean;
   canUndo?: boolean;
   canRedo?: boolean;
+  isSymbolModalOpen?: boolean;
+  initialSearchQuery?: string;
+  onSymbolModalToggle?: (open: boolean) => void;
   onSymbolChange: (symbol: string) => void;
   onResolutionChange: (resolution: string) => void;
   onTimeframeMenuToggle: (open: boolean) => void;
@@ -97,6 +114,9 @@ export function ChartHeader({
   isFullscreen,
   canUndo = false,
   canRedo = false,
+  isSymbolModalOpen: controlledSymbolModalOpen,
+  initialSearchQuery = "",
+  onSymbolModalToggle,
   onSymbolChange,
   onResolutionChange,
   onTimeframeMenuToggle,
@@ -109,210 +129,381 @@ export function ChartHeader({
   onRedo,
   onOpenSettings,
 }: ChartHeaderProps) {
-  const [symbolMenuOpen, setSymbolMenuOpen] = useState(false);
-  const normalizedSearch = indicatorSearch.trim().toLocaleLowerCase("vi");
-  const filteredStudies = STUDY_CATALOG.filter((study) =>
-    `${study.label} ${study.description}`.toLocaleLowerCase("vi").includes(normalizedSearch)
+  const [internalSymbolModalOpen, setInternalSymbolModalOpen] = useState(false);
+  const isSymbolModalOpen =
+    controlledSymbolModalOpen !== undefined
+      ? controlledSymbolModalOpen
+      : internalSymbolModalOpen;
+
+  const setSymbolModalOpen = useCallback(
+    (open: boolean) => {
+      if (onSymbolModalToggle) {
+        onSymbolModalToggle(open);
+      } else {
+        setInternalSymbolModalOpen(open);
+      }
+    },
+    [onSymbolModalToggle]
   );
 
-  const currentResolutionLabel = RESOLUTIONS.find((item) => item.value === resolution)?.label ?? "1D";
+  const [tooltip, setTooltip] = useState<TooltipPosition | null>(null);
+  const isHoverActiveRef = useRef(false);
+  const hoverTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const leaveTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const dismissTooltip = useCallback(() => {
+    if (hoverTimerRef.current) {
+      clearTimeout(hoverTimerRef.current);
+      hoverTimerRef.current = null;
+    }
+    if (leaveTimerRef.current) {
+      clearTimeout(leaveTimerRef.current);
+      leaveTimerRef.current = null;
+    }
+    isHoverActiveRef.current = false;
+    setTooltip(null);
+  }, []);
+
+  const handleMouseEnter = useCallback(
+    (text: string, e: React.MouseEvent<HTMLElement>) => {
+      if (isSymbolModalOpen || timeframeMenuOpen || indicatorMenuOpen) {
+        dismissTooltip();
+        return;
+      }
+
+      if (leaveTimerRef.current) {
+        clearTimeout(leaveTimerRef.current);
+        leaveTimerRef.current = null;
+      }
+
+      const rect = e.currentTarget.getBoundingClientRect();
+      const pos: TooltipPosition = {
+        text,
+        left: rect.left + rect.width / 2,
+        top: rect.bottom + 6,
+      };
+
+      if (isHoverActiveRef.current) {
+        setTooltip(pos);
+      } else {
+        if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+        hoverTimerRef.current = setTimeout(() => {
+          isHoverActiveRef.current = true;
+          setTooltip(pos);
+        }, 3000);
+      }
+    },
+    [isSymbolModalOpen, timeframeMenuOpen, indicatorMenuOpen, dismissTooltip]
+  );
+
+  const handleMouseLeave = useCallback(() => {
+    if (hoverTimerRef.current) {
+      clearTimeout(hoverTimerRef.current);
+      hoverTimerRef.current = null;
+    }
+    if (leaveTimerRef.current) clearTimeout(leaveTimerRef.current);
+    leaveTimerRef.current = setTimeout(() => {
+      isHoverActiveRef.current = false;
+      setTooltip(null);
+    }, 250);
+  }, []);
+
+  useEffect(() => {
+    if (isSymbolModalOpen || timeframeMenuOpen || indicatorMenuOpen) {
+      dismissTooltip();
+    }
+  }, [isSymbolModalOpen, timeframeMenuOpen, indicatorMenuOpen, dismissTooltip]);
+
+  const normalizedSearch = indicatorSearch.trim().toLocaleLowerCase("vi");
+  const filteredStudies = STUDY_CATALOG.filter((study) =>
+    `${study.label} ${study.description}`
+      .toLocaleLowerCase("vi")
+      .includes(normalizedSearch)
+  );
+
+  const currentResolutionLabel =
+    RESOLUTIONS.find((item) => item.value === resolution)?.label ?? "1D";
 
   return (
-    <header className="chart-header">
-      <div className="chart-header__group chart-header__group--left">
-        {/* Tìm kiếm mã chứng khoán */}
-        <details
-          className="header-dropdown symbol-search-dropdown"
-          open={symbolMenuOpen}
-          onToggle={(event) => {
-            const open = event.currentTarget.open;
-            setSymbolMenuOpen(open);
-            if (open) onTimeframeMenuToggle(false);
-          }}
-        >
-          <summary className="header-btn header-btn--symbol" data-tooltip="Tìm kiếm mã" aria-label="Tìm kiếm mã">
+    <>
+      <header className="chart-header">
+        <div className="chart-header__group chart-header__group--left">
+          {/* Tìm kiếm mã chứng khoán modal trigger */}
+          <button
+            type="button"
+            className="header-btn header-btn--symbol"
+            aria-label="Tìm kiếm mã"
+            onClick={() => {
+              dismissTooltip();
+              setSymbolModalOpen(true);
+            }}
+            onMouseEnter={(e) => handleMouseEnter("Tìm kiếm mã", e)}
+            onMouseLeave={handleMouseLeave}
+          >
             <span className="header-btn__icon">{HEADER_SVGS.search}</span>
             <span className="header-btn__symbol-text">{symbol}</span>
-          </summary>
-          <div className="header-dropdown__panel symbol-search-dropdown__panel">
-            {SYMBOLS.map((item) => (
-              <button
-                type="button"
-                key={item}
-                className={item === symbol ? "header-dropdown__item header-dropdown__item--active" : "header-dropdown__item"}
-                onClick={() => {
-                  onSymbolChange(item);
-                  setSymbolMenuOpen(false);
-                }}
-              >
-                {item}
-              </button>
-            ))}
-          </div>
-        </details>
+          </button>
 
-        {/* Nút so sánh mã */}
-        <button
-          type="button"
-          className="header-btn header-btn--icon"
-          data-tooltip="So sánh hoặc Thêm mã"
-          aria-label="So sánh hoặc Thêm mã"
-          onClick={() => {
-            const otherSymbol = SYMBOLS.find((s) => s !== symbol) ?? SYMBOLS[0];
-            onSymbolChange(otherSymbol);
-          }}
-        >
-          <span className="header-btn__icon">{HEADER_SVGS.compare}</span>
-        </button>
+          {/* Nút so sánh mã */}
+          <button
+            type="button"
+            className="header-btn header-btn--icon"
+            aria-label="So sánh hoặc Thêm mã"
+            onClick={() => {
+              dismissTooltip();
+              const otherSymbol = symbol === "VN30" ? "VNINDEX" : "VN30";
+              onSymbolChange(otherSymbol);
+            }}
+            onMouseEnter={(e) => handleMouseEnter("So sánh hoặc Thêm mã", e)}
+            onMouseLeave={handleMouseLeave}
+          >
+            <span className="header-btn__icon">{HEADER_SVGS.compare}</span>
+          </button>
 
-        <span className="header-divider" />
+          <span className="header-divider" />
 
-        {/* Chọn khung thời gian */}
-        <details
-          className="header-dropdown timeframe-dropdown"
-          open={timeframeMenuOpen}
-          onToggle={(event) => {
-            const open = event.currentTarget.open;
-            if (open) setSymbolMenuOpen(false);
-            onTimeframeMenuToggle(open);
-          }}
-        >
-          <summary className="header-btn header-btn--text" data-tooltip="Khung thời gian" aria-label="Khung thời gian">
-            <span className="header-btn__text">{currentResolutionLabel}</span>
-          </summary>
-          <div className="header-dropdown__panel timeframe-dropdown__panel">
-            {TIMEFRAME_GROUPS.map((group) => (
-              <div className="timeframe-dropdown__group" key={group.label}>
-                <div className="timeframe-dropdown__heading">{group.label}</div>
-                {group.options.map((option) => (
-                  <button
-                    type="button"
-                    key={option.value}
-                    className={option.value === resolution ? "header-dropdown__item header-dropdown__item--active" : "header-dropdown__item"}
-                    onClick={() => onResolutionChange(option.value)}
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
-            ))}
-          </div>
-        </details>
-
-        <span className="header-divider" />
-
-        {/* Kiểu biểu đồ (Nến) */}
-        <button
-          type="button"
-          className="header-btn header-btn--icon"
-          data-tooltip="Kiểu biểu đồ (Nến)"
-          aria-label="Kiểu biểu đồ"
-        >
-          <span className="header-btn__icon">{HEADER_SVGS.candles}</span>
-        </button>
-
-        <span className="header-divider" />
-
-        {/* Nút Các chỉ báo */}
-        <details
-          className="header-dropdown indicators-dropdown"
-          open={indicatorMenuOpen}
-          onToggle={(event) => onIndicatorMenuToggle(event.currentTarget.open)}
-        >
-          <summary className="header-btn header-btn--with-icon" data-tooltip="Các chỉ báo ( / )" aria-label="Các chỉ báo">
-            <span className="header-btn__icon">{HEADER_SVGS.indicators}</span>
-            <span className="header-btn__text">Các chỉ báo</span>
-          </summary>
-          <div className="header-dropdown__panel indicator-menu__panel">
-            <div className="indicator-menu__title">
-              <strong>Các chỉ báo</strong>
-              <button type="button" aria-label="Đóng danh sách chỉ báo" onClick={() => onIndicatorMenuToggle(false)}>×</button>
-            </div>
-            <label className="indicator-menu__search">
-              <span className="indicator-search-icon">{HEADER_SVGS.search}</span>
-              <input
-                value={indicatorSearch}
-                onChange={(event) => onIndicatorSearchChange(event.target.value)}
-                placeholder="Tìm kiếm"
-                autoFocus
-              />
-            </label>
-            <div className="indicator-menu__heading">Tên chỉ báo</div>
-            <div className="indicator-menu__list">
-              {filteredStudies.map((study) => (
-                <label key={study.id} className={activeStudies.includes(study.id) ? "indicator-menu__option indicator-menu__option--active" : "indicator-menu__option"}>
-                  <input type="checkbox" checked={activeStudies.includes(study.id)} onChange={() => onStudyToggle(study.id)} />
-                  <i style={{ background: study.color }} />
-                  <span><b>{study.label}</b><small>{study.id === "volume" ? maDescription : study.description}</small></span>
-                </label>
+          {/* Chọn khung thời gian */}
+          <details
+            className="header-dropdown timeframe-dropdown"
+            open={timeframeMenuOpen}
+            onToggle={(event) => {
+              dismissTooltip();
+              const open = event.currentTarget.open;
+              onTimeframeMenuToggle(open);
+            }}
+          >
+            <summary
+              className="header-btn header-btn--text"
+              aria-label="Khung thời gian"
+              onMouseEnter={(e) => handleMouseEnter("Khung thời gian", e)}
+              onMouseLeave={handleMouseLeave}
+            >
+              <span className="header-btn__text">{currentResolutionLabel}</span>
+            </summary>
+            <div className="header-dropdown__panel timeframe-dropdown__panel">
+              {TIMEFRAME_GROUPS.map((group) => (
+                <div className="timeframe-dropdown__group" key={group.label}>
+                  <div className="timeframe-dropdown__heading">{group.label}</div>
+                  {group.options.map((option) => (
+                    <button
+                      type="button"
+                      key={option.value}
+                      className={
+                        option.value === resolution
+                          ? "header-dropdown__item header-dropdown__item--active"
+                          : "header-dropdown__item"
+                      }
+                      onClick={() => onResolutionChange(option.value)}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
               ))}
-              {filteredStudies.length === 0 && <div className="indicator-menu__empty">Không tìm thấy chỉ báo</div>}
             </div>
-          </div>
-        </details>
+          </details>
 
-        <span className="header-divider" />
+          <span className="header-divider" />
 
-        {/* Nút Hoàn tác & Làm lại */}
-        <button
-          type="button"
-          className="header-btn header-btn--icon"
-          data-tooltip="Hoàn tác (Ctrl+Z)"
-          aria-label="Hoàn tác"
-          disabled={!canUndo}
-          onClick={onUndo}
+          {/* Kiểu biểu đồ (Nến) */}
+          <button
+            type="button"
+            className="header-btn header-btn--icon"
+            aria-label="Kiểu biểu đồ (Nến)"
+            onClick={dismissTooltip}
+            onMouseEnter={(e) => handleMouseEnter("Kiểu biểu đồ", e)}
+            onMouseLeave={handleMouseLeave}
+          >
+            <span className="header-btn__icon">{HEADER_SVGS.candles}</span>
+          </button>
+
+          <span className="header-divider" />
+
+          {/* Nút Các chỉ báo */}
+          <details
+            className="header-dropdown indicators-dropdown"
+            open={indicatorMenuOpen}
+            onToggle={(event) => {
+              dismissTooltip();
+              onIndicatorMenuToggle(event.currentTarget.open);
+            }}
+          >
+            <summary
+              className="header-btn header-btn--with-icon"
+              aria-label="Các chỉ báo"
+              onMouseEnter={(e) => handleMouseEnter("Các chỉ báo", e)}
+              onMouseLeave={handleMouseLeave}
+            >
+              <span className="header-btn__icon">{HEADER_SVGS.indicators}</span>
+              <span className="header-btn__text">Các chỉ báo</span>
+            </summary>
+            <div className="header-dropdown__panel indicator-menu__panel">
+              <div className="indicator-menu__title">
+                <strong>Các chỉ báo</strong>
+                <button
+                  type="button"
+                  aria-label="Đóng danh sách chỉ báo"
+                  onClick={() => onIndicatorMenuToggle(false)}
+                >
+                  ×
+                </button>
+              </div>
+              <label className="indicator-menu__search">
+                <span className="indicator-search-icon">{HEADER_SVGS.search}</span>
+                <input
+                  value={indicatorSearch}
+                  onChange={(event) => onIndicatorSearchChange(event.target.value)}
+                  placeholder="Tìm kiếm"
+                  autoFocus
+                />
+              </label>
+              <div className="indicator-menu__heading">Tên chỉ báo</div>
+              <div className="indicator-menu__list">
+                {filteredStudies.map((study) => (
+                  <label
+                    key={study.id}
+                    className={
+                      activeStudies.includes(study.id)
+                        ? "indicator-menu__option indicator-menu__option--active"
+                        : "indicator-menu__option"
+                    }
+                  >
+                    <input
+                      type="checkbox"
+                      checked={activeStudies.includes(study.id)}
+                      onChange={() => onStudyToggle(study.id)}
+                    />
+                    <i style={{ background: study.color }} />
+                    <span>
+                      <b>{study.label}</b>
+                      <small>
+                        {study.id === "volume" ? maDescription : study.description}
+                      </small>
+                    </span>
+                  </label>
+                ))}
+                {filteredStudies.length === 0 && (
+                  <div className="indicator-menu__empty">Không tìm thấy chỉ báo</div>
+                )}
+              </div>
+            </div>
+          </details>
+
+          <span className="header-divider" />
+
+          {/* Nút Hoàn tác & Làm lại */}
+          <button
+            type="button"
+            className="header-btn header-btn--icon"
+            aria-label="Hoàn tác"
+            disabled={!canUndo}
+            onClick={() => {
+              dismissTooltip();
+              onUndo?.();
+            }}
+            onMouseEnter={(e) => handleMouseEnter("Hoàn tác (Ctrl+Z)", e)}
+            onMouseLeave={handleMouseLeave}
+          >
+            <span className="header-btn__icon">{HEADER_SVGS.undo}</span>
+          </button>
+
+          <button
+            type="button"
+            className="header-btn header-btn--icon"
+            aria-label="Làm lại"
+            disabled={!canRedo}
+            onClick={() => {
+              dismissTooltip();
+              onRedo?.();
+            }}
+            onMouseEnter={(e) => handleMouseEnter("Làm lại (Ctrl+Y)", e)}
+            onMouseLeave={handleMouseLeave}
+          >
+            <span className="header-btn__icon">{HEADER_SVGS.redo}</span>
+          </button>
+        </div>
+
+        <div className="chart-header__group chart-header__group--right">
+          <span className="header-divider" />
+
+          {/* Nút Cài đặt */}
+          <button
+            type="button"
+            className="header-btn header-btn--icon"
+            aria-label="Cài đặt biểu đồ"
+            onClick={() => {
+              dismissTooltip();
+              onOpenSettings?.();
+            }}
+            onMouseEnter={(e) => handleMouseEnter("Cài đặt biểu đồ", e)}
+            onMouseLeave={handleMouseLeave}
+          >
+            <span className="header-btn__icon">{HEADER_SVGS.settings}</span>
+          </button>
+
+          {/* Nút Toàn màn hình */}
+          <button
+            type="button"
+            className={
+              isFullscreen
+                ? "header-btn header-btn--icon header-btn--active"
+                : "header-btn header-btn--icon"
+            }
+            aria-label={isFullscreen ? "Thoát toàn màn hình" : "Toàn màn hình"}
+            onClick={() => {
+              dismissTooltip();
+              onToggleFullscreen();
+            }}
+            onMouseEnter={(e) =>
+              handleMouseEnter(
+                isFullscreen ? "Thoát toàn màn hình" : "Toàn màn hình",
+                e
+              )
+            }
+            onMouseLeave={handleMouseLeave}
+          >
+            <span className="header-btn__icon">
+              {isFullscreen ? HEADER_SVGS.fullscreenExit : HEADER_SVGS.fullscreen}
+            </span>
+          </button>
+
+          {/* Nút Chụp ảnh màn hình */}
+          <button
+            type="button"
+            className="header-btn header-btn--icon"
+            aria-label="Chụp ảnh tức thì"
+            onClick={() => {
+              dismissTooltip();
+              onDownloadSnapshot();
+            }}
+            onMouseEnter={(e) => handleMouseEnter("Chụp ảnh tức thì", e)}
+            onMouseLeave={handleMouseLeave}
+          >
+            <span className="header-btn__icon">{HEADER_SVGS.camera}</span>
+          </button>
+        </div>
+      </header>
+
+      {/* Tooltip chung thanh điều hướng kiểu VNDIRECT */}
+      {tooltip && !isSymbolModalOpen && !timeframeMenuOpen && !indicatorMenuOpen && (
+        <div
+          className="common-header-tooltip"
+          style={{ left: `${tooltip.left}px`, top: `${tooltip.top}px` }}
+          role="tooltip"
         >
-          <span className="header-btn__icon">{HEADER_SVGS.undo}</span>
-        </button>
+          <div className="common-header-tooltip__arrow" />
+          <div className="common-header-tooltip__body">{tooltip.text}</div>
+        </div>
+      )}
 
-        <button
-          type="button"
-          className="header-btn header-btn--icon"
-          data-tooltip="Làm lại (Ctrl+Y)"
-          aria-label="Làm lại"
-          disabled={!canRedo}
-          onClick={onRedo}
-        >
-          <span className="header-btn__icon">{HEADER_SVGS.redo}</span>
-        </button>
-      </div>
-
-      <div className="chart-header__group chart-header__group--right">
-        <span className="header-divider" />
-
-        {/* Nút Cài đặt */}
-        <button
-          type="button"
-          className="header-btn header-btn--icon"
-          data-tooltip="Cài đặt biểu đồ"
-          aria-label="Cài đặt biểu đồ"
-          onClick={onOpenSettings}
-        >
-          <span className="header-btn__icon">{HEADER_SVGS.settings}</span>
-        </button>
-
-        {/* Nút Toàn màn hình */}
-        <button
-          type="button"
-          className={isFullscreen ? "header-btn header-btn--icon header-btn--active" : "header-btn header-btn--icon"}
-          data-tooltip={isFullscreen ? "Thoát toàn màn hình" : "Toàn màn hình"}
-          aria-label={isFullscreen ? "Thoát toàn màn hình" : "Toàn màn hình"}
-          onClick={onToggleFullscreen}
-        >
-          <span className="header-btn__icon">{isFullscreen ? HEADER_SVGS.fullscreenExit : HEADER_SVGS.fullscreen}</span>
-        </button>
-
-        {/* Nút Chụp ảnh màn hình */}
-        <button
-          type="button"
-          className="header-btn header-btn--icon"
-          data-tooltip="Chụp ảnh màn hình"
-          aria-label="Chụp ảnh màn hình"
-          onClick={onDownloadSnapshot}
-        >
-          <span className="header-btn__icon">{HEADER_SVGS.camera}</span>
-        </button>
-      </div>
-    </header>
+      {/* Modal tìm kiếm mã giao dịch VNDIRECT */}
+      <SymbolSearchModal
+        isOpen={isSymbolModalOpen}
+        onClose={() => setSymbolModalOpen(false)}
+        onSelectSymbol={onSymbolChange}
+        currentSymbol={symbol}
+        initialQuery={initialSearchQuery}
+      />
+    </>
   );
 }
