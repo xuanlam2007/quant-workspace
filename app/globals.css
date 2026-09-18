@@ -554,6 +554,17 @@ main#chart.chart--tool-active canvas {
   flex-direction: column;
 }
 
+.drawing-axis-range {
+  position: absolute;
+  z-index: 45;
+  background: rgba(41, 98, 255, .24);
+  pointer-events: none;
+}
+
+.drawing-axis-range--price {
+  left: 0;
+}
+
 .drawing-properties {
   position: absolute;
   z-index: 120;
