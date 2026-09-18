@@ -921,6 +921,25 @@ export default function Chart() {
     .filter((bar) => isTradingSessionTime(bar.time, resolution))
     .sort((a, b) => Number(a.time) - Number(b.time));
   const currentVolumeMa = volumeMa(sortedBars, maLength).at(-1)?.value;
+  const drawingToolbarAnchor = (() => {
+    const chart = chartRef.current;
+    const series = seriesRef.current;
+    const chartElement = containerRef.current;
+    if (!selectedDrawing || !chart || !series || !chartElement) return null;
+    const coordinates = selectedDrawing.points.flatMap((point) => {
+      const x = chart.timeScale().timeToCoordinate(point.timestamp as Time);
+      const y = series.priceToCoordinate(point.price);
+      return x === null || y === null ? [] : [{ x, y: chartElement.offsetTop + y }];
+    });
+    if (!coordinates.length) return null;
+    const xValues = coordinates.map((point) => point.x);
+    const yValues = coordinates.map((point) => point.y);
+    return {
+      centerX: (Math.min(...xValues) + Math.max(...xValues)) / 2,
+      top: Math.min(...yValues),
+      bottom: Math.max(...yValues),
+    };
+  })();
 
   const applyRangePreset = (preset?: RangePreset) => {
     setRangeDays(preset?.days);
@@ -1015,6 +1034,7 @@ export default function Chart() {
           {selectedDrawing && (
             <DrawingPropertiesToolbar
               drawing={selectedDrawing}
+              anchor={drawingToolbarAnchor}
               onChange={updateSelectedDrawing}
               onOpenSettings={() => {
                 if (selectedDrawing.toolType === "Text") setTextDialogOpen(true);
