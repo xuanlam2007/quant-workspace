@@ -8,6 +8,9 @@
   --down: #ef5f5f;
   --font-ui: Helvetica, Arial, sans-serif;
   --font-num: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;
+  --motion-fast: 120ms;
+  --motion-base: 160ms;
+  --motion-ease: cubic-bezier(.2, .8, .2, 1);
 }
 
 * { box-sizing: border-box; }
@@ -19,6 +22,66 @@ html, body {
   background: var(--bg);
   color: var(--text);
   font-family: var(--font-ui);
+}
+
+:where(button, summary, select, input, textarea) {
+  transition-property: color, background-color, border-color, box-shadow, opacity, transform;
+  transition-duration: var(--motion-base);
+  transition-timing-function: var(--motion-ease);
+}
+
+:where(button:not(:disabled)):active {
+  transform: scale(.97);
+  transition-duration: var(--motion-fast);
+}
+
+.indicator-menu__option,
+.selector-menu__option,
+.toolbar-tooltip,
+[data-tooltip]::after {
+  transition-timing-function: var(--motion-ease);
+}
+
+.indicator-menu[open] .indicator-menu__panel,
+.selector-menu[open] .selector-menu__panel,
+.toolbar-menu,
+.drawing-properties__menu {
+  animation: ui-pop-in var(--motion-base) var(--motion-ease) both;
+  transform-origin: top left;
+}
+
+.drawing-dialog-backdrop {
+  animation: ui-fade-in var(--motion-base) ease-out both;
+}
+
+.text-tool-dialog {
+  animation: ui-dialog-in 180ms var(--motion-ease) both;
+}
+
+@keyframes ui-pop-in {
+  from { opacity: 0; transform: translateY(-4px) scale(.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes ui-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes ui-dialog-in {
+  from { opacity: 0; transform: translateY(6px) scale(.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-delay: 0ms !important;
+    transition-duration: .01ms !important;
+  }
 }
 
 #app {
@@ -168,7 +231,7 @@ select {
   border-right: 1.5px solid var(--text-dim);
   border-bottom: 1.5px solid var(--text-dim);
   transform: translateY(-2px) rotate(45deg);
-  transition: transform 120ms ease;
+  transition: transform var(--motion-fast) var(--motion-ease);
 }
 .selector-menu[open] > summary { border-color: #2962ff; }
 .selector-menu[open] > summary::after { transform: translateY(2px) rotate(225deg); }
@@ -323,7 +386,7 @@ select {
   cursor: pointer;
   opacity: 0;
   transform: translateX(0);
-  transition: opacity 100ms ease, transform 100ms ease;
+  transition: opacity var(--motion-fast) var(--motion-ease), transform var(--motion-fast) var(--motion-ease);
 }
 
 .toolbar-group:hover > .toolbar-menu-trigger,
@@ -365,7 +428,7 @@ select {
   opacity: 0;
   pointer-events: none;
   transform: translate(-3px, -50%);
-  transition: opacity 80ms ease 420ms, transform 80ms ease 420ms;
+  transition: opacity var(--motion-fast) var(--motion-ease) 420ms, transform var(--motion-fast) var(--motion-ease) 420ms;
   white-space: nowrap;
 }
 
@@ -524,7 +587,7 @@ main#chart.chart--tool-active canvas {
   text-align: left;
   text-transform: none;
   transform: translate(-50%, -3px);
-  transition: opacity 80ms ease 420ms, transform 80ms ease 420ms;
+  transition: opacity var(--motion-fast) var(--motion-ease) 420ms, transform var(--motion-fast) var(--motion-ease) 420ms;
   white-space: pre-wrap;
 }
 
