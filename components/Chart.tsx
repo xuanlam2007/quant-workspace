@@ -147,6 +147,33 @@ export default function Chart() {
   const [isSymbolModalOpen, setIsSymbolModalOpen] = useState(false);
   const [symbolSearchInitialQuery, setSymbolSearchInitialQuery] = useState("");
 
+  const syncDrawingHistoryAvailability = useCallback(() => {
+    setCanUndo(drawingHistoryRef.current.length > 1);
+    setCanRedo(drawingRedoHistoryRef.current.length > 0);
+  }, []);
+
+  const recordDrawingState = useCallback((drawingState: string) => {
+    if (drawingHistoryRef.current.at(-1) !== drawingState) {
+      drawingHistoryRef.current.push(drawingState);
+      drawingRedoHistoryRef.current = [];
+    }
+    if (drawingKeyRef.current) {
+      localStorage.setItem(drawingKeyRef.current, drawingState);
+    }
+    syncDrawingHistoryAvailability();
+  }, [syncDrawingHistoryAvailability]);
+
+  const restoreDrawingState = useCallback((drawingState: string) => {
+    const lineTools = lineToolsRef.current;
+    if (!lineTools) return;
+    lineTools.removeAllLineTools();
+    if (drawingState !== "[]") lineTools.importLineTools(drawingState);
+    setSelectedDrawing(null);
+    if (drawingKeyRef.current) {
+      localStorage.setItem(drawingKeyRef.current, drawingState);
+    }
+  }, []);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
@@ -329,16 +356,7 @@ export default function Chart() {
     const lineTools = createDrawingTools(chart, series);
     lineTools.setMagnetThreshold(0);
     const persistDrawingState = () => {
-      const drawingState = lineTools.exportLineTools();
-      if (drawingHistoryRef.current.at(-1) !== drawingState) {
-        drawingHistoryRef.current.push(drawingState);
-        drawingRedoHistoryRef.current = [];
-        setCanUndo(drawingHistoryRef.current.length > 1);
-        setCanRedo(false);
-      }
-      if (drawingKeyRef.current) {
-        localStorage.setItem(drawingKeyRef.current, drawingState);
-      }
+      recordDrawingState(lineTools.exportLineTools());
     };
     lineTools.subscribeLineToolsAfterEdit((event) => {
       let selectedLineTool = event.selectedLineTool;
@@ -522,7 +540,7 @@ export default function Chart() {
       rsiSeriesRef.current = null;
       timelineSeriesRef.current = null;
     };
-  }, []);
+  }, [recordDrawingState]);
 
   // Tải lịch sử và kết nối lại dữ liệu trực tiếp khi mã hoặc khung thời gian đổi
   useEffect(() => {
@@ -815,29 +833,42 @@ export default function Chart() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
+        return;
+      }
       if (event.key === "Delete" || event.key === "Backspace") {
         const beforeDelete = lineToolsRef.current?.exportLineTools();
         lineToolsRef.current?.removeSelectedLineTools();
-        if (drawingKeyRef.current && lineToolsRef.current) {
+        if (lineToolsRef.current) {
           const drawingState = lineToolsRef.current.exportLineTools();
-          if (beforeDelete !== drawingState) drawingHistoryRef.current.push(drawingState);
-          localStorage.setItem(drawingKeyRef.current, drawingState);
+          if (beforeDelete !== drawingState) recordDrawingState(drawingState);
         }
       }
-      if (event.ctrlKey && event.key.toLowerCase() === "z") {
+      const modifierPressed = event.ctrlKey || event.metaKey;
+      const key = event.key.toLowerCase();
+      if (modifierPressed && key === "z" && !event.shiftKey) {
         event.preventDefault();
-        if (drawingHistoryRef.current.length > 1 && lineToolsRef.current) {
-          drawingHistoryRef.current.pop();
-          const previousState = drawingHistoryRef.current.at(-1) ?? "[]";
-          lineToolsRef.current.removeAllLineTools();
-          lineToolsRef.current.importLineTools(previousState);
-          if (drawingKeyRef.current) localStorage.setItem(drawingKeyRef.current, previousState);
+        if (drawingHistoryRef.current.length > 1) {
+          const currentState = drawingHistoryRef.current.pop()!;
+          drawingRedoHistoryRef.current.push(currentState);
+          restoreDrawingState(drawingHistoryRef.current.at(-1) ?? "[]");
+          syncDrawingHistoryAvailability();
+        }
+      }
+      if (modifierPressed && (key === "y" || (key === "z" && event.shiftKey))) {
+        event.preventDefault();
+        const nextState = drawingRedoHistoryRef.current.pop();
+        if (nextState) {
+          drawingHistoryRef.current.push(nextState);
+          restoreDrawingState(nextState);
+          syncDrawingHistoryAvailability();
         }
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
+  }, [recordDrawingState, restoreDrawingState, syncDrawingHistoryAvailability]);
 
   const startDrawing = (type: LineToolType) => {
     if (drawingsLocked || !lineToolsRef.current) return;
@@ -916,7 +947,7 @@ export default function Chart() {
     lineToolsRef.current?.removeAllLineTools();
     hiddenDrawingsRef.current = null;
     setDrawingsHidden(false);
-    drawingHistoryRef.current.push("[]");
+    recordDrawingState("[]");
     if (drawingKeyRef.current) localStorage.removeItem(drawingKeyRef.current);
   };
 
@@ -930,9 +961,7 @@ export default function Chart() {
   const persistCurrentDrawings = () => {
     const lineTools = lineToolsRef.current;
     if (!lineTools) return;
-    const drawingState = lineTools.exportLineTools();
-    if (drawingHistoryRef.current.at(-1) !== drawingState) drawingHistoryRef.current.push(drawingState);
-    if (drawingKeyRef.current) localStorage.setItem(drawingKeyRef.current, drawingState);
+    recordDrawingState(lineTools.exportLineTools());
   };
 
   const updateSelectedDrawing = (drawing: LineToolExport<LineToolType>) => {
@@ -1011,27 +1040,17 @@ export default function Chart() {
     const currentState = drawingHistoryRef.current.pop()!;
     drawingRedoHistoryRef.current.push(currentState);
     const prevState = drawingHistoryRef.current.at(-1) ?? "[]";
-    lineToolsRef.current.importLineTools(prevState);
-    setSelectedDrawing(null);
-    if (drawingKeyRef.current) {
-      localStorage.setItem(drawingKeyRef.current, prevState);
-    }
-    setCanUndo(drawingHistoryRef.current.length > 1);
-    setCanRedo(drawingRedoHistoryRef.current.length > 0);
-  }, []);
+    restoreDrawingState(prevState);
+    syncDrawingHistoryAvailability();
+  }, [restoreDrawingState, syncDrawingHistoryAvailability]);
 
   const handleRedo = useCallback(() => {
     if (drawingRedoHistoryRef.current.length === 0 || !lineToolsRef.current) return;
     const nextState = drawingRedoHistoryRef.current.pop()!;
     drawingHistoryRef.current.push(nextState);
-    lineToolsRef.current.importLineTools(nextState);
-    setSelectedDrawing(null);
-    if (drawingKeyRef.current) {
-      localStorage.setItem(drawingKeyRef.current, nextState);
-    }
-    setCanUndo(drawingHistoryRef.current.length > 1);
-    setCanRedo(drawingRedoHistoryRef.current.length > 0);
-  }, []);
+    restoreDrawingState(nextState);
+    syncDrawingHistoryAvailability();
+  }, [restoreDrawingState, syncDrawingHistoryAvailability]);
 
   return (
     <div id="app">
