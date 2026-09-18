@@ -6,3 +6,4 @@ data
 .codegraph
 tsconfig.tsbuildinfo
 AGENTS.md
+.agents

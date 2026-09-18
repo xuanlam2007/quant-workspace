@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   createChart,
   ColorType,
@@ -102,6 +102,7 @@ export default function Chart() {
   const lastRealtimeBucketRef = useRef<number | undefined>(undefined);
   const drawingKeyRef = useRef("");
   const drawingHistoryRef = useRef<string[]>(["[]"]);
+  const drawingRedoHistoryRef = useRef<string[]>([]);
   const resolutionRef = useRef("D");
   const maSettingsRef = useRef<{ length: number; type: MaType; smoothingLength: number }>({ length: 20, type: "SMA", smoothingLength: 9 });
   const drawingGestureRef = useRef(false);
@@ -141,6 +142,8 @@ export default function Chart() {
   const [indicatorMenuOpen, setIndicatorMenuOpen] = useState(false);
   const [indicatorSearch, setIndicatorSearch] = useState("");
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [canUndo, setCanUndo] = useState(false);
+  const [canRedo, setCanRedo] = useState(false);
   const {
     activeStudies,
     setActiveStudies,
@@ -302,6 +305,9 @@ export default function Chart() {
       const drawingState = lineTools.exportLineTools();
       if (drawingHistoryRef.current.at(-1) !== drawingState) {
         drawingHistoryRef.current.push(drawingState);
+        drawingRedoHistoryRef.current = [];
+        setCanUndo(drawingHistoryRef.current.length > 1);
+        setCanRedo(false);
       }
       if (drawingKeyRef.current) {
         localStorage.setItem(drawingKeyRef.current, drawingState);
@@ -575,6 +581,9 @@ export default function Chart() {
         }
       }
       drawingHistoryRef.current = [normalizedDrawings];
+      drawingRedoHistoryRef.current = [];
+      setCanUndo(false);
+      setCanRedo(false);
       if (chartBars.length) {
         currentBarRef.current = chartBars[chartBars.length - 1];
         setLastPrice(currentBarRef.current.close.toFixed(2));
@@ -970,19 +979,46 @@ export default function Chart() {
     else await document.getElementById("app")?.requestFullscreen();
   };
 
+  const handleUndo = useCallback(() => {
+    if (drawingHistoryRef.current.length <= 1 || !lineToolsRef.current) return;
+    const currentState = drawingHistoryRef.current.pop()!;
+    drawingRedoHistoryRef.current.push(currentState);
+    const prevState = drawingHistoryRef.current.at(-1) ?? "[]";
+    lineToolsRef.current.importLineTools(prevState);
+    setSelectedDrawing(null);
+    if (drawingKeyRef.current) {
+      localStorage.setItem(drawingKeyRef.current, prevState);
+    }
+    setCanUndo(drawingHistoryRef.current.length > 1);
+    setCanRedo(drawingRedoHistoryRef.current.length > 0);
+  }, []);
+
+  const handleRedo = useCallback(() => {
+    if (drawingRedoHistoryRef.current.length === 0 || !lineToolsRef.current) return;
+    const nextState = drawingRedoHistoryRef.current.pop()!;
+    drawingHistoryRef.current.push(nextState);
+    lineToolsRef.current.importLineTools(nextState);
+    setSelectedDrawing(null);
+    if (drawingKeyRef.current) {
+      localStorage.setItem(drawingKeyRef.current, nextState);
+    }
+    setCanUndo(drawingHistoryRef.current.length > 1);
+    setCanRedo(drawingRedoHistoryRef.current.length > 0);
+  }, []);
+
   return (
     <div id="app">
       <ChartHeader
         symbol={symbol}
         resolution={resolution}
-        status={status}
-        lastPrice={lastPrice}
         timeframeMenuOpen={timeframeMenuOpen}
         indicatorMenuOpen={indicatorMenuOpen}
         indicatorSearch={indicatorSearch}
         activeStudies={activeStudies}
         maDescription={`${maLength} ${maType} ${smoothingLength}`}
         isFullscreen={isFullscreen}
+        canUndo={canUndo}
+        canRedo={canRedo}
         onSymbolChange={setSymbol}
         onResolutionChange={(nextResolution) => {
           setRangeDays(undefined);
@@ -995,6 +1031,8 @@ export default function Chart() {
         onStudyToggle={toggleStudy}
         onDownloadSnapshot={downloadSnapshot}
         onToggleFullscreen={toggleFullscreen}
+        onUndo={handleUndo}
+        onRedo={handleRedo}
       />
       <div className="chart-shell">
         <DrawingToolbar

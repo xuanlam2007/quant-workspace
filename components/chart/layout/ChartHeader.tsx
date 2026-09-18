@@ -1,18 +1,78 @@
 import { useState } from "react";
-import type { ConnStatus } from "@/lib/dchart-socket";
 import { RESOLUTIONS, STUDY_CATALOG, SYMBOLS, TIMEFRAME_GROUPS, type StudyId } from "../config/chart-config";
+
+const HEADER_SVGS = {
+  search: (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18" width="18" height="18" aria-hidden="true">
+      <path fill="currentColor" d="M3.5 8a4.5 4.5 0 1 1 9 0 4.5 4.5 0 0 1-9 0ZM8 2a6 6 0 1 0 3.65 10.76l3.58 3.58 1.06-1.06-3.57-3.57A6 6 0 0 0 8 2Z" />
+    </svg>
+  ),
+  compare: (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 28" width="28" height="28" aria-hidden="true">
+      <path fill="currentColor" d="M13.5 6a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17zM4 14.5a9.5 9.5 0 1 1 19 0 9.5 9.5 0 0 1-19 0z" />
+      <path fill="currentColor" d="M9 14h4v-4h1v4h4v1h-4v4h-1v-4H9v-1z" />
+    </svg>
+  ),
+  candles: (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 28" width="28" height="28" fill="currentColor" aria-hidden="true">
+      <path d="M17 11v6h3v-6h-3zm-.5-1h4a.5.5 0 0 1 .5.5v7a.5.5 0 0 1-.5.5h-4a.5.5 0 0 1-.5-.5v-7a.5.5 0 0 1 .5-.5z" />
+      <path d="M18 7h1v3.5h-1zm0 10.5h1V21h-1z" />
+      <path d="M9 8v12h3V8H9zm-.5-1h4a.5.5 0 0 1 .5.5v13a.5.5 0 0 1-.5.5h-4a.5.5 0 0 1-.5-.5v-13a.5.5 0 0 1 .5-.5z" />
+      <path d="M10 4h1v3.5h-1zm0 16.5h1V24h-1z" />
+    </svg>
+  ),
+  indicators: (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 28" width="28" height="28" fill="none" aria-hidden="true">
+      <path stroke="currentColor" d="M20 17l-5 5M15 17l5 5M9 11.5h7M17.5 8a2.5 2.5 0 0 0-5 0v11a2.5 2.5 0 0 1-5 0" />
+    </svg>
+  ),
+  undo: (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 28" width="28" height="28" aria-hidden="true">
+      <path fill="currentColor" d="M8.707 13l2.647 2.646-.707.708L6.792 12.5l3.853-3.854.708.708L8.707 12H14.5a5.5 5.5 0 0 1 5.5 5.5V19h-1v-1.5a4.5 4.5 0 0 0-4.5-4.5H8.707z" />
+    </svg>
+  ),
+  redo: (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 28" width="28" height="28" aria-hidden="true">
+      <path fill="currentColor" d="M18.293 13l-2.647 2.646.707.708 3.854-3.854-3.854-3.854-.707.708L18.293 12H12.5A5.5 5.5 0 0 0 7 17.5V19h1v-1.5a4.5 4.5 0 0 1 4.5-4.5h5.793z" />
+    </svg>
+  ),
+  settings: (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 28" width="28" height="28" aria-hidden="true">
+      <g fill="currentColor" fillRule="evenodd">
+        <path fillRule="nonzero" d="M14 17a3 3 0 1 1 0-6 3 3 0 0 1 0 6zm0-1a2 2 0 1 0 0-4 2 2 0 0 0 0 4z" />
+        <path d="M5.005 16A1.003 1.003 0 0 1 4 14.992v-1.984A.998.998 0 0 1 5 12h1.252a7.87 7.87 0 0 1 .853-2.06l-.919-.925c-.356-.397-.348-1 .03-1.379l1.42-1.42a1 1 0 0 1 1.416.007l.889.882A7.96 7.96 0 0 1 12 6.253V5c0-.514.46-1 1-1h2c.557 0 1 .44 1 1v1.253a7.96 7.96 0 0 1 2.06.852l.888-.882a1 1 0 0 1 1.416-.006l1.42 1.42a.999.999 0 0 1 .029 1.377s-.4.406-.918.926a7.87 7.87 0 0 1 .853 2.06H23c.557 0 1 .447 1 1.008v1.984A.998.998 0 0 1 23 16h-1.252a7.87 7.87 0 0 1-.853 2.06l.882.888a1 1 0 0 1 .006 1.416l-1.42 1.42a1 1 0 0 1-1.415-.007l-.889-.882a7.96 7.96 0 0 1-2.059.852v1.248c0 .56-.45 1.005-1.008 1.005h-1.984A1.004 1.004 0 0 1 12 22.995v-1.248a7.96 7.96 0 0 1-2.06-.852l-.888.882a1 1 0 0 1-1.416.006l-1.42-1.42a1 1 0 0 1 .007-1.415l.882-.888A7.87 7.87 0 0 1 6.252 16H5.005zm3.378-6.193l-.227.34A6.884 6.884 0 0 0 7.14 12.6l-.082.4H5.005C5.002 13 5 13.664 5 14.992c0 .005.686.008 2.058.008l.082.4c.18.883.52 1.71 1.016 2.453l.227.34-1.45 1.46c-.004.003.466.477 1.41 1.422l1.464-1.458.34.227a6.959 6.959 0 0 0 2.454 1.016l.399.083v2.052c0 .003.664.005 1.992.005.005 0 .008-.686.008-2.057l.399-.083a6.959 6.959 0 0 0 2.454-1.016l.34-.227 1.46 1.45c.003.004.477-.466 1.422-1.41l-1.458-1.464.227-.34A6.884 6.884 0 0 0 20.86 15.4l.082-.4h2.053c.003 0 .005-.664.005-1.992 0-.005-.686-.008-2.058-.008l-.082-.4a6.884 6.884 0 0 0-1.016-2.453l-.227-.34 1.376-1.384.081-.082-1.416-1.416-1.465 1.458-.34-.227a6.959 6.959 0 0 0-2.454-1.016L15 7.057V5c0-.003-.664-.003-1.992 0-.005 0-.008.686-.008 2.057l-.399.083a6.959 6.959 0 0 0-2.454 1.016l-.34.227-1.46-1.45c-.003-.004-.477.466-1.421 1.408l1.457 1.466z" />
+      </g>
+    </svg>
+  ),
+  fullscreen: (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 28" width="28" height="28" aria-hidden="true">
+      <path fill="currentColor" d="M8.5 6A2.5 2.5 0 0 0 6 8.5V11h1V8.5C7 7.67 7.67 7 8.5 7H11V6H8.5zM6 17v2.5A2.5 2.5 0 0 0 8.5 22H11v-1H8.5A1.5 1.5 0 0 1 7 19.5V17H6zM19.5 7H17V6h2.5A2.5 2.5 0 0 1 22 8.5V11h-1V8.5c0-.83-.67-1.5-1.5-1.5zM22 19.5V17h-1v2.5c0 .83-.67 1.5-1.5 1.5H17v1h2.5a2.5 2.5 0 0 0 2.5-2.5z" />
+    </svg>
+  ),
+  fullscreenExit: (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 28" width="28" height="28" aria-hidden="true">
+      <path fill="currentColor" d="M17 6v2.5a2.5 2.5 0 0 0 2.5 2.5H22v-1h-2.5A1.5 1.5 0 0 1 18 8.5V6h-1zm2.5 11a2.5 2.5 0 0 0-2.5 2.5V22h1v-2.5c0-.83-.67-1.5-1.5-1.5H22v-1h-2.5zm-11 1H6v-1h2.5a2.5 2.5 0 0 1 2.5 2.5V22h-1v-2.5c0-.83-.67-1.5-1.5-1.5zM11 8.5V6h-1v2.5c0 .83-.67 1.5-1.5 1.5H6v1h2.5A2.5 2.5 0 0 0 11 8.5z" />
+    </svg>
+  ),
+  camera: (
+    <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" fill="currentColor" aria-hidden="true">
+      <path fillRule="evenodd" clipRule="evenodd" d="M11.118 6a.5.5 0 0 0-.447.276L9.809 8H5.5A1.5 1.5 0 0 0 4 9.5v10A1.5 1.5 0 0 0 5.5 21h16a1.5 1.5 0 0 0 1.5-1.5v-10A1.5 1.5 0 0 0 21.5 8h-4.309l-.862-1.724A.5.5 0 0 0 15.882 6h-4.764zm-1.342-.17A1.5 1.5 0 0 1 11.118 5h4.764a1.5 1.5 0 0 1 1.342.83L17.809 7H21.5A2.5 2.5 0 0 1 24 9.5v10a2.5 2.5 0 0 1-2.5 2.5h-16A2.5 2.5 0 0 1 3 19.5v-10A2.5 2.5 0 0 1 5.5 7h3.691l.585-1.17z" />
+      <path fillRule="evenodd" clipRule="evenodd" d="M13.5 18a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zm0 1a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9z" />
+    </svg>
+  ),
+};
 
 interface ChartHeaderProps {
   symbol: string;
   resolution: string;
-  status: ConnStatus;
-  lastPrice: string;
   timeframeMenuOpen: boolean;
   indicatorMenuOpen: boolean;
   indicatorSearch: string;
   activeStudies: StudyId[];
   maDescription: string;
   isFullscreen: boolean;
+  canUndo?: boolean;
+  canRedo?: boolean;
   onSymbolChange: (symbol: string) => void;
   onResolutionChange: (resolution: string) => void;
   onTimeframeMenuToggle: (open: boolean) => void;
@@ -21,19 +81,22 @@ interface ChartHeaderProps {
   onStudyToggle: (id: StudyId) => void;
   onDownloadSnapshot: () => void;
   onToggleFullscreen: () => void;
+  onUndo?: () => void;
+  onRedo?: () => void;
+  onOpenSettings?: () => void;
 }
 
 export function ChartHeader({
   symbol,
   resolution,
-  status,
-  lastPrice,
   timeframeMenuOpen,
   indicatorMenuOpen,
   indicatorSearch,
   activeStudies,
   maDescription,
   isFullscreen,
+  canUndo = false,
+  canRedo = false,
   onSymbolChange,
   onResolutionChange,
   onTimeframeMenuToggle,
@@ -42,6 +105,9 @@ export function ChartHeader({
   onStudyToggle,
   onDownloadSnapshot,
   onToggleFullscreen,
+  onUndo,
+  onRedo,
+  onOpenSettings,
 }: ChartHeaderProps) {
   const [symbolMenuOpen, setSymbolMenuOpen] = useState(false);
   const normalizedSearch = indicatorSearch.trim().toLocaleLowerCase("vi");
@@ -49,12 +115,14 @@ export function ChartHeader({
     `${study.label} ${study.description}`.toLocaleLowerCase("vi").includes(normalizedSearch)
   );
 
+  const currentResolutionLabel = RESOLUTIONS.find((item) => item.value === resolution)?.label ?? "1D";
+
   return (
     <header className="chart-header">
-      <div className="symbol-row">
-        <div className="product-mark" data-tooltip="Không gian biểu đồ VNDIRECT" aria-label="Không gian biểu đồ VNDIRECT">D</div>
+      <div className="chart-header__group chart-header__group--left">
+        {/* Tìm kiếm mã chứng khoán */}
         <details
-          className="selector-menu symbol-menu"
+          className="header-dropdown symbol-search-dropdown"
           open={symbolMenuOpen}
           onToggle={(event) => {
             const open = event.currentTarget.open;
@@ -62,13 +130,16 @@ export function ChartHeader({
             if (open) onTimeframeMenuToggle(false);
           }}
         >
-          <summary>{symbol}</summary>
-          <div className="selector-menu__panel symbol-menu__panel">
+          <summary className="header-btn header-btn--symbol" data-tooltip="Tìm kiếm mã" aria-label="Tìm kiếm mã">
+            <span className="header-btn__icon">{HEADER_SVGS.search}</span>
+            <span className="header-btn__symbol-text">{symbol}</span>
+          </summary>
+          <div className="header-dropdown__panel symbol-search-dropdown__panel">
             {SYMBOLS.map((item) => (
               <button
                 type="button"
                 key={item}
-                className={item === symbol ? "selector-menu__option selector-menu__option--active" : "selector-menu__option"}
+                className={item === symbol ? "header-dropdown__item header-dropdown__item--active" : "header-dropdown__item"}
                 onClick={() => {
                   onSymbolChange(item);
                   setSymbolMenuOpen(false);
@@ -79,8 +150,26 @@ export function ChartHeader({
             ))}
           </div>
         </details>
+
+        {/* Nút so sánh mã */}
+        <button
+          type="button"
+          className="header-btn header-btn--icon"
+          data-tooltip="So sánh hoặc Thêm mã"
+          aria-label="So sánh hoặc Thêm mã"
+          onClick={() => {
+            const otherSymbol = SYMBOLS.find((s) => s !== symbol) ?? SYMBOLS[0];
+            onSymbolChange(otherSymbol);
+          }}
+        >
+          <span className="header-btn__icon">{HEADER_SVGS.compare}</span>
+        </button>
+
+        <span className="header-divider" />
+
+        {/* Chọn khung thời gian */}
         <details
-          className="selector-menu timeframe-menu"
+          className="header-dropdown timeframe-dropdown"
           open={timeframeMenuOpen}
           onToggle={(event) => {
             const open = event.currentTarget.open;
@@ -88,16 +177,18 @@ export function ChartHeader({
             onTimeframeMenuToggle(open);
           }}
         >
-          <summary>{RESOLUTIONS.find((item) => item.value === resolution)?.label ?? "1D"}</summary>
-          <div className="selector-menu__panel timeframe-menu__panel">
+          <summary className="header-btn header-btn--text" data-tooltip="Khung thời gian" aria-label="Khung thời gian">
+            <span className="header-btn__text">{currentResolutionLabel}</span>
+          </summary>
+          <div className="header-dropdown__panel timeframe-dropdown__panel">
             {TIMEFRAME_GROUPS.map((group) => (
-              <div className="timeframe-menu__group" key={group.label}>
-                <div className="timeframe-menu__heading">{group.label}</div>
+              <div className="timeframe-dropdown__group" key={group.label}>
+                <div className="timeframe-dropdown__heading">{group.label}</div>
                 {group.options.map((option) => (
                   <button
                     type="button"
                     key={option.value}
-                    className={option.value === resolution ? "selector-menu__option selector-menu__option--active" : "selector-menu__option"}
+                    className={option.value === resolution ? "header-dropdown__item header-dropdown__item--active" : "header-dropdown__item"}
                     onClick={() => onResolutionChange(option.value)}
                   >
                     {option.label}
@@ -107,16 +198,44 @@ export function ChartHeader({
             ))}
           </div>
         </details>
-        <details className="indicator-menu" open={indicatorMenuOpen} onToggle={(event) => onIndicatorMenuToggle(event.currentTarget.open)}>
-          <summary className="header-button">Chỉ báo <span>{activeStudies.length}</span></summary>
-          <div className="indicator-menu__panel">
+
+        <span className="header-divider" />
+
+        {/* Kiểu biểu đồ (Nến) */}
+        <button
+          type="button"
+          className="header-btn header-btn--icon"
+          data-tooltip="Kiểu biểu đồ (Nến)"
+          aria-label="Kiểu biểu đồ"
+        >
+          <span className="header-btn__icon">{HEADER_SVGS.candles}</span>
+        </button>
+
+        <span className="header-divider" />
+
+        {/* Nút Các chỉ báo */}
+        <details
+          className="header-dropdown indicators-dropdown"
+          open={indicatorMenuOpen}
+          onToggle={(event) => onIndicatorMenuToggle(event.currentTarget.open)}
+        >
+          <summary className="header-btn header-btn--with-icon" data-tooltip="Các chỉ báo ( / )" aria-label="Các chỉ báo">
+            <span className="header-btn__icon">{HEADER_SVGS.indicators}</span>
+            <span className="header-btn__text">Các chỉ báo</span>
+          </summary>
+          <div className="header-dropdown__panel indicator-menu__panel">
             <div className="indicator-menu__title">
               <strong>Các chỉ báo</strong>
               <button type="button" aria-label="Đóng danh sách chỉ báo" onClick={() => onIndicatorMenuToggle(false)}>×</button>
             </div>
             <label className="indicator-menu__search">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m20.6 19.2-4.3-4.3a7.5 7.5 0 1 0-1.4 1.4l4.3 4.3 1.4-1.4ZM5 10.5a5.5 5.5 0 1 1 11 0 5.5 5.5 0 0 1-11 0Z" /></svg>
-              <input value={indicatorSearch} onChange={(event) => onIndicatorSearchChange(event.target.value)} placeholder="Tìm kiếm" autoFocus />
+              <span className="indicator-search-icon">{HEADER_SVGS.search}</span>
+              <input
+                value={indicatorSearch}
+                onChange={(event) => onIndicatorSearchChange(event.target.value)}
+                placeholder="Tìm kiếm"
+                autoFocus
+              />
             </label>
             <div className="indicator-menu__heading">Tên chỉ báo</div>
             <div className="indicator-menu__list">
@@ -131,17 +250,67 @@ export function ChartHeader({
             </div>
           </div>
         </details>
-      </div>
-      <div className="status-row">
-        <span className={`dot ${status === "connected" ? "dot--on" : "dot--off"}`} />
-        <span className="connection-label">{status}</span>
-        <span id="last-price">{lastPrice}</span>
-        <span className="header-separator" />
-        <button className="header-icon-button" data-tooltip="Tải ảnh biểu đồ" aria-label="Tải ảnh biểu đồ" onClick={onDownloadSnapshot}>
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 5 10 3h4l1.5 2H19a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h3.5ZM12 8a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9Zm0 2a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5Z" /></svg>
+
+        <span className="header-divider" />
+
+        {/* Nút Hoàn tác & Làm lại */}
+        <button
+          type="button"
+          className="header-btn header-btn--icon"
+          data-tooltip="Hoàn tác (Ctrl+Z)"
+          aria-label="Hoàn tác"
+          disabled={!canUndo}
+          onClick={onUndo}
+        >
+          <span className="header-btn__icon">{HEADER_SVGS.undo}</span>
         </button>
-        <button className={isFullscreen ? "header-icon-button header-button--active" : "header-icon-button"} data-tooltip={isFullscreen ? "Thoát toàn màn hình" : "Toàn màn hình"} aria-label={isFullscreen ? "Thoát toàn màn hình" : "Toàn màn hình"} onClick={onToggleFullscreen}>
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6v2H6v4H4V4Zm10 0h6v6h-2V6h-4V4ZM4 14h2v4h4v2H4v-6Zm14 0h2v6h-6v-2h4v-4Z" /></svg>
+
+        <button
+          type="button"
+          className="header-btn header-btn--icon"
+          data-tooltip="Làm lại (Ctrl+Y)"
+          aria-label="Làm lại"
+          disabled={!canRedo}
+          onClick={onRedo}
+        >
+          <span className="header-btn__icon">{HEADER_SVGS.redo}</span>
+        </button>
+      </div>
+
+      <div className="chart-header__group chart-header__group--right">
+        <span className="header-divider" />
+
+        {/* Nút Cài đặt */}
+        <button
+          type="button"
+          className="header-btn header-btn--icon"
+          data-tooltip="Cài đặt biểu đồ"
+          aria-label="Cài đặt biểu đồ"
+          onClick={onOpenSettings}
+        >
+          <span className="header-btn__icon">{HEADER_SVGS.settings}</span>
+        </button>
+
+        {/* Nút Toàn màn hình */}
+        <button
+          type="button"
+          className={isFullscreen ? "header-btn header-btn--icon header-btn--active" : "header-btn header-btn--icon"}
+          data-tooltip={isFullscreen ? "Thoát toàn màn hình" : "Toàn màn hình"}
+          aria-label={isFullscreen ? "Thoát toàn màn hình" : "Toàn màn hình"}
+          onClick={onToggleFullscreen}
+        >
+          <span className="header-btn__icon">{isFullscreen ? HEADER_SVGS.fullscreenExit : HEADER_SVGS.fullscreen}</span>
+        </button>
+
+        {/* Nút Chụp ảnh màn hình */}
+        <button
+          type="button"
+          className="header-btn header-btn--icon"
+          data-tooltip="Chụp ảnh màn hình"
+          aria-label="Chụp ảnh màn hình"
+          onClick={onDownloadSnapshot}
+        >
+          <span className="header-btn__icon">{HEADER_SVGS.camera}</span>
         </button>
       </div>
     </header>
