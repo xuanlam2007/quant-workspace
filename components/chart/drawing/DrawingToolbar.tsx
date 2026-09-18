@@ -3,6 +3,7 @@ import type { LineToolType } from "lightweight-charts-line-tools-core";
 import {
   DRAWING_TOOL_GROUPS,
   type DrawingToolGroup,
+  type DrawingToolOption,
 } from "../config/chart-config";
 import {
   VNDIRECT_TOOLBAR_ICONS,
@@ -60,14 +61,6 @@ function ToolTooltip({ title, hotkey, description }: { title: string; hotkey?: s
   );
 }
 
-function activeGroupIcon(group: DrawingToolGroup, activeTool: LineToolType | null) {
-  return group.tools.find((tool) => tool.type === activeTool && tool.available !== false)?.icon ?? group.icon;
-}
-
-function activeGroupTool(group: DrawingToolGroup, activeTool: LineToolType | null) {
-  return group.tools.find((tool) => tool.type === activeTool && tool.available !== false) ?? group.tools[0];
-}
-
 export function DrawingToolbar({
   activeTool,
   eraserMode,
@@ -89,6 +82,15 @@ export function DrawingToolbar({
 }: DrawingToolbarProps) {
   const toolbarRef = useRef<HTMLElement>(null);
   const [openMenu, setOpenMenu] = useState<string | null>(null);
+  const [selectedTools, setSelectedTools] = useState<Record<string, DrawingToolOption>>(() => {
+    const initial: Record<string, DrawingToolOption> = {};
+    for (const group of DRAWING_TOOL_GROUPS) {
+      if (group.tools.length > 0) {
+        initial[group.id] = group.tools[0];
+      }
+    }
+    return initial;
+  });
 
   useEffect(() => {
     const closeMenu = (event: PointerEvent) => {
@@ -105,9 +107,31 @@ export function DrawingToolbar({
     };
   }, []);
 
+  useEffect(() => {
+    if (!activeTool) return;
+    for (const group of DRAWING_TOOL_GROUPS) {
+      const matchingTool = group.tools.find(
+        (tool) => tool.type === activeTool && tool.available !== false,
+      );
+      if (matchingTool) {
+        setSelectedTools((prev) => {
+          if (prev[group.id]?.id === matchingTool.id) return prev;
+          return { ...prev, [group.id]: matchingTool };
+        });
+      }
+    }
+  }, [activeTool]);
+
   const toggleMenu = (menu: string) => setOpenMenu((current) => current === menu ? null : menu);
   const selectTool = (type: LineToolType) => {
     onStartDrawing(type);
+    setOpenMenu(null);
+  };
+
+  const selectGroupTool = (groupId: string, tool: DrawingToolOption) => {
+    if (tool.available === false) return;
+    setSelectedTools((prev) => ({ ...prev, [groupId]: tool }));
+    onStartDrawing(tool.type);
     setOpenMenu(null);
   };
 
@@ -150,20 +174,20 @@ export function DrawingToolbar({
         const selected = group.tools.some(
           (tool) => tool.type === activeTool && tool.available !== false,
         );
-        const defaultTool = activeGroupTool(group, activeTool);
+        const currentTool = selectedTools[group.id] ?? group.tools[0];
         return (
           <div className="toolbar-group" key={group.id}>
             <button
               className={`toolbar-button toolbar-button--split ${selected ? "toolbar-button--active" : ""}`}
-              aria-label={`Chọn ${defaultTool.title}`}
-              onClick={() => selectTool(defaultTool.type)}
+              aria-label={`Chọn ${currentTool.title}`}
+              onClick={() => selectGroupTool(group.id, currentTool)}
               disabled={locked}
             >
-              <ToolbarIcon name={activeGroupIcon(group, activeTool)} />
+              <ToolbarIcon name={currentTool.icon} />
               <ToolTooltip
-                title={defaultTool.id === "trend-line" ? "Đường Xu hướng" : defaultTool.title}
-                hotkey={defaultTool.id === "trend-line" ? "Shift" : undefined}
-                description={defaultTool.id === "trend-line" ? "Vẽ một đường thẳng với góc 45 độ" : undefined}
+                title={currentTool.id === "trend-line" ? "Đường Xu hướng" : currentTool.title}
+                hotkey={currentTool.id === "trend-line" ? "Shift" : undefined}
+                description={currentTool.id === "trend-line" ? "Vẽ một đường thẳng với góc 45 độ" : undefined}
               />
             </button>
             {group.tools.length > 1 && (
@@ -185,10 +209,10 @@ export function DrawingToolbar({
                 <div className="toolbar-menu__title">{group.title}</div>
                 {group.tools.map((tool) => (
                   <button
-                    className={activeTool === tool.type ? "toolbar-menu__active" : ""}
+                    className={currentTool.id === tool.id ? "toolbar-menu__active" : ""}
                     key={tool.id}
                     role="menuitem"
-                    onClick={() => selectTool(tool.type)}
+                    onClick={() => selectGroupTool(group.id, tool)}
                     disabled={tool.available === false}
                     aria-disabled={tool.available === false}
                     data-tooltip={tool.available === false ? "Chưa được package line-tools hiện tại hỗ trợ" : undefined}
