@@ -152,6 +152,7 @@ export function ChartHeader({
   );
 
   const [tooltip, setTooltip] = useState<TooltipPosition | null>(null);
+  const timeframeDropdownRef = useRef<HTMLDivElement>(null);
   const isHoverActiveRef = useRef(false);
   const hoverTimerRef = useRef<NodeJS.Timeout | null>(null);
   const leaveTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -219,6 +220,27 @@ export function ChartHeader({
     }
   }, [isSymbolModalOpen, timeframeMenuOpen, indicatorMenuOpen, dismissTooltip]);
 
+  useEffect(() => {
+    if (!timeframeMenuOpen) return;
+
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Node && !timeframeDropdownRef.current?.contains(target)) {
+        onTimeframeMenuToggle(false);
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onTimeframeMenuToggle(false);
+    };
+
+    document.addEventListener("pointerdown", closeOnOutsidePointer, true);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsidePointer, true);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [timeframeMenuOpen, onTimeframeMenuToggle]);
+
   const normalizedSearch = indicatorSearch.trim().toLocaleLowerCase("vi");
   const filteredStudies = STUDY_CATALOG.filter((study) =>
     `${study.label} ${study.description}`
@@ -268,45 +290,51 @@ export function ChartHeader({
           <span className="header-divider" />
 
           {/* Chọn khung thời gian */}
-          <details
-            className="header-dropdown timeframe-dropdown"
-            open={timeframeMenuOpen}
-            onToggle={(event) => {
-              dismissTooltip();
-              const open = event.currentTarget.open;
-              onTimeframeMenuToggle(open);
-            }}
+          <div
+            ref={timeframeDropdownRef}
+            className={`header-dropdown timeframe-dropdown ${timeframeMenuOpen ? "header-dropdown--open" : ""}`}
           >
-            <summary
+            <button
+              type="button"
               className="header-btn header-btn--text"
               aria-label="Khung thời gian"
+              aria-haspopup="menu"
+              aria-expanded={timeframeMenuOpen}
+              onClick={() => {
+                dismissTooltip();
+                onTimeframeMenuToggle(!timeframeMenuOpen);
+              }}
               onMouseEnter={(e) => handleMouseEnter("Khung thời gian", e)}
               onMouseLeave={handleMouseLeave}
             >
               <span className="header-btn__text">{currentResolutionLabel}</span>
-            </summary>
-            <div className="header-dropdown__panel timeframe-dropdown__panel">
-              {TIMEFRAME_GROUPS.map((group) => (
-                <div className="timeframe-dropdown__group" key={group.label}>
-                  <div className="timeframe-dropdown__heading">{group.label}</div>
-                  {group.options.map((option) => (
-                    <button
-                      type="button"
-                      key={option.value}
-                      className={
-                        option.value === resolution
-                          ? "header-dropdown__item header-dropdown__item--active"
-                          : "header-dropdown__item"
-                      }
-                      onClick={() => onResolutionChange(option.value)}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-              ))}
-            </div>
-          </details>
+            </button>
+            {timeframeMenuOpen && (
+              <div className="header-dropdown__panel timeframe-dropdown__panel" role="menu">
+                {TIMEFRAME_GROUPS.map((group) => (
+                  <div className="timeframe-dropdown__group" key={group.label}>
+                    <div className="timeframe-dropdown__heading">{group.label}</div>
+                    {group.options.map((option) => (
+                      <button
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={option.value === resolution}
+                        key={option.value}
+                        className={
+                          option.value === resolution
+                            ? "header-dropdown__item header-dropdown__item--active"
+                            : "header-dropdown__item"
+                        }
+                        onClick={() => onResolutionChange(option.value)}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
 
           <span className="header-divider" />
 
