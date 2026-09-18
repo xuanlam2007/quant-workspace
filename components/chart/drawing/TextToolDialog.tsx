@@ -45,6 +45,8 @@ function ChevronIcon() {
 
 export function TextToolDialog({ text, onCancel, onConfirm }: TextToolDialogProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const onCancelRef = useRef(onCancel);
+  onCancelRef.current = onCancel;
   const [draft, setDraft] = useState(() => {
     const base = text ? structuredClone(text) : ({} as TextOptions);
     return {
@@ -72,9 +74,12 @@ export function TextToolDialog({ text, onCancel, onConfirm }: TextToolDialogProp
   const [tab, setTab] = useState<"text" | "visibility">("text");
 
   const dialogRef = useRef<HTMLElement>(null);
-  const isDraggingTextRef = useRef(false);
+  const isDraggingDialogRef = useRef(false);
+  const draggedOutsideRef = useRef(false);
 
   useEffect(() => {
+    let clearInteractionFrame = 0;
+
     if (textareaRef.current) {
       textareaRef.current.focus();
       textareaRef.current.select();
@@ -86,53 +91,80 @@ export function TextToolDialog({ text, onCancel, onConfirm }: TextToolDialogProp
       }
     }, 50);
 
-    const handleMove = (event: MouseEvent | PointerEvent) => {
-      const isMouseDown = (event.buttons & 1) === 1;
-      if (!isMouseDown && !isDraggingTextRef.current) return;
-
+    const isOutsideDialog = (event: PointerEvent) => {
       const dialog = dialogRef.current;
-      if (!dialog) return;
+      if (!dialog) return false;
       const rect = dialog.getBoundingClientRect();
-      const isOutside =
+      return (
         event.clientX < rect.left ||
         event.clientX > rect.right ||
         event.clientY < rect.top ||
-        event.clientY > rect.bottom;
-
-      if (isOutside) {
-        isDraggingTextRef.current = false;
-        const textarea = textareaRef.current;
-        if (textarea) {
-          textarea.blur();
-          textarea.setSelectionRange(0, 0);
-        }
-        window.getSelection()?.removeAllRanges();
-      }
+        event.clientY > rect.bottom
+      );
     };
 
-    const handleUp = () => {
-      isDraggingTextRef.current = false;
+    const clearDialogInteraction = (restoreTextSelection = false) => {
+      const textarea = textareaRef.current;
+      if (textarea) textarea.style.userSelect = "none";
+      const dialog = dialogRef.current;
+      dialog?.setAttribute("data-pointer-outside", "true");
+      const activeElement = document.activeElement;
+      if (dialog && activeElement instanceof HTMLElement && dialog.contains(activeElement)) {
+        activeElement.blur();
+      }
+      textarea?.setSelectionRange(0, 0);
+      window.getSelection()?.removeAllRanges();
+
+      cancelAnimationFrame(clearInteractionFrame);
+      clearInteractionFrame = requestAnimationFrame(() => {
+        const textarea = textareaRef.current;
+        if (textarea) {
+          textarea.setSelectionRange(0, 0);
+          if (restoreTextSelection) textarea.style.userSelect = "";
+        }
+        window.getSelection()?.removeAllRanges();
+      });
+    };
+
+    const handleMove = (event: PointerEvent) => {
+      if (!isDraggingDialogRef.current || !isOutsideDialog(event)) return;
+      event.preventDefault();
+      draggedOutsideRef.current = true;
+      clearDialogInteraction();
+    };
+
+    const handleUp = (event: PointerEvent) => {
+      if (isDraggingDialogRef.current && (draggedOutsideRef.current || isOutsideDialog(event))) {
+        clearDialogInteraction(true);
+      }
+      isDraggingDialogRef.current = false;
+      draggedOutsideRef.current = false;
+    };
+
+    const handleCancel = () => {
+      if (draggedOutsideRef.current) clearDialogInteraction(true);
+      isDraggingDialogRef.current = false;
+      draggedOutsideRef.current = false;
     };
 
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onCancel();
+      if (event.key === "Escape") onCancelRef.current();
     };
 
-    window.addEventListener("mousemove", handleMove, { capture: true });
     window.addEventListener("pointermove", handleMove, { capture: true });
-    window.addEventListener("mouseup", handleUp, { capture: true });
     window.addEventListener("pointerup", handleUp, { capture: true });
+    window.addEventListener("pointercancel", handleCancel, { capture: true });
     window.addEventListener("keydown", closeOnEscape);
 
     return () => {
       clearTimeout(timer);
-      window.removeEventListener("mousemove", handleMove, { capture: true });
+      cancelAnimationFrame(clearInteractionFrame);
       window.removeEventListener("pointermove", handleMove, { capture: true });
-      window.removeEventListener("mouseup", handleUp, { capture: true });
       window.removeEventListener("pointerup", handleUp, { capture: true });
+      window.removeEventListener("pointercancel", handleCancel, { capture: true });
       window.removeEventListener("keydown", closeOnEscape);
     };
-  }, [onCancel]);
+  }, []);
 
   const updateFont = (patch: Partial<TextOptions["font"]>) => {
     setDraft((current) => ({ ...current, font: { ...current.font, ...patch } }));
@@ -170,7 +202,18 @@ export function TextToolDialog({ text, onCancel, onConfirm }: TextToolDialogProp
 
   return (
     <div className="drawing-dialog-backdrop" role="presentation">
-      <section ref={dialogRef} className="text-tool-dialog" role="dialog" aria-modal="true" aria-labelledby="text-tool-title">
+      <section
+        ref={dialogRef}
+        className="text-tool-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="text-tool-title"
+        onPointerDownCapture={() => {
+          dialogRef.current?.removeAttribute("data-pointer-outside");
+          isDraggingDialogRef.current = true;
+          draggedOutsideRef.current = false;
+        }}
+      >
         <header className="text-tool-header">
           <h2 id="text-tool-title" className="text-tool-title">
             Văn bản
@@ -240,12 +283,6 @@ export function TextToolDialog({ text, onCancel, onConfirm }: TextToolDialogProp
               ref={textareaRef}
               value={draft.value}
               aria-label="Nội dung văn bản"
-              onMouseDown={() => {
-                isDraggingTextRef.current = true;
-              }}
-              onPointerDown={() => {
-                isDraggingTextRef.current = true;
-              }}
               onChange={(event) => setDraft((current) => ({ ...current, value: event.target.value }))}
             />
 
