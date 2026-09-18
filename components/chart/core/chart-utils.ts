@@ -22,7 +22,7 @@ export function drawingStorageKey(symbol: string, resolution: string) {
 }
 
 export function candleColor(bar: Bar) {
-  return bar.close > bar.open ? "#53B987" : "#EB4D5C";
+  return bar.close > bar.open ? "#54BA88" : "#EB4D5C";
 }
 
 export function volumeColor(bar: Bar) {
