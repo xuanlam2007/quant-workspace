@@ -369,6 +369,10 @@ export default function Chart() {
       persistDrawingState();
       if (event.stage !== "lineToolFinished") return;
 
+      if (selectedLineTool.toolType === "Text") {
+        setTextDialogOpen(true);
+      }
+
       const currentTool = activeDrawingToolRef.current;
       if (stayInDrawingModeRef.current && currentTool) {
         requestAnimationFrame(() => {
@@ -1004,10 +1008,31 @@ export default function Chart() {
     if (!coordinates.length) return null;
     const xValues = coordinates.map((point) => point.x);
     const yValues = coordinates.map((point) => point.y);
+    const minX = Math.min(...xValues);
+    const maxX = Math.max(...xValues);
+    const minY = Math.min(...yValues);
+    const maxY = Math.max(...yValues);
+
+    const isTextBearingTool = selectedDrawing.toolType === "Text" || selectedDrawing.toolType === "Callout";
+    let textAnchor: { x: number; y: number } | undefined;
+    if (isTextBearingTool) {
+      const targetPoint = selectedDrawing.toolType === "Callout" && selectedDrawing.points.length > 1
+        ? selectedDrawing.points[1]
+        : selectedDrawing.points[0];
+      const targetX = chart.timeScale().timeToCoordinate(targetPoint.timestamp as Time);
+      const targetY = series.priceToCoordinate(targetPoint.price);
+      if (targetX !== null && targetY !== null) {
+        textAnchor = { x: targetX, y: chartElement.offsetTop + targetY };
+      }
+    }
+
     return {
-      centerX: (Math.min(...xValues) + Math.max(...xValues)) / 2,
-      top: Math.min(...yValues),
-      bottom: Math.max(...yValues),
+      centerX: (minX + maxX) / 2,
+      top: minY,
+      bottom: maxY,
+      left: minX,
+      right: maxX,
+      textAnchor,
     };
   })();
 
