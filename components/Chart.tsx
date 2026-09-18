@@ -260,10 +260,10 @@ export default function Chart() {
     });
     const series = chart.addSeries(CandlestickSeries, {
       priceScaleId: "left",
-      upColor: "#53B987",
+      upColor: "#54BA88",
       downColor: "#EB4D5C",
       borderVisible: false,
-      wickUpColor: "#53B987",
+      wickUpColor: "#54BA88",
       wickDownColor: "#EB4D5C",
       priceLineVisible: true,
       priceLineColor: "#EB4D5C",
