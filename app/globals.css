@@ -102,9 +102,9 @@ header {
 .chart-header {
   position: relative;
   z-index: 180;
-  min-height: 38px;
-  height: 38px;
-  padding: 0 6px;
+  min-height: 42px;
+  height: 42px;
+  padding: 0 8px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -132,16 +132,16 @@ header {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  height: 28px;
-  min-width: 28px;
-  padding: 0 6px;
+  height: 34px;
+  min-width: 34px;
+  padding: 0 8px;
   border: none;
   border-radius: 4px;
   background: transparent;
   color: #d1d4dc;
   cursor: pointer;
   font-family: var(--font-ui);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
   line-height: 1;
   user-select: none;
@@ -166,14 +166,14 @@ header {
 }
 
 .header-btn--symbol {
-  gap: 6px;
-  padding: 0 8px;
+  gap: 8px;
+  padding: 0 10px;
   font-weight: 700;
 }
 
 .header-btn__symbol-text {
   color: #2962ff;
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 700;
   letter-spacing: 0.02em;
 }
@@ -185,12 +185,13 @@ header {
 
 .header-btn--text {
   padding: 0 8px;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
 }
 
 .header-btn--icon {
-  width: 28px;
+  width: 34px;
+  height: 34px;
   padding: 0;
 }
 
@@ -198,21 +199,21 @@ header {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
 }
 
 .header-btn__icon svg {
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
   flex-shrink: 0;
 }
 
 .header-divider {
   width: 1px;
-  height: 18px;
+  height: 22px;
   background: #2a2e39;
-  margin: 0 2px;
+  margin: 0 3px;
   flex-shrink: 0;
 }
 
@@ -242,8 +243,252 @@ header {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
 }
 
-.symbol-search-dropdown__panel {
-  min-width: 130px;
+/* Tooltip chuẩn VNDIRECT / TradingView */
+.common-header-tooltip {
+  position: fixed;
+  transform: translateX(-50%);
+  z-index: 9999;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  animation: common-tooltip-fade 120ms ease-out both;
+}
+
+.common-header-tooltip__arrow {
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-bottom: 5px solid #2a2e39;
+}
+
+.common-header-tooltip__body {
+  background: #2a2e39;
+  color: #f0f3fa;
+  border: 1px solid #363a45;
+  border-radius: 4px;
+  padding: 5px 8px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
+  white-space: nowrap;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
+}
+
+@keyframes common-tooltip-fade {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -3px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+/* Modal tìm kiếm mã giao dịch VNDIRECT */
+.symbol-search-modal__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.65);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 6vh;
+  backdrop-filter: blur(1px);
+}
+
+.symbol-search-modal__dialog {
+  width: 680px;
+  max-width: 94vw;
+  max-height: 85vh;
+  background: #1e222d;
+  border: 1px solid #2a2e39;
+  border-radius: 8px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: ui-pop-in 150ms cubic-bezier(.2, .8, .2, 1) both;
+}
+
+.symbol-search-modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid #2a2e39;
+}
+
+.symbol-search-modal__title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: #d1d4dc;
+  line-height: 1.2;
+}
+
+.symbol-search-modal__close-btn {
+  background: transparent;
+  border: none;
+  color: #787b86;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: color var(--motion-fast), background-color var(--motion-fast);
+}
+
+.symbol-search-modal__close-btn:hover {
+  color: #f0f3fa;
+  background: #2a2e39;
+}
+
+.symbol-search-modal__input-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  padding: 12px 20px;
+  border-bottom: 1px solid #2a2e39;
+}
+
+.symbol-search-modal__search-icon {
+  position: absolute;
+  left: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #787b86;
+  pointer-events: none;
+}
+
+.symbol-search-modal__input {
+  width: 100%;
+  height: 38px;
+  padding: 0 36px;
+  background: #131722;
+  border: 1px solid #2962ff;
+  border-radius: 4px;
+  color: #d1d4dc;
+  font-size: 14px;
+  font-weight: 600;
+  outline: none;
+  font-family: var(--font-ui);
+  box-sizing: border-box;
+}
+
+.symbol-search-modal__clear-btn {
+  position: absolute;
+  right: 32px;
+  background: transparent;
+  border: none;
+  color: #787b86;
+  cursor: pointer;
+  padding: 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.symbol-search-modal__clear-btn:hover {
+  color: #f0f3fa;
+}
+
+.symbol-search-modal__table-header {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  padding: 8px 20px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #787b86;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  border-bottom: 1px solid #2a2e39;
+}
+
+.symbol-search-modal__list {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 260px;
+  max-height: 420px;
+}
+
+.symbol-search-modal__row {
+  display: grid;
+  grid-template-columns: 120px 1fr auto;
+  align-items: center;
+  padding: 10px 20px;
+  cursor: pointer;
+  border-bottom: 1px solid #262b35;
+  transition: background-color var(--motion-fast);
+}
+
+.symbol-search-modal__row:hover,
+.symbol-search-modal__row--selected {
+  background: #2a2e39;
+}
+
+.symbol-search-modal__cell-symbol {
+  font-size: 14px;
+  font-weight: 700;
+  color: #2962ff;
+}
+
+.symbol-search-modal__cell-desc {
+  font-size: 13px;
+  font-weight: 500;
+  color: #d1d4dc;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-right: 12px;
+}
+
+.symbol-search-modal__highlight {
+  color: #2962ff;
+  text-decoration: underline;
+  text-decoration-thickness: 1.5px;
+}
+
+.symbol-search-modal__cell-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.symbol-search-modal__meta-type {
+  color: #787b86;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.symbol-search-modal__meta-exchange {
+  color: #f0f3fa;
+  font-weight: 700;
+  font-size: 12px;
+}
+
+.symbol-search-modal__empty {
+  padding: 40px 20px;
+  text-align: center;
+  color: #787b86;
+  font-size: 14px;
+}
+
+.symbol-search-modal__footer {
+  padding: 12px 20px;
+  text-align: center;
+  color: #787b86;
+  font-size: 12px;
+  border-top: 1px solid #2a2e39;
+  background: #181b24;
 }
 
 .timeframe-dropdown__panel {
