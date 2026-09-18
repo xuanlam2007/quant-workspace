@@ -143,7 +143,7 @@ header {
   font-family: var(--font-ui);
   font-size: 14px;
   font-weight: 500;
-  line-height: 1;
+  line-height: 12;
   user-select: none;
   box-sizing: border-box;
   transition: background-color var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
@@ -301,9 +301,8 @@ header {
 }
 
 .symbol-search-modal__dialog {
-  width: 680px;
-  max-width: 94vw;
-  max-height: 85vh;
+  width: 820px;
+  height: 85vh;
   background: #1e222d;
   border: 1px solid #2a2e39;
   border-radius: 8px;
@@ -349,49 +348,59 @@ header {
 }
 
 .symbol-search-modal__input-row {
-  position: relative;
   display: flex;
+  height: 46px;
   align-items: center;
-  padding: 12px 20px;
+  gap: 10px;
+  padding: 0 20px;
   border-bottom: 1px solid #2a2e39;
+  background: transparent;
 }
 
 .symbol-search-modal__search-icon {
-  position: absolute;
-  left: 32px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   color: #787b86;
-  pointer-events: none;
+  flex-shrink: 0;
+}
+
+.symbol-search-modal__search-icon svg {
+  width: 16px;
+  height: 16px;
+  display: block;
 }
 
 .symbol-search-modal__input {
-  width: 100%;
-  height: 38px;
-  padding: 0 36px;
-  background: #131722;
-  border: 1px solid #2962ff;
-  border-radius: 4px;
+  flex: 1;
+  height: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
   color: #d1d4dc;
   font-size: 14px;
-  font-weight: 600;
-  outline: none;
+  font-weight: 400;
   font-family: var(--font-ui);
+  padding: 0;
   box-sizing: border-box;
 }
 
+.symbol-search-modal__input::placeholder {
+  color: #787b86;
+}
+
 .symbol-search-modal__clear-btn {
-  position: absolute;
-  right: 32px;
   background: transparent;
   border: none;
   color: #787b86;
   cursor: pointer;
-  padding: 2px;
+  padding: 4px;
+  border-radius: 4px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
+  transition: color var(--motion-fast);
 }
 
 .symbol-search-modal__clear-btn:hover {
@@ -400,10 +409,10 @@ header {
 
 .symbol-search-modal__table-header {
   display: grid;
-  grid-template-columns: 120px 1fr;
+  grid-template-columns: 140px 1fr auto;
   padding: 8px 20px;
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 500;
   color: #787b86;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -412,14 +421,34 @@ header {
 
 .symbol-search-modal__list {
   flex: 1;
-  overflow-y: auto;
-  min-height: 260px;
-  max-height: 420px;
+  overflow-y: scroll;
+  min-height: 280px;
+  max-height: 440px;
+  scrollbar-width: thin;
+  scrollbar-color: #50535e transparent;
+}
+
+.symbol-search-modal__list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.symbol-search-modal__list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.symbol-search-modal__list::-webkit-scrollbar-thumb {
+  background: #50535e;
+  border-radius: 3px;
+}
+
+.symbol-search-modal__list::-webkit-scrollbar-thumb:hover {
+  background: #787b86;
 }
 
 .symbol-search-modal__row {
+  font-family: Arial, sans-serif;
   display: grid;
-  grid-template-columns: 120px 1fr auto;
+  grid-template-columns: 140px 1fr auto;
   align-items: center;
   padding: 10px 20px;
   cursor: pointer;
@@ -433,25 +462,25 @@ header {
 }
 
 .symbol-search-modal__cell-symbol {
-  font-size: 14px;
-  font-weight: 700;
+  font-size: 16px;
+  font-weight: 600;
   color: #2962ff;
 }
 
 .symbol-search-modal__cell-desc {
-  font-size: 13px;
-  font-weight: 500;
+  font-size: 14px;
+  font-weight: 400;
   color: #d1d4dc;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  padding-right: 12px;
+  padding-right: 16px;
 }
 
 .symbol-search-modal__highlight {
   color: #2962ff;
-  text-decoration: underline;
-  text-decoration-thickness: 1.5px;
+  font-weight: 600;
+  text-decoration: none;
 }
 
 .symbol-search-modal__cell-meta {
@@ -460,19 +489,20 @@ header {
   gap: 12px;
   font-size: 12px;
   white-space: nowrap;
+  padding-right: 6px;
 }
 
 .symbol-search-modal__meta-type {
   color: #787b86;
-  font-size: 11px;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 400;
   text-transform: uppercase;
 }
 
 .symbol-search-modal__meta-exchange {
   color: #f0f3fa;
-  font-weight: 700;
-  font-size: 12px;
+  font-weight: 500;
+  font-size: 14px;
 }
 
 .symbol-search-modal__empty {
