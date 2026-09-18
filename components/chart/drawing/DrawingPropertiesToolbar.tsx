@@ -53,6 +53,9 @@ export interface DrawingToolbarAnchor {
   centerX: number;
   top: number;
   bottom: number;
+  left?: number;
+  right?: number;
+  textAnchor?: { x: number; y: number };
 }
 
 interface DrawingPropertiesToolbarProps {
@@ -153,6 +156,41 @@ export function DrawingPropertiesToolbar({
     const parent = toolbarRef.current?.parentElement;
     const toolbar = toolbarRef.current;
     if (!parent || !toolbar) return;
+
+    const isTextTool = drawing.toolType === "Text" || drawing.toolType === "Callout";
+    if (isTextTool && anchor) {
+      const textRef = anchor.textAnchor ?? { x: anchor.right ?? anchor.centerX, y: anchor.top };
+      const options = drawing.options as Record<string, unknown>;
+      const textOptions = options.text as Record<string, unknown> | undefined;
+      const textValue = String(textOptions?.value ?? "");
+      const fontSize = Number((textOptions?.font as Record<string, unknown> | undefined)?.size ?? 14);
+      const estimatedBoxWidth = Math.max(90, textValue.length * (fontSize * 0.75) + 40);
+      const halfBoxWidth = estimatedBoxWidth / 2;
+
+      // Diagonally down and to the right of text anchor
+      const preferredLeft = Math.max(textRef.x + 24, textRef.x + halfBoxWidth + 12);
+      const maxLeft = parent.clientWidth - toolbar.offsetWidth - 8;
+      const fallbackLeft = Math.min(textRef.x - 24 - toolbar.offsetWidth, textRef.x - halfBoxWidth - toolbar.offsetWidth - 12);
+
+      let left = preferredLeft;
+      let top = textRef.y + 14;
+
+      if (preferredLeft > maxLeft) {
+        if (fallbackLeft >= 8) {
+          left = fallbackLeft;
+        } else {
+          left = clamp(textRef.x - toolbar.offsetWidth / 2, 8, maxLeft);
+          top = textRef.y + 36;
+        }
+      }
+
+      setPosition({
+        left: clamp(left, 8, maxLeft),
+        top: clamp(top, 8, Math.max(8, parent.clientHeight - toolbar.offsetHeight - 8)),
+      });
+      return;
+    }
+
     const fallbackLeft = (parent.clientWidth - toolbar.offsetWidth) / 2;
     const left = anchor ? anchor.centerX - toolbar.offsetWidth / 2 : fallbackLeft;
     const preferredTop = anchor ? anchor.top - toolbar.offsetHeight - 10 : 48;
@@ -161,7 +199,18 @@ export function DrawingPropertiesToolbar({
       left: clamp(left, 8, Math.max(8, parent.clientWidth - toolbar.offsetWidth - 8)),
       top: clamp(top, 8, Math.max(8, parent.clientHeight - toolbar.offsetHeight - 8)),
     });
-  }, [anchor?.bottom, anchor?.centerX, anchor?.top, drawing.id]);
+  }, [
+    anchor?.bottom,
+    anchor?.centerX,
+    anchor?.left,
+    anchor?.right,
+    anchor?.top,
+    anchor?.textAnchor?.x,
+    anchor?.textAnchor?.y,
+    drawing.id,
+    drawing.toolType,
+    drawing.options,
+  ]);
 
   useEffect(() => {
     const closeMenus = (event: globalThis.PointerEvent | KeyboardEvent) => {
@@ -223,7 +272,6 @@ export function DrawingPropertiesToolbar({
       <button className="drawing-properties__drag" aria-label="Di chuyển thanh thuộc tính" data-tooltip="Di chuyển thanh thuộc tính" onPointerDown={startDrag} onPointerMove={drag} onPointerUp={() => { dragRef.current = null; }} onPointerCancel={() => { dragRef.current = null; }}>
         <VndIcon name="drag" />
       </button>
-      <span className="drawing-properties__tool" aria-hidden="true"><VndIcon name={icon} /></span>
 
       {line && (
         <>
