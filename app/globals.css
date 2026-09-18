@@ -100,7 +100,7 @@ header {
   background: var(--panel);
 }
 
-.chart-header { position: relative; z-index: 30; min-height: 52px; padding: 7px 10px; gap: 12px; }
+.chart-header { position: relative; z-index: 180; min-height: 52px; padding: 7px 10px; gap: 12px; }
 
 .product-mark {
   display: grid;
@@ -320,7 +320,7 @@ select {
   border-right: 1px solid var(--border);
   background: var(--panel);
   overflow: visible;
-  z-index: 30;
+  z-index: 150;
 }
 
 .toolbar-button {
@@ -497,7 +497,7 @@ select {
   background: #1b202c;
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
   overflow-y: auto;
-  z-index: 100;
+  z-index: 160;
 }
 
 .toolbar-menu--bottom {
@@ -619,7 +619,7 @@ main#chart.chart--tool-active canvas {
 
 .drawing-axis-range {
   position: absolute;
-  z-index: 45;
+  z-index: 15;
   background: rgba(41, 98, 255, .24);
   pointer-events: none;
 }
@@ -630,7 +630,7 @@ main#chart.chart--tool-active canvas {
 
 .drawing-properties {
   position: absolute;
-  z-index: 120;
+  z-index: 50;
   display: flex;
   height: 44px;
   align-items: center;
@@ -761,7 +761,7 @@ main#chart.chart--tool-active canvas {
   position: absolute;
   top: calc(100% + 8px);
   left: 0;
-  z-index: 140;
+  z-index: 60;
   padding: 4px 0;
   border: 1px solid #2c3342;
   border-radius: 5px;
