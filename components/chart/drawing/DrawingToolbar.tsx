@@ -51,16 +51,6 @@ function MenuCaret() {
   );
 }
 
-function ToolTooltip({ title, hotkey, description }: { title: string; hotkey?: string; description?: string }) {
-  return (
-    <span className="toolbar-tooltip" role="tooltip">
-      <strong>{title}</strong>
-      {hotkey && <><span className="toolbar-tooltip__divider" /><kbd>{hotkey}</kbd></>}
-      {description && <span className="toolbar-tooltip__description">- {description}</span>}
-    </span>
-  );
-}
-
 export function DrawingToolbar({
   activeTool,
   eraserMode,
@@ -141,6 +131,7 @@ export function DrawingToolbar({
         <button
           className={`toolbar-button toolbar-button--split ${activeTool === null && !eraserMode ? "toolbar-button--active" : ""}`}
           data-tooltip="Chế độ con trỏ"
+          data-tooltip-delay="1500"
           data-tooltip-placement="right"
           aria-label="Chế độ con trỏ"
           onClick={onSelectCursor}
@@ -180,15 +171,15 @@ export function DrawingToolbar({
             <button
               className={`toolbar-button toolbar-button--split ${selected ? "toolbar-button--active" : ""}`}
               aria-label={`Chọn ${currentTool.title}`}
+              data-tooltip={currentTool.id === "trend-line" ? "Đường Xu hướng" : currentTool.title}
+              data-tooltip-delay="1500"
+              data-tooltip-hotkey={currentTool.id === "trend-line" ? "Shift" : undefined}
+              data-tooltip-description={currentTool.id === "trend-line" ? "Vẽ một đường thẳng với góc 45 độ" : undefined}
+              data-tooltip-placement="right"
               onClick={() => selectGroupTool(group.id, currentTool)}
               disabled={locked}
             >
               <ToolbarIcon name={currentTool.icon} />
-              <ToolTooltip
-                title={currentTool.id === "trend-line" ? "Đường Xu hướng" : currentTool.title}
-                hotkey={currentTool.id === "trend-line" ? "Shift" : undefined}
-                description={currentTool.id === "trend-line" ? "Vẽ một đường thẳng với góc 45 độ" : undefined}
-              />
             </button>
             {group.tools.length > 1 && (
               <button
