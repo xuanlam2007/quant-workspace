@@ -31,14 +31,12 @@ html, body {
 }
 
 :where(button:not(:disabled)):active {
-  transform: scale(.97);
+  opacity: .86;
   transition-duration: var(--motion-fast);
 }
 
 .indicator-menu__option,
-.selector-menu__option,
-.toolbar-tooltip,
-[data-tooltip]::after {
+.selector-menu__option {
   transition-timing-function: var(--motion-ease);
 }
 
@@ -71,6 +69,11 @@ html, body {
 @keyframes ui-dialog-in {
   from { opacity: 0; transform: translateY(6px) scale(.985); }
   to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes floating-toolbar-in {
+  from { opacity: 0; transform: scale(.925); }
+  to { opacity: 1; transform: scale(1); }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -109,7 +112,7 @@ header {
   align-items: center;
   justify-content: space-between;
   background: #131722;
-  border-bottom: 1px solid #2a2e39;
+  border-bottom: 0;
   box-sizing: border-box;
 }
 
@@ -258,47 +261,112 @@ header {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
 }
 
-/* Tooltip chuẩn VNDIRECT / TradingView */
-.common-header-tooltip {
+/* Tooltip dùng chung theo hành vi VNDIRECT */
+.delayed-tooltip {
   position: fixed;
-  transform: translateX(-50%);
   z-index: 9999;
   pointer-events: none;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  animation: common-tooltip-fade 120ms ease-out both;
+  animation: delayed-tooltip-fade var(--motion-fast) var(--motion-ease) both;
 }
 
-.common-header-tooltip__arrow {
+.delayed-tooltip--bottom {
+  flex-direction: column;
+  transform: translateX(-50%);
+}
+
+.delayed-tooltip--top {
+  flex-direction: column-reverse;
+  transform: translate(-50%, -100%);
+}
+
+.delayed-tooltip--right {
+  flex-direction: row;
+  transform: translateY(-50%);
+}
+
+.delayed-tooltip--left {
+  flex-direction: row-reverse;
+  transform: translate(-100%, -50%);
+}
+
+.delayed-tooltip__arrow {
   width: 0;
   height: 0;
+}
+
+.delayed-tooltip--bottom .delayed-tooltip__arrow {
   border-left: 5px solid transparent;
   border-right: 5px solid transparent;
-  border-bottom: 5px solid #2a2e39;
+  border-bottom: 5px solid #454c59;
 }
 
-.common-header-tooltip__body {
-  background: #2a2e39;
-  color: #f0f3fa;
-  border: 1px solid #363a45;
-  border-radius: 4px;
-  padding: 5px 8px;
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 16px;
+.delayed-tooltip--top .delayed-tooltip__arrow {
+  border-top: 5px solid #454c59;
+  border-right: 5px solid transparent;
+  border-left: 5px solid transparent;
+}
+
+.delayed-tooltip--right .delayed-tooltip__arrow {
+  border-top: 5px solid transparent;
+  border-right: 5px solid #454c59;
+  border-bottom: 5px solid transparent;
+}
+
+.delayed-tooltip--left .delayed-tooltip__arrow {
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  border-left: 5px solid #454c59;
+}
+
+.delayed-tooltip__body {
+  display: flex;
+  width: max-content;
+  max-width: min(480px, calc(100vw - 20px));
+  align-items: center;
+  gap: 5px;
+  padding: 4px 7px;
+  border: 1px solid #454c59;
+  border-radius: 3px;
+  color: #d8dde7;
+  background: #363b47;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, .35);
+  font: 500 12px/1.25 var(--font-ui);
   white-space: nowrap;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
 }
 
-@keyframes common-tooltip-fade {
+.delayed-tooltip__body strong {
+  color: #fff;
+  font-weight: 600;
+}
+
+.delayed-tooltip__divider {
+  align-self: stretch;
+  width: 1px;
+  margin: -4px 0;
+  background: #59606e;
+}
+
+.delayed-tooltip__body kbd {
+  padding: 0 3px;
+  border: 1px solid #f2a23a;
+  border-radius: 2px;
+  color: #f2a23a;
+  background: transparent;
+  font: 500 12px/1.2 var(--font-ui);
+}
+
+.delayed-tooltip__description {
+  color: #f2a23a;
+}
+
+@keyframes delayed-tooltip-fade {
   from {
     opacity: 0;
-    transform: translate(-50%, -3px);
   }
   to {
     opacity: 1;
-    transform: translate(-50%, 0);
   }
 }
 
@@ -667,6 +735,9 @@ header {
   position: relative;
   min-height: 0;
   display: flex;
+  column-gap: 3px;
+  border-top: 3px solid #2a2e39;
+  background: #2a2e39;
 }
 
 .chart-shell, .chart-stage, .market-data-row, .indicator-data-row, .drawing-toolbar {
@@ -680,14 +751,14 @@ header {
 .drawing-toolbar::-webkit-scrollbar { display: none; }
 
 .drawing-toolbar {
-  width: 54px;
-  flex: 0 0 54px;
+  width: 52px;
+  flex: 0 0 52px;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 3px;
-  padding: 7px;
-  border-right: 1px solid var(--border);
+  padding: 6px 0;
+  border-right: 0;
   background: var(--panel);
   overflow: visible;
   z-index: 150;
@@ -697,7 +768,7 @@ header {
   position: relative;
   display: grid;
   place-items: center;
-  width: 38px;
+  width: 34px;
   height: 34px;
   padding: 0;
   border: 1px solid transparent;
@@ -705,10 +776,21 @@ header {
   color: var(--text);
   background: transparent;
   cursor: pointer;
+  transition: color 60ms ease, background-color 60ms ease, border-color 60ms ease, opacity 60ms ease;
 }
 
-.toolbar-button:hover:not(:disabled),
+.toolbar-button:hover:not(:disabled) {
+  border-color: #3a4356;
+  background: #222938;
+}
+
 .toolbar-button--active {
+  border-color: transparent;
+  color: #2962ff;
+  background: transparent;
+}
+
+.toolbar-button--active:hover:not(:disabled) {
   border-color: #3a4356;
   background: #222938;
 }
@@ -733,30 +815,36 @@ header {
 
 .toolbar-group {
   position: relative;
+  display: flex;
+  width: 52px;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
 }
 
 .toolbar-button--split {
-  padding-right: 3px;
+  padding-right: 0;
 }
 
 .toolbar-menu-trigger {
   position: absolute;
-  top: 0;
-  left: 100%;
+  top: 1px;
+  right: 0;
+  bottom: 1px;
   z-index: 2;
-  display: grid;
-  width: 8px;
-  height: 34px;
-  place-items: center;
+  display: flex;
+  width: 11px;
+  align-items: center;
+  justify-content: center;
   padding: 0;
   border: 0;
-  border-radius: 0 4px 4px 0;
+  border-radius: 4px 0 0 4px;
   color: #8b92a5;
   background: transparent;
   cursor: pointer;
   opacity: 0;
   transform: translateX(0);
-  transition: opacity var(--motion-fast) var(--motion-ease), transform var(--motion-fast) var(--motion-ease);
+  transition: color 60ms ease, background-color 60ms ease, opacity 60ms ease;
 }
 
 .toolbar-group:hover > .toolbar-menu-trigger,
@@ -767,8 +855,8 @@ header {
 }
 
 .toolbar-menu-trigger:hover {
-  color: #fff;
-  background: transparent;
+  color: #c5cad5;
+  background: #2a2e39;
 }
 
 .toolbar-menu-trigger svg {
@@ -776,61 +864,23 @@ header {
   width: 4px;
   height: 7px;
   fill: currentColor;
+  transition: transform .5s cubic-bezier(.175, .885, .32, 1.275);
 }
 
-.toolbar-tooltip {
-  position: absolute;
-  top: 50%;
-  left: calc(100% + 8px);
-  z-index: 300;
-  display: flex;
-  width: max-content;
-  max-width: 420px;
-  align-items: center;
-  gap: 5px;
-  padding: 4px 7px;
-  border: 1px solid #454c59;
-  border-radius: 3px;
-  color: #d8dde7;
-  background: #363b47;
-  box-shadow: 0 3px 10px rgba(0, 0, 0, .35);
-  font: 500 12px/1.25 var(--font-ui);
-  opacity: 0;
-  pointer-events: none;
-  transform: translate(-3px, -50%);
-  transition: opacity var(--motion-fast) var(--motion-ease) 420ms, transform var(--motion-fast) var(--motion-ease) 420ms;
-  white-space: nowrap;
+.toolbar-menu-trigger:hover svg {
+  transform: translateX(1px);
 }
 
-.toolbar-tooltip strong {
-  color: #fff;
-  font-weight: 600;
+.toolbar-menu-trigger[aria-expanded="true"] {
+  background: #2a2e39;
 }
 
-.toolbar-tooltip__divider {
-  align-self: stretch;
-  width: 1px;
-  margin: -4px 0;
-  background: #59606e;
+.toolbar-menu-trigger[aria-expanded="true"] svg {
+  transform: rotate(180deg);
 }
 
-.toolbar-tooltip kbd {
-  padding: 0 3px;
-  border: 1px solid #f2a23a;
-  border-radius: 2px;
-  color: #f2a23a;
-  background: transparent;
-  font: 500 12px/1.2 var(--font-ui);
-}
-
-.toolbar-tooltip__description {
-  color: #f2a23a;
-}
-
-.toolbar-button:hover > .toolbar-tooltip,
-.toolbar-button:focus-visible > .toolbar-tooltip {
-  opacity: 1;
-  transform: translate(0, -50%);
+.toolbar-menu-trigger[aria-expanded="true"]:hover svg {
+  transform: rotate(180deg) translateX(1px);
 }
 
 .toolbar-icon {
@@ -932,52 +982,6 @@ main#chart.chart--tool-active canvas {
   cursor: crosshair !important;
 }
 
-:where([data-tooltip]) {
-  position: relative;
-}
-
-[data-tooltip]::after {
-  position: absolute;
-  top: calc(100% + 7px);
-  left: 50%;
-  z-index: 300;
-  width: max-content;
-  max-width: 360px;
-  padding: 6px 9px;
-  border: 1px solid #3d4555;
-  border-radius: 3px;
-  color: #d8dde7;
-  background: #363b47;
-  box-shadow: 0 3px 10px rgba(0, 0, 0, .35);
-  content: attr(data-tooltip);
-  font: 600 12px/1.25 var(--font-ui);
-  letter-spacing: 0;
-  opacity: 0;
-  pointer-events: none;
-  text-align: left;
-  text-transform: none;
-  transform: translate(-50%, -3px);
-  transition: opacity var(--motion-fast) var(--motion-ease) 420ms, transform var(--motion-fast) var(--motion-ease) 420ms;
-  white-space: pre-wrap;
-}
-
-[data-tooltip]:hover::after,
-[data-tooltip]:focus-visible::after {
-  opacity: 1;
-  transform: translate(-50%, 0);
-}
-
-[data-tooltip-placement="right"]::after {
-  top: 50%;
-  left: calc(100% + 8px);
-  transform: translate(-3px, -50%);
-}
-
-[data-tooltip-placement="right"]:hover::after,
-[data-tooltip-placement="right"]:focus-visible::after {
-  transform: translate(0, -50%);
-}
-
 .chart-stage {
   position: relative;
   display: flex;
@@ -985,6 +989,7 @@ main#chart.chart--tool-active canvas {
   min-width: 0;
   min-height: 0;
   flex-direction: column;
+  background: var(--bg);
 }
 
 .drawing-axis-range {
@@ -1013,6 +1018,8 @@ main#chart.chart--tool-active canvas {
   box-shadow: 0 4px 16px rgba(0, 0, 0, .46);
   font: 14px/1 var(--font-ui);
   white-space: nowrap;
+  transform-origin: center;
+  animation: floating-toolbar-in 262.5ms cubic-bezier(.215, .61, .355, 1) both;
 }
 
 .drawing-properties button {
@@ -1024,6 +1031,7 @@ main#chart.chart--tool-active canvas {
   background: transparent;
   font: 14px/1 var(--font-ui);
   cursor: pointer;
+  transition: color 60ms ease, background-color 60ms ease, border-color 60ms ease, opacity 60ms ease;
 }
 
 .drawing-properties button:hover,
