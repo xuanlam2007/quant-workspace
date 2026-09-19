@@ -56,6 +56,8 @@ import {
   volumeColor,
 } from "./chart/core/chart-utils";
 import { useIndicatorSettings } from "./chart/indicators/useIndicatorSettings";
+import { DelayedTooltip } from "./chart/ui/DelayedTooltip";
+import { OutsideDragSelectionGuard } from "./chart/ui/OutsideDragSelectionGuard";
 
 const DAILY_TICK_FORMATTER = new Intl.DateTimeFormat("en-GB", {
   timeZone: "Asia/Bangkok",
@@ -1091,6 +1093,8 @@ export default function Chart() {
 
   return (
     <div id="app">
+      <DelayedTooltip />
+      <OutsideDragSelectionGuard />
       <ChartHeader
         symbol={symbol}
         resolution={resolution}
