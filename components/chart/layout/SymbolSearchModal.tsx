@@ -257,6 +257,7 @@ export function SymbolSearchModal({
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const backdropPointerDownRef = useRef(false);
 
   useEffect(() => {
     if (isOpen) {
@@ -328,12 +329,17 @@ export function SymbolSearchModal({
   return (
     <div
       className="symbol-search-modal__backdrop"
+      onPointerDown={(e) => {
+        backdropPointerDownRef.current = e.target === e.currentTarget;
+      }}
       onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (backdropPointerDownRef.current && e.target === e.currentTarget) onClose();
+        backdropPointerDownRef.current = false;
       }}
     >
       <div
         className="symbol-search-modal__dialog"
+        data-selection-boundary
         role="dialog"
         aria-modal="true"
         aria-labelledby="symbol-search-title"
@@ -376,6 +382,7 @@ export function SymbolSearchModal({
             ref={inputRef}
             type="text"
             className="symbol-search-modal__input"
+            data-clear-selection-on-outside-drag
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Tìm kiếm"
