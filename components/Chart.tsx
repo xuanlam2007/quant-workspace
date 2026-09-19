@@ -70,6 +70,27 @@ const INTRADAY_TICK_FORMATTER = new Intl.DateTimeFormat("en-GB", {
   minute: "2-digit",
   hour12: false,
 });
+const DRAWING_HISTORY_VERSION = 1;
+const MAX_DRAWING_HISTORY_STATES = 100;
+
+type StoredDrawingHistory = {
+  version: typeof DRAWING_HISTORY_VERSION;
+  undo: string[];
+  redo: string[];
+};
+
+function isDrawingState(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  try {
+    return Array.isArray(JSON.parse(value));
+  } catch {
+    return false;
+  }
+}
+
+function drawingHistoryStorageKey(drawingKey: string) {
+  return `${drawingKey}:history`;
+}
 
 function latestVolumeMaPoint(bars: Bar[], length: number) {
   if (bars.length < length) return undefined;
@@ -157,16 +178,31 @@ export default function Chart() {
     setCanRedo(drawingRedoHistoryRef.current.length > 0);
   }, []);
 
+  const persistDrawingHistory = useCallback(() => {
+    if (!drawingKeyRef.current) return;
+    const history: StoredDrawingHistory = {
+      version: DRAWING_HISTORY_VERSION,
+      undo: drawingHistoryRef.current.slice(-MAX_DRAWING_HISTORY_STATES),
+      redo: drawingRedoHistoryRef.current.slice(-MAX_DRAWING_HISTORY_STATES),
+    };
+    localStorage.setItem(
+      drawingHistoryStorageKey(drawingKeyRef.current),
+      JSON.stringify(history),
+    );
+  }, []);
+
   const recordDrawingState = useCallback((drawingState: string) => {
     if (drawingHistoryRef.current.at(-1) !== drawingState) {
       drawingHistoryRef.current.push(drawingState);
+      drawingHistoryRef.current = drawingHistoryRef.current.slice(-MAX_DRAWING_HISTORY_STATES);
       drawingRedoHistoryRef.current = [];
     }
     if (drawingKeyRef.current) {
       localStorage.setItem(drawingKeyRef.current, drawingState);
     }
+    persistDrawingHistory();
     syncDrawingHistoryAvailability();
-  }, [syncDrawingHistoryAvailability]);
+  }, [persistDrawingHistory, syncDrawingHistoryAvailability]);
 
   const restoreDrawingState = useCallback((drawingState: string) => {
     const lineTools = lineToolsRef.current;
@@ -177,7 +213,8 @@ export default function Chart() {
     if (drawingKeyRef.current) {
       localStorage.setItem(drawingKeyRef.current, drawingState);
     }
-  }, []);
+    persistDrawingHistory();
+  }, [persistDrawingHistory]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -643,10 +680,39 @@ export default function Chart() {
           localStorage.setItem(drawingKeyRef.current, normalizedDrawings);
         }
       }
-      drawingHistoryRef.current = [normalizedDrawings];
-      drawingRedoHistoryRef.current = [];
-      setCanUndo(false);
-      setCanRedo(false);
+      const fallbackUndo = normalizedDrawings === "[]"
+        ? ["[]"]
+        : ["[]", normalizedDrawings];
+      let restoredUndo = fallbackUndo;
+      let restoredRedo: string[] = [];
+      const storedHistory = localStorage.getItem(
+        drawingHistoryStorageKey(drawingKeyRef.current),
+      );
+      if (storedHistory) {
+        try {
+          const parsedHistory = JSON.parse(storedHistory) as Partial<StoredDrawingHistory>;
+          const undo = Array.isArray(parsedHistory.undo)
+            ? parsedHistory.undo.filter(isDrawingState).map(normalizeDrawingState)
+            : [];
+          const redo = Array.isArray(parsedHistory.redo)
+            ? parsedHistory.redo.filter(isDrawingState).map(normalizeDrawingState)
+            : [];
+          if (
+            parsedHistory.version === DRAWING_HISTORY_VERSION
+            && undo.length > 0
+            && undo.at(-1) === normalizedDrawings
+          ) {
+            restoredUndo = undo.slice(-MAX_DRAWING_HISTORY_STATES);
+            restoredRedo = redo.slice(-MAX_DRAWING_HISTORY_STATES);
+          }
+        } catch {
+          localStorage.removeItem(drawingHistoryStorageKey(drawingKeyRef.current));
+        }
+      }
+      drawingHistoryRef.current = restoredUndo;
+      drawingRedoHistoryRef.current = restoredRedo;
+      persistDrawingHistory();
+      syncDrawingHistoryAvailability();
       if (chartBars.length) {
         currentBarRef.current = chartBars[chartBars.length - 1];
         setLastPrice(currentBarRef.current.close.toFixed(2));
@@ -735,7 +801,7 @@ export default function Chart() {
       feedRef.current?.close();
       feedRef.current = null;
     };
-  }, [symbol, resolution, rangeDays]);
+  }, [persistDrawingHistory, rangeDays, resolution, symbol, syncDrawingHistoryAvailability]);
 
   useEffect(() => {
     const bars = [...barsByTimeRef.current.values()]
@@ -870,6 +936,7 @@ export default function Chart() {
         if (drawingHistoryRef.current.length > 1) {
           const currentState = drawingHistoryRef.current.pop()!;
           drawingRedoHistoryRef.current.push(currentState);
+          drawingRedoHistoryRef.current = drawingRedoHistoryRef.current.slice(-MAX_DRAWING_HISTORY_STATES);
           restoreDrawingState(drawingHistoryRef.current.at(-1) ?? "[]");
           syncDrawingHistoryAvailability();
         }
@@ -879,6 +946,7 @@ export default function Chart() {
         const nextState = drawingRedoHistoryRef.current.pop();
         if (nextState) {
           drawingHistoryRef.current.push(nextState);
+          drawingHistoryRef.current = drawingHistoryRef.current.slice(-MAX_DRAWING_HISTORY_STATES);
           restoreDrawingState(nextState);
           syncDrawingHistoryAvailability();
         }
@@ -1078,6 +1146,7 @@ export default function Chart() {
     if (drawingHistoryRef.current.length <= 1 || !lineToolsRef.current) return;
     const currentState = drawingHistoryRef.current.pop()!;
     drawingRedoHistoryRef.current.push(currentState);
+    drawingRedoHistoryRef.current = drawingRedoHistoryRef.current.slice(-MAX_DRAWING_HISTORY_STATES);
     const prevState = drawingHistoryRef.current.at(-1) ?? "[]";
     restoreDrawingState(prevState);
     syncDrawingHistoryAvailability();
@@ -1087,6 +1156,7 @@ export default function Chart() {
     if (drawingRedoHistoryRef.current.length === 0 || !lineToolsRef.current) return;
     const nextState = drawingRedoHistoryRef.current.pop()!;
     drawingHistoryRef.current.push(nextState);
+    drawingHistoryRef.current = drawingHistoryRef.current.slice(-MAX_DRAWING_HISTORY_STATES);
     restoreDrawingState(nextState);
     syncDrawingHistoryAvailability();
   }, [restoreDrawingState, syncDrawingHistoryAvailability]);
