@@ -113,6 +113,7 @@ header {
   justify-content: space-between;
   background: #131722;
   border-bottom: 0;
+  border-radius: 0 0 4px 4px;
   box-sizing: border-box;
 }
 
@@ -759,6 +760,7 @@ header {
   gap: 3px;
   padding: 6px 0;
   border-right: 0;
+  border-top-right-radius: 4px;
   background: var(--panel);
   overflow: visible;
   z-index: 150;
@@ -780,8 +782,7 @@ header {
 }
 
 .toolbar-button:hover:not(:disabled) {
-  border-color: #3a4356;
-  background: #222938;
+  background: #2a2e39;
 }
 
 .toolbar-button--active {
@@ -990,6 +991,8 @@ main#chart.chart--tool-active canvas {
   min-height: 0;
   flex-direction: column;
   background: var(--bg);
+  border-radius: 4px;
+  overflow: hidden;
 }
 
 .drawing-axis-range {
