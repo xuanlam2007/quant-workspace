@@ -75,12 +75,6 @@ const HEADER_SVGS = {
   ),
 };
 
-interface TooltipPosition {
-  text: string;
-  left: number;
-  top: number;
-}
-
 export interface ChartHeaderProps {
   symbol: string;
   resolution: string;
@@ -151,86 +145,24 @@ export function ChartHeader({
     [onSymbolModalToggle]
   );
 
-  const [tooltip, setTooltip] = useState<TooltipPosition | null>(null);
   const timeframeDropdownRef = useRef<HTMLDivElement>(null);
-  const isHoverActiveRef = useRef(false);
-  const hoverTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const leaveTimerRef = useRef<NodeJS.Timeout | null>(null);
-
-  const dismissTooltip = useCallback(() => {
-    if (hoverTimerRef.current) {
-      clearTimeout(hoverTimerRef.current);
-      hoverTimerRef.current = null;
-    }
-    if (leaveTimerRef.current) {
-      clearTimeout(leaveTimerRef.current);
-      leaveTimerRef.current = null;
-    }
-    isHoverActiveRef.current = false;
-    setTooltip(null);
-  }, []);
-
-  const handleMouseEnter = useCallback(
-    (text: string, e: React.MouseEvent<HTMLElement>) => {
-      if (isSymbolModalOpen || timeframeMenuOpen || indicatorMenuOpen) {
-        dismissTooltip();
-        return;
-      }
-
-      if (leaveTimerRef.current) {
-        clearTimeout(leaveTimerRef.current);
-        leaveTimerRef.current = null;
-      }
-
-      const rect = e.currentTarget.getBoundingClientRect();
-      const pos: TooltipPosition = {
-        text,
-        left: rect.left + rect.width / 2,
-        top: rect.bottom + 6,
-      };
-
-      if (isHoverActiveRef.current) {
-        setTooltip(pos);
-      } else {
-        if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
-        hoverTimerRef.current = setTimeout(() => {
-          isHoverActiveRef.current = true;
-          setTooltip(pos);
-        }, 3000);
-      }
-    },
-    [isSymbolModalOpen, timeframeMenuOpen, indicatorMenuOpen, dismissTooltip]
-  );
-
-  const handleMouseLeave = useCallback(() => {
-    if (hoverTimerRef.current) {
-      clearTimeout(hoverTimerRef.current);
-      hoverTimerRef.current = null;
-    }
-    if (leaveTimerRef.current) clearTimeout(leaveTimerRef.current);
-    leaveTimerRef.current = setTimeout(() => {
-      isHoverActiveRef.current = false;
-      setTooltip(null);
-    }, 250);
-  }, []);
+  const indicatorDropdownRef = useRef<HTMLDetailsElement>(null);
 
   useEffect(() => {
-    if (isSymbolModalOpen || timeframeMenuOpen || indicatorMenuOpen) {
-      dismissTooltip();
-    }
-  }, [isSymbolModalOpen, timeframeMenuOpen, indicatorMenuOpen, dismissTooltip]);
-
-  useEffect(() => {
-    if (!timeframeMenuOpen) return;
+    if (!timeframeMenuOpen && !indicatorMenuOpen) return;
 
     const closeOnOutsidePointer = (event: PointerEvent) => {
       const target = event.target;
-      if (target instanceof Node && !timeframeDropdownRef.current?.contains(target)) {
+      if (!(target instanceof Node)) return;
+      if (timeframeMenuOpen && !timeframeDropdownRef.current?.contains(target))
         onTimeframeMenuToggle(false);
-      }
+      if (indicatorMenuOpen && !indicatorDropdownRef.current?.contains(target))
+        onIndicatorMenuToggle(false);
     };
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onTimeframeMenuToggle(false);
+      if (event.key !== "Escape") return;
+      onTimeframeMenuToggle(false);
+      onIndicatorMenuToggle(false);
     };
 
     document.addEventListener("pointerdown", closeOnOutsidePointer, true);
@@ -239,7 +171,12 @@ export function ChartHeader({
       document.removeEventListener("pointerdown", closeOnOutsidePointer, true);
       document.removeEventListener("keydown", closeOnEscape);
     };
-  }, [timeframeMenuOpen, onTimeframeMenuToggle]);
+  }, [
+    timeframeMenuOpen,
+    indicatorMenuOpen,
+    onTimeframeMenuToggle,
+    onIndicatorMenuToggle,
+  ]);
 
   const normalizedSearch = indicatorSearch.trim().toLocaleLowerCase("vi");
   const filteredStudies = STUDY_CATALOG.filter((study) =>
@@ -260,12 +197,10 @@ export function ChartHeader({
             type="button"
             className="header-btn header-btn--symbol"
             aria-label="Tìm kiếm mã"
+            data-tooltip="Tìm kiếm mã"
             onClick={() => {
-              dismissTooltip();
               setSymbolModalOpen(true);
             }}
-            onMouseEnter={(e) => handleMouseEnter("Tìm kiếm mã", e)}
-            onMouseLeave={handleMouseLeave}
           >
             <span className="header-btn__icon">{HEADER_SVGS.search}</span>
             <span className="header-btn__symbol-text">{symbol}</span>
@@ -276,13 +211,11 @@ export function ChartHeader({
             type="button"
             className="header-btn header-btn--icon"
             aria-label="So sánh hoặc Thêm mã"
+            data-tooltip="So sánh hoặc Thêm mã"
             onClick={() => {
-              dismissTooltip();
               const otherSymbol = symbol === "VN30" ? "VNINDEX" : "VN30";
               onSymbolChange(otherSymbol);
             }}
-            onMouseEnter={(e) => handleMouseEnter("So sánh hoặc Thêm mã", e)}
-            onMouseLeave={handleMouseLeave}
           >
             <span className="header-btn__icon">{HEADER_SVGS.compare}</span>
           </button>
@@ -298,14 +231,12 @@ export function ChartHeader({
               type="button"
               className="header-btn header-btn--text"
               aria-label="Khung thời gian"
+              data-tooltip="Khung thời gian"
               aria-haspopup="menu"
               aria-expanded={timeframeMenuOpen}
               onClick={() => {
-                dismissTooltip();
                 onTimeframeMenuToggle(!timeframeMenuOpen);
               }}
-              onMouseEnter={(e) => handleMouseEnter("Khung thời gian", e)}
-              onMouseLeave={handleMouseLeave}
             >
               <span className="header-btn__text">{currentResolutionLabel}</span>
             </button>
@@ -343,9 +274,7 @@ export function ChartHeader({
             type="button"
             className="header-btn header-btn--icon"
             aria-label="Kiểu biểu đồ (Nến)"
-            onClick={dismissTooltip}
-            onMouseEnter={(e) => handleMouseEnter("Kiểu biểu đồ", e)}
-            onMouseLeave={handleMouseLeave}
+            data-tooltip="Kiểu biểu đồ"
           >
             <span className="header-btn__icon">{HEADER_SVGS.candles}</span>
           </button>
@@ -354,23 +283,22 @@ export function ChartHeader({
 
           {/* Nút Các chỉ báo */}
           <details
+            ref={indicatorDropdownRef}
             className="header-dropdown indicators-dropdown"
             open={indicatorMenuOpen}
             onToggle={(event) => {
-              dismissTooltip();
               onIndicatorMenuToggle(event.currentTarget.open);
             }}
           >
             <summary
               className="header-btn header-btn--with-icon"
               aria-label="Các chỉ báo"
-              onMouseEnter={(e) => handleMouseEnter("Các chỉ báo", e)}
-              onMouseLeave={handleMouseLeave}
+              data-tooltip="Các chỉ báo"
             >
               <span className="header-btn__icon">{HEADER_SVGS.indicators}</span>
               <span className="header-btn__text">Các chỉ báo</span>
             </summary>
-            <div className="header-dropdown__panel indicator-menu__panel">
+            <div className="header-dropdown__panel indicator-menu__panel" data-selection-boundary>
               <div className="indicator-menu__title">
                 <strong>Các chỉ báo</strong>
                 <button
@@ -384,6 +312,7 @@ export function ChartHeader({
               <label className="indicator-menu__search">
                 <span className="indicator-search-icon">{HEADER_SVGS.inputSearch}</span>
                 <input
+                  data-clear-selection-on-outside-drag
                   value={indicatorSearch}
                   onChange={(event) => onIndicatorSearchChange(event.target.value)}
                   placeholder="Tìm kiếm"
@@ -429,13 +358,11 @@ export function ChartHeader({
             type="button"
             className="header-btn header-btn--icon"
             aria-label="Hoàn tác"
+            data-tooltip="Hoàn tác (Ctrl+Z)"
             disabled={!canUndo}
             onClick={() => {
-              dismissTooltip();
               onUndo?.();
             }}
-            onMouseEnter={(e) => handleMouseEnter("Hoàn tác (Ctrl+Z)", e)}
-            onMouseLeave={handleMouseLeave}
           >
             <span className="header-btn__icon">{HEADER_SVGS.undo}</span>
           </button>
@@ -444,13 +371,11 @@ export function ChartHeader({
             type="button"
             className="header-btn header-btn--icon"
             aria-label="Làm lại"
+            data-tooltip="Làm lại (Ctrl+Y)"
             disabled={!canRedo}
             onClick={() => {
-              dismissTooltip();
               onRedo?.();
             }}
-            onMouseEnter={(e) => handleMouseEnter("Làm lại (Ctrl+Y)", e)}
-            onMouseLeave={handleMouseLeave}
           >
             <span className="header-btn__icon">{HEADER_SVGS.redo}</span>
           </button>
@@ -464,12 +389,10 @@ export function ChartHeader({
             type="button"
             className="header-btn header-btn--icon"
             aria-label="Cài đặt biểu đồ"
+            data-tooltip="Cài đặt biểu đồ"
             onClick={() => {
-              dismissTooltip();
               onOpenSettings?.();
             }}
-            onMouseEnter={(e) => handleMouseEnter("Cài đặt biểu đồ", e)}
-            onMouseLeave={handleMouseLeave}
           >
             <span className="header-btn__icon">{HEADER_SVGS.settings}</span>
           </button>
@@ -483,17 +406,10 @@ export function ChartHeader({
                 : "header-btn header-btn--icon"
             }
             aria-label={isFullscreen ? "Thoát toàn màn hình" : "Toàn màn hình"}
+            data-tooltip={isFullscreen ? "Thoát toàn màn hình" : "Toàn màn hình"}
             onClick={() => {
-              dismissTooltip();
               onToggleFullscreen();
             }}
-            onMouseEnter={(e) =>
-              handleMouseEnter(
-                isFullscreen ? "Thoát toàn màn hình" : "Toàn màn hình",
-                e
-              )
-            }
-            onMouseLeave={handleMouseLeave}
           >
             <span className="header-btn__icon">
               {isFullscreen ? HEADER_SVGS.fullscreenExit : HEADER_SVGS.fullscreen}
@@ -505,29 +421,15 @@ export function ChartHeader({
             type="button"
             className="header-btn header-btn--icon"
             aria-label="Chụp ảnh tức thì"
+            data-tooltip="Chụp ảnh tức thì"
             onClick={() => {
-              dismissTooltip();
               onDownloadSnapshot();
             }}
-            onMouseEnter={(e) => handleMouseEnter("Chụp ảnh tức thì", e)}
-            onMouseLeave={handleMouseLeave}
           >
             <span className="header-btn__icon">{HEADER_SVGS.camera}</span>
           </button>
         </div>
       </header>
-
-      {/* Tooltip chung thanh điều hướng kiểu VNDIRECT */}
-      {tooltip && !isSymbolModalOpen && !timeframeMenuOpen && !indicatorMenuOpen && (
-        <div
-          className="common-header-tooltip"
-          style={{ left: `${tooltip.left}px`, top: `${tooltip.top}px` }}
-          role="tooltip"
-        >
-          <div className="common-header-tooltip__arrow" />
-          <div className="common-header-tooltip__body">{tooltip.text}</div>
-        </div>
-      )}
 
       {/* Modal tìm kiếm mã giao dịch VNDIRECT */}
       <SymbolSearchModal
