@@ -143,6 +143,7 @@ export function DrawingPropertiesToolbar({
 }: DrawingPropertiesToolbarProps) {
   const toolbarRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
+  const positionedDrawingIdRef = useRef<string | null>(null);
   const [position, setPosition] = useState({ left: -1, top: 48 });
   const [openMenu, setOpenMenu] = useState<PropertyMenu | null>(null);
   const line = toolLineOptions(drawing);
@@ -153,9 +154,11 @@ export function DrawingPropertiesToolbar({
   const icon = TOOL_ICONS[drawing.toolType] ?? "trend";
 
   useLayoutEffect(() => {
+    if (positionedDrawingIdRef.current === drawing.id) return;
     const parent = toolbarRef.current?.parentElement;
     const toolbar = toolbarRef.current;
     if (!parent || !toolbar) return;
+    positionedDrawingIdRef.current = drawing.id;
 
     const isTextTool = drawing.toolType === "Text" || drawing.toolType === "Callout";
     if (isTextTool && anchor) {
