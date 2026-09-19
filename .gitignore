@@ -1,5 +1,6 @@
 node_modules
 .next
+.next-dev
 next-env.d.ts
 img_help
 data
