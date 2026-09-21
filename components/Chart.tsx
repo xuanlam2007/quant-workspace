@@ -20,8 +20,9 @@ import {
   type LineToolType,
 } from "lightweight-charts-line-tools-core";
 import { fetchHistory, type Bar } from "@/lib/dchart-api";
-import { connectPriceFeed, type ConnStatus } from "@/lib/dchart-socket";
+import { connectPriceFeed, type ConnStatus, type PriceTick } from "@/lib/dchart-socket";
 import { bucketStart, mergeTick } from "@/lib/bar-builder";
+import { createRealtimeTickBuffer } from "@/lib/realtime-tick-buffer";
 import { ChartFooter } from "./chart/layout/ChartFooter";
 import { ChartHeader } from "./chart/layout/ChartHeader";
 import { MarketDataPanel } from "./chart/layout/MarketDataPanel";
@@ -122,6 +123,7 @@ export default function Chart() {
   const barsByTimeRef = useRef(new Map<number, Bar>());
   const previousCloseByTimeRef = useRef(new Map<number, number>());
   const feedRef = useRef<ReturnType<typeof connectPriceFeed> | null>(null);
+  const realtimeTickHandlerRef = useRef<(tick: PriceTick) => void>(() => undefined);
   const lastRealtimeBucketRef = useRef<number | undefined>(undefined);
   const drawingKeyRef = useRef("");
   const drawingHistoryRef = useRef<string[]>(["[]"]);
@@ -603,6 +605,10 @@ export default function Chart() {
     if (!series || !chart) return;
 
     let cancelled = false;
+    const historyAbortController = new AbortController();
+    const realtimeTickBuffer = createRealtimeTickBuffer<PriceTick>(
+      (tick) => Number(bucketStart(tick.time, resolution)),
+    );
     currentBarRef.current = undefined;
     drawingKeyRef.current = drawingStorageKey(symbol, resolution);
     hiddenDrawingsRef.current = null;
@@ -614,7 +620,18 @@ export default function Chart() {
 
     (async () => {
       const { from, to } = rangeForResolution(resolution, rangeDays);
-      const bars = await fetchHistory(symbol, resolution, from, to);
+      let bars: Bar[] = [];
+      try {
+        bars = await fetchHistory(
+          symbol,
+          resolution,
+          from,
+          to,
+          historyAbortController.signal,
+        );
+      } catch {
+        if (cancelled || historyAbortController.signal.aborted) return;
+      }
       if (cancelled) return;
       const chartBars = bars.filter((bar) => isTradingSessionTime(bar.time, resolution));
       series.setData(chartBars);
@@ -715,9 +732,14 @@ export default function Chart() {
       syncDrawingHistoryAvailability();
       if (chartBars.length) {
         currentBarRef.current = chartBars[chartBars.length - 1];
+        lastRealtimeBucketRef.current = Number(currentBarRef.current.time);
         setLastPrice(currentBarRef.current.close.toFixed(2));
         setVisibleBar(currentBarRef.current);
       }
+      realtimeTickBuffer.release(
+        currentBarRef.current ? Number(currentBarRef.current.time) : undefined,
+        processRealtimeTick,
+      );
     })();
 
     const refreshVolumeMa = () => {
@@ -734,8 +756,6 @@ export default function Chart() {
     lastRealtimeBucketRef.current = currentBar
       ? Number(currentBar.time)
       : undefined;
-
-    feedRef.current?.close();
 
     const renderRealtimeBar = (bar: Bar) => {
       const bucketNumber = Number(bar.time);
@@ -771,37 +791,52 @@ export default function Chart() {
       if (bar) renderRealtimeBar(bar);
     };
 
-    feedRef.current = connectPriceFeed(
-      symbol,
-      (tick) => {
-        const bucket = bucketStart(tick.time, resolution);
-        const bucketNumber = Number(bucket);
-        if (!isTradingSessionTime(bucket, resolution)) {
-          if (!panGestureRef.current?.active) setLastPrice(tick.price.toFixed(2));
-          return;
-        }
-        const isNewBucket = lastRealtimeBucketRef.current !== bucketNumber;
-        const previousBar = currentBarRef.current;
-        if (previousBar && bucketNumber < Number(previousBar.time)) return;
-        if (isNewBucket && previousBar) {
-          previousCloseByTimeRef.current.set(bucketNumber, previousBar.close);
-        }
+    function processRealtimeTick(tick: PriceTick) {
+      const bucket = bucketStart(tick.time, resolution);
+      const bucketNumber = Number(bucket);
+      if (!isTradingSessionTime(bucket, resolution)) {
+        if (!panGestureRef.current?.active) setLastPrice(tick.price.toFixed(2));
+        return;
+      }
+      const isNewBucket = lastRealtimeBucketRef.current !== bucketNumber;
+      const previousBar = currentBarRef.current;
+      if (previousBar && bucketNumber < Number(previousBar.time)) return;
+      if (isNewBucket && previousBar) {
+        previousCloseByTimeRef.current.set(bucketNumber, previousBar.close);
+      }
 
-        currentBarRef.current = mergeTick(currentBarRef.current, tick.price, tick.volume, bucket);
-        lastRealtimeBucketRef.current = bucketNumber;
-        barsByTimeRef.current.set(bucketNumber, currentBarRef.current);
-        if (!panGestureRef.current?.active) renderRealtimeBar(currentBarRef.current);
-      },
-      setStatus
-    );
+      currentBarRef.current = mergeTick(currentBarRef.current, tick.price, tick.volume, bucket);
+      lastRealtimeBucketRef.current = bucketNumber;
+      barsByTimeRef.current.set(bucketNumber, currentBarRef.current);
+      if (!panGestureRef.current?.active) renderRealtimeBar(currentBarRef.current);
+    }
+
+    realtimeTickHandlerRef.current = (tick) => {
+      realtimeTickBuffer.push(tick, processRealtimeTick);
+    };
 
     return () => {
       cancelled = true;
+      historyAbortController.abort();
+      realtimeTickBuffer.dispose();
+      realtimeTickHandlerRef.current = () => undefined;
       flushRealtimeRef.current = () => undefined;
-      feedRef.current?.close();
-      feedRef.current = null;
     };
   }, [persistDrawingHistory, rangeDays, resolution, symbol, syncDrawingHistoryAvailability]);
+
+  useEffect(() => {
+    const feed = connectPriceFeed(
+      symbol,
+      (tick) => realtimeTickHandlerRef.current(tick),
+      setStatus,
+    );
+    feedRef.current = feed;
+
+    return () => {
+      feed.close();
+      if (feedRef.current === feed) feedRef.current = null;
+    };
+  }, [symbol]);
 
   useEffect(() => {
     const bars = [...barsByTimeRef.current.values()]
