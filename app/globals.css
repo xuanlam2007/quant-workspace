@@ -908,7 +908,7 @@ header {
 .toolbar-menu {
   position: absolute;
   top: 0;
-  left: 43px;
+  left: 53px;
   width: max-content;
   min-width: 210px;
   max-height: min(420px, calc(100vh - 130px));
@@ -1802,7 +1802,7 @@ main#chart.chart--tool-active canvas {
   .symbol-row { gap: 5px; }
   .drawing-toolbar { width: 46px; flex-basis: 46px; padding-inline: 4px; }
   .toolbar-button { width: 32px; height: 32px; }
-  .toolbar-menu { left: 37px; }
+  .toolbar-menu { left: 47px; }
   #last-price { min-width: 62px; font-size: 13px; }
   .status-row { gap: 4px; }
 }
