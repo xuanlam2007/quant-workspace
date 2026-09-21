@@ -50,7 +50,8 @@ export async function fetchHistory(
   symbol: string,
   resolution: string,
   from: number,
-  to: number
+  to: number,
+  signal?: AbortSignal,
 ): Promise<Bar[]> {
   // API chỉ cung cấp nến ngày, thư viện VNDIRECT tự tổng hợp tuần và tháng.
   const requestResolution = resolution === "W" || resolution === "M" ? "D" : resolution;
@@ -60,7 +61,7 @@ export async function fetchHistory(
     from: String(from),
     to: String(to),
   });
-  const res = await fetch(`${HISTORY_URL}?${params}`);
+  const res = await fetch(`${HISTORY_URL}?${params}`, { signal });
   if (!res.ok) throw new Error(`history fetch failed: ${res.status}`);
   const data: RawHistory = await res.json();
   if (data.s !== "ok" || !data.t?.length) return [];
