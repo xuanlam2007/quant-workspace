@@ -2,6 +2,8 @@ import type { Bar } from "@/lib/dchart-api";
 
 const tradingTimeFormatters = new Map<string, Intl.DateTimeFormat>();
 const chartTimeFormatters = new Map<string, Intl.DateTimeFormat>();
+const clockTimeFormatters = new Map<string, Intl.DateTimeFormat>();
+const timezoneOffsetFormatters = new Map<string, Intl.DateTimeFormat>();
 
 export function drawingStorageKey(symbol: string, resolution: string) {
   return `vndirect-chart:drawings:${symbol}:${resolution}`;
@@ -82,6 +84,7 @@ export function formatChartTime(time: unknown, timezone = "Asia/Bangkok") {
   return formatter.format(new Date(timestamp * 1000));
 }
 
+
 export function rangeForResolution(resolution: string, rangeDays?: number): { from: number; to: number } {
   const to = Math.floor(Date.now() / 1000);
   const daysBack = rangeDays ?? (resolution === "M" ? 3650 : resolution === "W" ? 1825 : resolution === "D" ? 730 : resolution === "60" ? 30 : 10);
@@ -91,4 +94,56 @@ export function rangeForResolution(resolution: string, rangeDays?: number): { fr
 export function futureTimelinePoints(lastTime: number, resolution: string, count = 500) {
   const step = resolution === "M" ? 2592000 : resolution === "W" ? 604800 : resolution === "D" ? 86400 : Number(resolution) * 60;
   return Array.from({ length: count }, (_, index) => ({ time: (lastTime + step * (index + 1)) as Bar["time"] }));
+}
+
+export function getTimezoneOffsetString(timeZone: string, date = new Date()): { offsetMinutes: number; string: string } {
+  try {
+    let formatter = timezoneOffsetFormatters.get(timeZone);
+    if (!formatter) {
+      formatter = new Intl.DateTimeFormat("en-US", { timeZone, timeZoneName: "longOffset" });
+      timezoneOffsetFormatters.set(timeZone, formatter);
+    }
+    const offset = formatter.formatToParts(date).find((part) => part.type === "timeZoneName")?.value;
+    const match = /^GMT(?:(?<sign>[+-])(?<hours>\d{2})(?::(?<minutes>\d{2}))?)?$/.exec(offset ?? "");
+    if (!match) throw new Error("timezone offset is unavailable");
+    const sign = match.groups?.sign === "-" ? -1 : 1;
+    const diffMinutes = match.groups?.hours
+      ? sign * (Number(match.groups.hours) * 60 + Number(match.groups.minutes ?? 0))
+      : 0;
+    const hours = Math.trunc(diffMinutes / 60);
+    const minutes = Math.abs(diffMinutes % 60);
+    let string = "UTC";
+    if (diffMinutes > 0) {
+      string += `+${hours}${minutes ? `:${String(minutes).padStart(2, "0")}` : ""}`;
+    } else if (diffMinutes < 0) {
+      string += `${hours}${minutes ? `:${String(minutes).padStart(2, "0")}` : ""}`;
+    }
+    return { offsetMinutes: diffMinutes, string };
+  } catch {
+    return { offsetMinutes: 420, string: "UTC+7" };
+  }
+}
+
+export function formatTimeInTimezone(date: Date, timeZone: string): string {
+  try {
+    let formatter = clockTimeFormatters.get(timeZone);
+    if (!formatter) {
+      formatter = new Intl.DateTimeFormat("en-GB", {
+        timeZone,
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+      });
+      clockTimeFormatters.set(timeZone, formatter);
+    }
+    return formatter.format(date);
+  } catch {
+    return date.toTimeString().slice(0, 8);
+  }
+}
+
+export function millisecondsUntilNextSecond(now: number) {
+  const remainder = ((now % 1000) + 1000) % 1000;
+  return remainder === 0 ? 1000 : 1000 - remainder;
 }
