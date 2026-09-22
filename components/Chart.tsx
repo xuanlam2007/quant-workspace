@@ -190,7 +190,25 @@ export default function Chart() {
   const [isSymbolModalOpen, setIsSymbolModalOpen] = useState(false);
   const [symbolSearchInitialQuery, setSymbolSearchInitialQuery] = useState("");
   const [dataError, setDataError] = useState<string>();
+  const [chartTimezone, setChartTimezone] = useState("Asia/Bangkok");
   const symbolInfo = resolvedSymbol?.symbol === symbol ? resolvedSymbol.info : undefined;
+
+  const handleTimezoneChange = useCallback((newTimezone: string) => {
+    setChartTimezone(newTimezone);
+  }, []);
+
+  const effectiveChartTimezone = chartTimezone === "exchange"
+    ? symbolInfo?.timezone ?? "Asia/Bangkok"
+    : chartTimezone;
+
+  useEffect(() => {
+    symbolTimezoneRef.current = effectiveChartTimezone;
+    chartRef.current?.applyOptions({
+      localization: {
+        timeFormatter: (time: Time) => formatChartTime(time, effectiveChartTimezone),
+      },
+    });
+  }, [effectiveChartTimezone]);
 
   const syncDrawingHistoryAvailability = useCallback(() => {
     setCanUndo(drawingHistoryRef.current.length > 1);
@@ -270,7 +288,7 @@ export default function Chart() {
     setSmoothingLength,
   } = useIndicatorSettings();
   resolutionRef.current = resolution;
-  symbolTimezoneRef.current = symbolInfo?.timezone ?? "Asia/Bangkok";
+  symbolTimezoneRef.current = effectiveChartTimezone;
   maSettingsRef.current = { length: maLength, type: maType, smoothingLength };
   autoScaleRef.current = autoScale;
   activeDrawingToolRef.current = activeDrawingTool;
@@ -1441,6 +1459,7 @@ export default function Chart() {
               chart={chartRef.current}
               series={seriesRef.current}
               chartTop={containerRef.current?.offsetTop ?? 40}
+
               viewportVersion={drawingViewportVersion}
             />
           )}
@@ -1470,9 +1489,12 @@ export default function Chart() {
             rangeDays={rangeDays}
             scaleMode={scaleMode}
             autoScale={autoScale}
+            timezone={chartTimezone}
+            exchangeTimezone={symbolInfo?.timezone}
             onRangeChange={applyRangePreset}
             onScaleModeChange={setScaleMode}
             onAutoScaleToggle={() => setAutoScale((enabled) => !enabled)}
+            onTimezoneChange={handleTimezoneChange}
           />
         </div>
       </div>
