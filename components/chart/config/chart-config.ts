@@ -24,12 +24,12 @@ export const TIMEFRAME_GROUPS = [
 ];
 
 export const RANGE_PRESETS = [
-  { label: "5y", days: 365 * 5 },
-  { label: "1y", days: 365 },
-  { label: "3p", days: 90 },
-  { label: "1p", days: 30 },
-  { label: "5n", days: 5 },
-  { label: "1n", days: 1 },
+  { label: "5y", days: 365 * 5, resolution: "W" },
+  { label: "1y", days: 365, resolution: "W" },
+  { label: "3p", days: 90, resolution: "D" },
+  { label: "1p", days: 30, resolution: "D" },
+  { label: "5n", days: 5, resolution: "5" },
+  { label: "1n", days: 1, resolution: "1" },
 ];
 
 export type RangePreset = (typeof RANGE_PRESETS)[number];

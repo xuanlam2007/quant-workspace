@@ -14,14 +14,6 @@ const RESOLUTION_SECONDS: Record<string, number> = {
 
 export function bucketStart(epochMs: number, resolution: string): UTCTimestamp {
   const t = Math.floor(epochMs >= 1e12 ? epochMs / 1000 : epochMs);
-  if (resolution === "W" || resolution === "M") {
-    const date = new Date(t * 1000);
-    const day = resolution === "W"
-      ? date.getUTCDate() - ((date.getUTCDay() + 6) % 7)
-      : 1;
-    return (Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), day) / 1000) as UTCTimestamp;
-  }
-
   const secs = RESOLUTION_SECONDS[resolution] ?? 60;
   return (Math.floor(t / secs) * secs) as UTCTimestamp;
 }

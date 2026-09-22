@@ -31,10 +31,17 @@ export function calculateMa(points: MaPoint[], length: number, type: MaType): Ma
   return values;
 }
 
-export function volumeMa(bars: Bar[], length: number) {
+export function volumeMa(
+  bars: Bar[],
+  length: number,
+  type: MaType = "SMA",
+  smoothingLength = 1,
+) {
   const volumePoints = bars.map((bar) => ({ time: bar.time, value: bar.volume }));
-  // VNDirect hiển thị Volume MA gốc, đường làm mượt mặc định bị ẩn.
-  return calculateMa(volumePoints, length, "SMA");
+  const average = calculateMa(volumePoints, length, type);
+  return smoothingLength > 1
+    ? calculateMa(average, smoothingLength, "SMA")
+    : average;
 }
 
 export function priceIndicatorData(bars: Bar[], length: number, type: MaType) {

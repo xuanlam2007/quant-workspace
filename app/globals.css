@@ -995,6 +995,23 @@ main#chart.chart--tool-active canvas {
   overflow: hidden;
 }
 
+.chart-data-error {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 8;
+  max-width: min(420px, calc(100% - 32px));
+  padding: 10px 14px;
+  border: 1px solid rgba(235, 77, 92, 0.45);
+  border-radius: 4px;
+  background: rgba(32, 33, 39, 0.94);
+  color: #eb4d5c;
+  font-size: 13px;
+  text-align: center;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
 .drawing-axis-range {
   position: absolute;
   z-index: 15;
@@ -1788,6 +1805,50 @@ main#chart.chart--tool-active canvas {
 .chart-footer .chart-footer__active { color: #fff; background: #2962ff; }
 .chart-footer__settings { gap: 9px; }
 .chart-footer__settings span { color: #d3d9e4; font-family: var(--font-num); }
+
+.connection-status {
+  display: inline-flex;
+  height: 34px;
+  align-items: center;
+  gap: 6px;
+  min-width: 154px;
+  padding: 0 8px;
+  color: #aeb7c7;
+  font: 12px var(--font-ui);
+  white-space: nowrap;
+  transition: color 180ms ease, opacity 180ms ease;
+}
+
+.connection-status__dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border-radius: 50%;
+  background: #ef5350;
+  box-shadow: 0 0 0 2px rgb(239 83 80 / 12%);
+  transition: background-color 180ms ease, box-shadow 180ms ease;
+}
+
+.connection-status--connected .connection-status__dot {
+  background: #26a69a;
+  box-shadow: 0 0 0 2px rgb(38 166 154 / 14%);
+}
+
+.connection-status--reconnecting .connection-status__dot {
+  background: #f5a623;
+  box-shadow: 0 0 0 2px rgb(245 166 35 / 14%);
+  animation: connection-status-pulse 1.2s ease-in-out infinite;
+}
+
+.connection-status__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes connection-status-pulse {
+  50% { opacity: 0.45; }
+}
 
 @media (max-width: 900px) {
   .chart-header { flex-wrap: wrap; overflow: visible; }

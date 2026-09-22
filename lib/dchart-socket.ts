@@ -1,81 +1,134 @@
-// socket.io-client v2 dùng Engine.IO v3, tương thích với máy chủ hiện tại
-const SOCKET_URL = "wss://socket.example.com/socket.io/";
-const NAMESPACE = "/socket.io";
+import io from "socket.io-client/dist/socket.io.js";
+
+const SOCKET_NAMESPACE_URL = "https://socket.example.com";
 
 export interface PriceTick {
   symbol: string;
   price: number;
   volume: number;
-  time: number; // thời gian Unix tính bằng mili giây
+  time: number;
 }
 
 export type ConnStatus = "connected" | "disconnected" | "reconnecting";
 
+export function connectionStatusLabel(connectionStatus: ConnStatus) {
+  if (connectionStatus === "connected") return "Đã kết nối VNDIRECT";
+  if (connectionStatus === "reconnecting") return "Đang kết nối VNDIRECT";
+  return "Mất kết nối VNDIRECT";
+}
+
+interface RawPriceTick {
+  symbol?: unknown;
+  price?: unknown;
+  volume?: unknown;
+  time?: unknown;
+}
+
+interface SocketClient {
+  connected: boolean;
+  on(event: string, listener: (...args: unknown[]) => void): SocketClient;
+  emit(event: string, ...args: unknown[]): SocketClient;
+}
+
+interface Subscriber {
+  symbol: string;
+  onTick: (tick: PriceTick) => void;
+  onStatus: (status: ConnStatus) => void;
+}
+
+let socket: SocketClient | undefined;
+let status: ConnStatus = "disconnected";
+let nextSubscriberId = 1;
+const subscribers = new Map<number, Subscriber>();
+const symbolSubscribers = new Map<string, number>();
+
+export function normalizePriceTick(data: RawPriceTick): PriceTick | undefined {
+  const symbol = typeof data.symbol === "string" ? data.symbol : "";
+  const price = Number(data.price);
+  const volume = Number(data.volume) || 0;
+  const rawTime = Number(data.time);
+  if (!symbol || !Number.isFinite(price)) return undefined;
+  const time = Number.isFinite(rawTime) && rawTime > 0
+    ? rawTime < 1e12 ? rawTime * 1000 : rawTime
+    : Date.now();
+  return { symbol, price, volume, time };
+}
+
+function updateStatus(nextStatus: ConnStatus) {
+  status = nextStatus;
+  subscribers.forEach((subscriber) => subscriber.onStatus(nextStatus));
+}
+
+function subscribeSymbol(symbol: string) {
+  const count = symbolSubscribers.get(symbol) ?? 0;
+  symbolSubscribers.set(symbol, count + 1);
+  if (count === 0 && socket?.connected) socket.emit("addsymbol", symbol);
+}
+
+function unsubscribeSymbol(symbol: string) {
+  const count = symbolSubscribers.get(symbol) ?? 0;
+  if (count <= 1) {
+    symbolSubscribers.delete(symbol);
+    if (socket?.connected) socket.emit("removesymbol", symbol);
+    return;
+  }
+  symbolSubscribers.set(symbol, count - 1);
+}
+
+function ensureSocket() {
+  if (socket) return socket;
+  socket = io(SOCKET_NAMESPACE_URL, {
+    query: { symbol: "VND" },
+    reconnection: true,
+    reconnectionDelay: 1_000,
+    reconnectionDelayMax: 10_000,
+  }) as SocketClient;
+  socket.on("connect", () => {
+    updateStatus("connected");
+    symbolSubscribers.forEach((_count, symbol) => socket?.emit("addsymbol", symbol));
+  });
+  socket.on("disconnect", () => updateStatus("disconnected"));
+  socket.on("connect_error", () => updateStatus("reconnecting"));
+  socket.on("reconnect_attempt", () => updateStatus("reconnecting"));
+  socket.on("price", (payload: unknown) => {
+    if (!payload || typeof payload !== "object") return;
+    const tick = normalizePriceTick(payload as RawPriceTick);
+    if (!tick) return;
+    subscribers.forEach((subscriber) => {
+      if (subscriber.symbol === tick.symbol) subscriber.onTick(tick);
+    });
+  });
+  updateStatus("reconnecting");
+  return socket;
+}
+
 export function connectPriceFeed(
-  symbol: string,
+  initialSymbol: string,
   onTick: (tick: PriceTick) => void,
-  onStatus: (status: ConnStatus) => void
+  onStatus: (nextStatus: ConnStatus) => void,
 ) {
-  let socket: WebSocket | null = null;
+  let symbol = initialSymbol;
   let closed = false;
-  let reconnectTimer: number | undefined;
-  let keepaliveTimer: number | undefined;
-  let subscribed = false;
-  const clearTimers = () => {
-    if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer);
-    if (keepaliveTimer !== undefined) window.clearInterval(keepaliveTimer);
-    reconnectTimer = undefined;
-    keepaliveTimer = undefined;
-  };
-  const subscribe = () => {
-    if (!socket || socket.readyState !== WebSocket.OPEN || subscribed) return;
-    subscribed = true;
-    socket.send(`42${NAMESPACE},${JSON.stringify(["addsymbol", symbol])}`);
-  };
-  const scheduleReconnect = () => {
-    if (closed || reconnectTimer !== undefined) return;
-    subscribed = false;
-    onStatus("reconnecting");
-    reconnectTimer = window.setTimeout(() => { reconnectTimer = undefined; open(); }, 1500);
-  };
-  const open = () => {
-    if (closed) return;
-    clearTimers();
-    subscribed = false;
-    onStatus("reconnecting");
-    socket = new WebSocket(`${SOCKET_URL}?symbol=${encodeURIComponent(symbol)}&EIO=3&transport=websocket`);
-    socket.onopen = () => { /* chờ gói mở của Engine.IO */ };
-    socket.onmessage = (event) => {
-      const message = String(event.data);
-      if (message === "2") { socket?.send("3"); return; }
-      if (message.startsWith("0")) {
-        onStatus("connected");
-        try {
-          const meta = JSON.parse(message.slice(1));
-          const interval = Number(meta.pingInterval) || 25000;
-          keepaliveTimer = window.setInterval(() => { if (socket?.readyState === WebSocket.OPEN) socket.send("2"); }, interval);
-        } catch { /* giữ chu kỳ mặc định */ }
-        socket?.send("40");
-        socket?.send(`40${NAMESPACE}`);
-        return;
-      }
-      if (message.startsWith(`40${NAMESPACE}`)) { subscribe(); return; }
-      if (!message.startsWith("42")) return;
-      let payload = message.slice(2);
-      if (payload.startsWith(`${NAMESPACE},`)) payload = payload.slice(NAMESPACE.length + 1);
-      try {
-        const [eventName, data] = JSON.parse(payload);
-        if (eventName !== "price" || !data || data.symbol !== symbol) return;
-        const price = Number(data.price);
-        if (Number.isFinite(price)) onTick({ symbol, price, volume: Number(data.volume) || 0, time: Number(data.time) || Date.now() });
-      } catch { /* bỏ qua gói không phải giá */ }
-    };
-    socket.onerror = () => scheduleReconnect();
-    socket.onclose = () => { clearTimers(); if (!closed) scheduleReconnect(); else onStatus("disconnected"); };
-  };
-  open();
+  const subscriberId = nextSubscriberId++;
+  subscribers.set(subscriberId, { symbol, onTick, onStatus });
+  subscribeSymbol(symbol);
+  ensureSocket();
+  onStatus(status);
+
   return {
-    changeSymbol(newSymbol: string) { if (newSymbol !== symbol) socket?.close(); },
-    close() { closed = true; clearTimers(); socket?.close(); socket = null; onStatus("disconnected"); },
+    changeSymbol(nextSymbol: string) {
+      if (closed || nextSymbol === symbol) return;
+      unsubscribeSymbol(symbol);
+      symbol = nextSymbol;
+      subscribers.set(subscriberId, { symbol, onTick, onStatus });
+      subscribeSymbol(symbol);
+    },
+    close() {
+      if (closed) return;
+      closed = true;
+      subscribers.delete(subscriberId);
+      unsubscribeSymbol(symbol);
+      onStatus("disconnected");
+    },
   };
 }

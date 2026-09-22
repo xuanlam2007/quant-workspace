@@ -19,7 +19,14 @@ import {
   type LineToolExport,
   type LineToolType,
 } from "lightweight-charts-line-tools-core";
-import { fetchHistory, type Bar } from "@/lib/dchart-api";
+import {
+  fetchHistory,
+  fetchSymbolInfo,
+  mergeBars,
+  symbolPriceFormat,
+  type Bar,
+  type SymbolInfo,
+} from "@/lib/dchart-api";
 import { connectPriceFeed, type ConnStatus, type PriceTick } from "@/lib/dchart-socket";
 import { bucketStart, mergeTick } from "@/lib/bar-builder";
 import { createRealtimeTickBuffer } from "@/lib/realtime-tick-buffer";
@@ -60,17 +67,7 @@ import { useIndicatorSettings } from "./chart/indicators/useIndicatorSettings";
 import { DelayedTooltip } from "./chart/ui/DelayedTooltip";
 import { OutsideDragSelectionGuard } from "./chart/ui/OutsideDragSelectionGuard";
 
-const DAILY_TICK_FORMATTER = new Intl.DateTimeFormat("en-GB", {
-  timeZone: "Asia/Bangkok",
-  day: "2-digit",
-  month: "short",
-});
-const INTRADAY_TICK_FORMATTER = new Intl.DateTimeFormat("en-GB", {
-  timeZone: "Asia/Bangkok",
-  hour: "2-digit",
-  minute: "2-digit",
-  hour12: false,
-});
+const tickFormatters = new Map<string, Intl.DateTimeFormat>();
 const DRAWING_HISTORY_VERSION = 1;
 const MAX_DRAWING_HISTORY_STATES = 100;
 
@@ -89,15 +86,30 @@ function isDrawingState(value: unknown): value is string {
   }
 }
 
+function formatTick(time: Time, resolution: string, timezone: string) {
+  const isDaily = ["D", "W", "M"].includes(resolution);
+  const key = `${timezone}:${isDaily ? "daily" : "intraday"}`;
+  let formatter = tickFormatters.get(key);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat("en-GB", isDaily
+      ? { timeZone: timezone, day: "2-digit", month: "short" }
+      : { timeZone: timezone, hour: "2-digit", minute: "2-digit", hour12: false });
+    tickFormatters.set(key, formatter);
+  }
+  return formatter.format(new Date(Number(time) * 1000));
+}
+
 function drawingHistoryStorageKey(drawingKey: string) {
   return `${drawingKey}:history`;
 }
 
-function latestVolumeMaPoint(bars: Bar[], length: number) {
-  if (bars.length < length) return undefined;
-  let total = 0;
-  for (let index = bars.length - length; index < bars.length; index++) total += bars[index].volume;
-  return { time: bars[bars.length - 1].time, value: total / length };
+function latestVolumeMaPoint(
+  bars: Bar[],
+  length: number,
+  type: MaType,
+  smoothingLength: number,
+) {
+  return volumeMa(bars, length, type, smoothingLength).at(-1);
 }
 
 export default function Chart() {
@@ -129,6 +141,7 @@ export default function Chart() {
   const drawingHistoryRef = useRef<string[]>(["[]"]);
   const drawingRedoHistoryRef = useRef<string[]>([]);
   const resolutionRef = useRef("D");
+  const symbolTimezoneRef = useRef("Asia/Bangkok");
   const maSettingsRef = useRef<{ length: number; type: MaType; smoothingLength: number }>({ length: 20, type: "SMA", smoothingLength: 9 });
   const drawingGestureRef = useRef(false);
   const activeDrawingToolRef = useRef<LineToolType | null>(null);
@@ -137,6 +150,7 @@ export default function Chart() {
   const hiddenDrawingsRef = useRef<string | null>(null);
   const autoScaleRef = useRef(true);
   const flushRealtimeRef = useRef<() => void>(() => undefined);
+  const loadOlderHistoryRef = useRef<() => void>(() => undefined);
   const lastRenderedRealtimeBucketRef = useRef<number | undefined>(undefined);
   const lastCandleColorRef = useRef<string | undefined>(undefined);
   const panGestureRef = useRef<{
@@ -148,6 +162,7 @@ export default function Chart() {
   } | null>(null);
 
   const [symbol, setSymbol] = useState(SYMBOLS[0]);
+  const [resolvedSymbol, setResolvedSymbol] = useState<{ symbol: string; info: SymbolInfo }>();
   const [resolution, setResolution] = useState("D");
   const [timeframeMenuOpen, setTimeframeMenuOpen] = useState(false);
   const [status, setStatus] = useState<ConnStatus>("disconnected");
@@ -174,6 +189,8 @@ export default function Chart() {
   const [canRedo, setCanRedo] = useState(false);
   const [isSymbolModalOpen, setIsSymbolModalOpen] = useState(false);
   const [symbolSearchInitialQuery, setSymbolSearchInitialQuery] = useState("");
+  const [dataError, setDataError] = useState<string>();
+  const symbolInfo = resolvedSymbol?.symbol === symbol ? resolvedSymbol.info : undefined;
 
   const syncDrawingHistoryAvailability = useCallback(() => {
     setCanUndo(drawingHistoryRef.current.length > 1);
@@ -253,12 +270,33 @@ export default function Chart() {
     setSmoothingLength,
   } = useIndicatorSettings();
   resolutionRef.current = resolution;
+  symbolTimezoneRef.current = symbolInfo?.timezone ?? "Asia/Bangkok";
   maSettingsRef.current = { length: maLength, type: maType, smoothingLength };
   autoScaleRef.current = autoScale;
   activeDrawingToolRef.current = activeDrawingTool;
   stayInDrawingModeRef.current = stayInDrawingMode;
   eraserModeRef.current = eraserMode;
   textDialogOpenRef.current = textDialogOpen;
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setDataError(undefined);
+    setVisibleBar(undefined);
+    currentBarRef.current = undefined;
+    barsByTimeRef.current.clear();
+    previousCloseByTimeRef.current.clear();
+    seriesRef.current?.setData([]);
+    volumeSeriesRef.current?.setData([]);
+    volumeSmaSeriesRef.current?.setData([]);
+    timelineSeriesRef.current?.setData([]);
+    fetchSymbolInfo(symbol, controller.signal)
+      .then((info) => setResolvedSymbol({ symbol, info }))
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return;
+        setDataError(error instanceof Error ? error.message : "symbol metadata failed");
+      });
+    return () => controller.abort();
+  }, [symbol]);
 
   const openTextDialog = useCallback((drawing: LineToolExport<LineToolType>) => {
     setEditingTextDrawing(drawing);
@@ -302,7 +340,7 @@ export default function Chart() {
         attributionLogo: false,
       },
       localization: {
-        timeFormatter: formatChartTime,
+        timeFormatter: (time: Time) => formatChartTime(time, symbolTimezoneRef.current),
       },
       grid: {
         vertLines: { color: "#303948" },
@@ -331,10 +369,11 @@ export default function Chart() {
         fixRightEdge: false,
         lockVisibleTimeRangeOnResize: true,
         rightBarStaysOnScroll: false,
-        tickMarkFormatter: (time: Time) => (["D", "W", "M"].includes(resolutionRef.current)
-          ? DAILY_TICK_FORMATTER
-          : INTRADAY_TICK_FORMATTER
-        ).format(new Date(Number(time) * 1000)),
+        tickMarkFormatter: (time: Time) => formatTick(
+          time,
+          resolutionRef.current,
+          symbolTimezoneRef.current,
+        ),
       },
       handleScroll: {
         mouseWheel: true,
@@ -457,7 +496,10 @@ export default function Chart() {
       setSelectedDrawing(event.selectedLineTool);
       if (event.selectedLineTool.toolType === "Text") openTextDialog(event.selectedLineTool);
     });
-    const refreshDrawingOverlays = () => setDrawingViewportVersion((current) => current + 1);
+    const refreshDrawingOverlays = (range?: { from: number; to: number } | null) => {
+      setDrawingViewportVersion((current) => current + 1);
+      if (range && Number(range.from) <= 20) loadOlderHistoryRef.current();
+    };
     chart.timeScale().subscribeVisibleLogicalRangeChange(refreshDrawingOverlays);
     lineToolsRef.current = lineTools;
 
@@ -602,10 +644,18 @@ export default function Chart() {
   useEffect(() => {
     const series = seriesRef.current;
     const chart = chartRef.current;
-    if (!series || !chart) return;
+    if (!series || !chart || !symbolInfo) return;
+    const activeSession = symbolInfo.session;
+    const activeTimezone = symbolInfo.timezone;
+    const activePriceFormat = symbolPriceFormat(symbolInfo);
 
     let cancelled = false;
+    let loadingOlderHistory = false;
+    let olderHistoryExhausted = false;
     const historyAbortController = new AbortController();
+    loadOlderHistoryRef.current = () => undefined;
+    setDataError(undefined);
+    series.applyOptions({ priceFormat: activePriceFormat });
     const realtimeTickBuffer = createRealtimeTickBuffer<PriceTick>(
       (tick) => Number(bucketStart(tick.time, resolution)),
     );
@@ -629,11 +679,27 @@ export default function Chart() {
           to,
           historyAbortController.signal,
         );
-      } catch {
+      } catch (error: unknown) {
         if (cancelled || historyAbortController.signal.aborted) return;
+        realtimeTickBuffer.dispose();
+        series.setData([]);
+        volumeSeriesRef.current?.setData([]);
+        volumeSmaSeriesRef.current?.setData([]);
+        timelineSeriesRef.current?.setData([]);
+        barsByTimeRef.current.clear();
+        previousCloseByTimeRef.current.clear();
+        currentBarRef.current = undefined;
+        setVisibleBar(undefined);
+        setDataError(error instanceof Error ? error.message : "history fetch failed");
+        return;
       }
       if (cancelled) return;
-      const chartBars = bars.filter((bar) => isTradingSessionTime(bar.time, resolution));
+      const chartBars = bars.filter((bar) => isTradingSessionTime(
+        bar.time,
+        resolution,
+        activeSession,
+        activeTimezone,
+      ));
       series.setData(chartBars);
       if (chartBars.length) {
         const color = candleColor(chartBars[chartBars.length - 1]);
@@ -649,11 +715,74 @@ export default function Chart() {
       })));
       chart.priceScale("right").setAutoScale(true);
       const settings = maSettingsRef.current;
-      volumeSmaSeriesRef.current?.setData(volumeMa(volumeBars, settings.length));
+      volumeSmaSeriesRef.current?.setData(volumeMa(
+        volumeBars,
+        settings.length,
+        settings.type,
+        settings.smoothingLength,
+      ));
       updateStudySeries(chartBars);
       if (chartBars.length) timelineSeriesRef.current?.setData(futureTimelinePoints(Number(chartBars[chartBars.length - 1].time), resolution));
       barsByTimeRef.current = new Map(chartBars.map((bar) => [Number(bar.time), bar]));
       previousCloseByTimeRef.current = new Map(chartBars.slice(1).map((bar, index) => [Number(bar.time), chartBars[index].close]));
+      let earliestHistoryTime = chartBars[0] ? Number(chartBars[0].time) : undefined;
+      const historyWindowSeconds = Math.max(86400, to - from);
+
+      loadOlderHistoryRef.current = () => {
+        if (cancelled || loadingOlderHistory || olderHistoryExhausted || earliestHistoryTime === undefined) return;
+        loadingOlderHistory = true;
+        const pageTo = earliestHistoryTime - 1;
+        const pageFrom = pageTo - historyWindowSeconds;
+        const visibleRange = chart.timeScale().getVisibleRange();
+
+        void fetchHistory(symbol, resolution, pageFrom, pageTo, historyAbortController.signal)
+          .then((olderBars) => {
+            if (cancelled) return;
+            const filteredOlderBars = olderBars.filter((bar) => (
+              isTradingSessionTime(bar.time, resolution, activeSession, activeTimezone)
+            ));
+            if (filteredOlderBars.length === 0) {
+              olderHistoryExhausted = true;
+              return;
+            }
+
+            const existingBars = [...barsByTimeRef.current.values()];
+            const mergedBars = mergeBars(existingBars, filteredOlderBars);
+            if (mergedBars.length === existingBars.length) {
+              olderHistoryExhausted = true;
+              return;
+            }
+
+            barsByTimeRef.current = new Map(mergedBars.map((bar) => [Number(bar.time), bar]));
+            previousCloseByTimeRef.current = new Map(
+              mergedBars.slice(1).map((bar, index) => [Number(bar.time), mergedBars[index].close]),
+            );
+            earliestHistoryTime = Number(mergedBars[0].time);
+            series.setData(mergedBars);
+            volumeSeriesRef.current?.setData(mergedBars.map((bar) => ({
+              time: bar.time,
+              value: bar.volume,
+              color: volumeColor(bar),
+            })));
+            const currentSettings = maSettingsRef.current;
+            volumeSmaSeriesRef.current?.setData(volumeMa(
+              mergedBars,
+              currentSettings.length,
+              currentSettings.type,
+              currentSettings.smoothingLength,
+            ));
+            updateStudySeries(mergedBars);
+            if (visibleRange) chart.timeScale().setVisibleRange(visibleRange);
+            setDataError(undefined);
+          })
+          .catch((error: unknown) => {
+            if (cancelled || historyAbortController.signal.aborted) return;
+            setDataError(error instanceof Error ? error.message : "older history fetch failed");
+          })
+          .finally(() => {
+            loadingOlderHistory = false;
+          });
+      };
       const visibleBars = DEFAULT_VISIBLE_BARS;
 
       // Gọi lại sau khi kích thước biểu đồ ổn định để tránh nến bị nén
@@ -733,7 +862,7 @@ export default function Chart() {
       if (chartBars.length) {
         currentBarRef.current = chartBars[chartBars.length - 1];
         lastRealtimeBucketRef.current = Number(currentBarRef.current.time);
-        setLastPrice(currentBarRef.current.close.toFixed(2));
+        setLastPrice(currentBarRef.current.close.toFixed(activePriceFormat.precision));
         setVisibleBar(currentBarRef.current);
       }
       realtimeTickBuffer.release(
@@ -744,11 +873,11 @@ export default function Chart() {
 
     const refreshVolumeMa = () => {
       const allBars = [...barsByTimeRef.current.values()]
-        .filter((bar) => isTradingSessionTime(bar.time, resolution))
+        .filter((bar) => isTradingSessionTime(bar.time, resolution, activeSession, activeTimezone))
         .sort((a, b) => Number(a.time) - Number(b.time));
       const settings = maSettingsRef.current;
       volumeSmaSeriesRef.current?.setData(
-        volumeMa(allBars, settings.length)
+        volumeMa(allBars, settings.length, settings.type, settings.smoothingLength)
       );
     };
 
@@ -775,14 +904,20 @@ export default function Chart() {
       });
 
       const allBars = [...barsByTimeRef.current.values()];
-      const latestVolumeSma = latestVolumeMaPoint(allBars, maSettingsRef.current.length);
+      const currentSettings = maSettingsRef.current;
+      const latestVolumeSma = latestVolumeMaPoint(
+        allBars,
+        currentSettings.length,
+        currentSettings.type,
+        currentSettings.smoothingLength,
+      );
       if (latestVolumeSma) volumeSmaSeriesRef.current?.update(latestVolumeSma);
       if (priceIndicatorSeriesRef.current.size > 0 || macdSeriesRef.current || rsiSeriesRef.current) {
         updateStudySeries(allBars);
       }
 
       lastRenderedRealtimeBucketRef.current = bucketNumber;
-      setLastPrice(bar.close.toFixed(2));
+      setLastPrice(bar.close.toFixed(activePriceFormat.precision));
       setVisibleBar(bar);
     };
 
@@ -794,8 +929,8 @@ export default function Chart() {
     function processRealtimeTick(tick: PriceTick) {
       const bucket = bucketStart(tick.time, resolution);
       const bucketNumber = Number(bucket);
-      if (!isTradingSessionTime(bucket, resolution)) {
-        if (!panGestureRef.current?.active) setLastPrice(tick.price.toFixed(2));
+      if (!isTradingSessionTime(bucket, resolution, activeSession, activeTimezone)) {
+        if (!panGestureRef.current?.active) setLastPrice(tick.price.toFixed(activePriceFormat.precision));
         return;
       }
       const isNewBucket = lastRealtimeBucketRef.current !== bucketNumber;
@@ -819,10 +954,11 @@ export default function Chart() {
       cancelled = true;
       historyAbortController.abort();
       realtimeTickBuffer.dispose();
+      loadOlderHistoryRef.current = () => undefined;
       realtimeTickHandlerRef.current = () => undefined;
       flushRealtimeRef.current = () => undefined;
     };
-  }, [persistDrawingHistory, rangeDays, resolution, symbol, syncDrawingHistoryAvailability]);
+  }, [persistDrawingHistory, rangeDays, resolution, symbol, symbolInfo, syncDrawingHistoryAvailability]);
 
   useEffect(() => {
     const feed = connectPriceFeed(
@@ -840,10 +976,15 @@ export default function Chart() {
 
   useEffect(() => {
     const bars = [...barsByTimeRef.current.values()]
-      .filter((bar) => isTradingSessionTime(bar.time, resolution))
+      .filter((bar) => isTradingSessionTime(
+        bar.time,
+        resolution,
+        symbolInfo?.session,
+        symbolInfo?.timezone,
+      ))
       .sort((a, b) => Number(a.time) - Number(b.time));
-    volumeSmaSeriesRef.current?.setData(volumeMa(bars, maLength));
-  }, [maLength]);
+    volumeSmaSeriesRef.current?.setData(volumeMa(bars, maLength, maType, smoothingLength));
+  }, [maLength, maType, resolution, smoothingLength, symbolInfo?.session, symbolInfo?.timezone]);
 
   useEffect(() => {
     const chart = chartRef.current;
@@ -926,10 +1067,15 @@ export default function Chart() {
     volumeSeriesRef.current?.applyOptions({ visible: volumeVisible });
     volumeSmaSeriesRef.current?.applyOptions({ visible: volumeVisible });
     const bars = [...barsByTimeRef.current.values()]
-      .filter((bar) => isTradingSessionTime(bar.time, resolution))
+      .filter((bar) => isTradingSessionTime(
+        bar.time,
+        resolution,
+        symbolInfo?.session,
+        symbolInfo?.timezone,
+      ))
       .sort((a, b) => Number(a.time) - Number(b.time));
     updateStudySeries(bars);
-  }, [activeStudies, resolution]);
+  }, [activeStudies, resolution, symbolInfo?.session, symbolInfo?.timezone]);
 
   useEffect(() => {
     const onFullscreenChange = () => setIsFullscreen(document.fullscreenElement !== null);
@@ -1108,10 +1254,18 @@ export default function Chart() {
 
   const quoteBar = visibleBar ?? currentBarRef.current;
   const previousClose = quoteBar ? previousCloseByTimeRef.current.get(Number(quoteBar.time)) : undefined;
+  const currentPriceFormat = symbolInfo
+    ? symbolPriceFormat(symbolInfo)
+    : { type: "price" as const, precision: 2, minMove: 0.01 };
   const sortedBars = [...barsByTimeRef.current.values()]
-    .filter((bar) => isTradingSessionTime(bar.time, resolution))
+    .filter((bar) => isTradingSessionTime(
+      bar.time,
+      resolution,
+      symbolInfo?.session,
+      symbolInfo?.timezone,
+    ))
     .sort((a, b) => Number(a.time) - Number(b.time));
-  const currentVolumeMa = volumeMa(sortedBars, maLength).at(-1)?.value;
+  const currentVolumeMa = volumeMa(sortedBars, maLength, maType, smoothingLength).at(-1)?.value;
   const drawingToolbarAnchor = (() => {
     const chart = chartRef.current;
     const series = seriesRef.current;
@@ -1155,6 +1309,7 @@ export default function Chart() {
 
   const applyRangePreset = (preset?: RangePreset) => {
     setRangeDays(preset?.days);
+    if (preset) setResolution(preset.resolution);
   };
 
   const toggleStudy = (id: StudyId) => {
@@ -1209,6 +1364,7 @@ export default function Chart() {
         activeStudies={activeStudies}
         maDescription={`${maLength} ${maType} ${smoothingLength}`}
         isFullscreen={isFullscreen}
+        connectionStatus={status}
         canUndo={canUndo}
         canRedo={canRedo}
         isSymbolModalOpen={isSymbolModalOpen}
@@ -1259,6 +1415,8 @@ export default function Chart() {
         <div className="chart-stage">
           <MarketDataPanel
             symbol={symbol}
+            exchange={symbolInfo?.exchange ?? ""}
+            pricePrecision={currentPriceFormat.precision}
             resolution={resolution}
             quoteBar={quoteBar}
             previousClose={previousClose}
@@ -1276,6 +1434,7 @@ export default function Chart() {
             ref={containerRef}
             className={activeDrawingTool || eraserMode ? "chart--tool-active" : "chart--pan"}
           />
+          {dataError && <div className="chart-data-error" role="alert">{dataError}</div>}
           {selectedDrawing && chartRef.current && seriesRef.current && (
             <DrawingAxisRangeHighlight
               drawing={selectedDrawing}

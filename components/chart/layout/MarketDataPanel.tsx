@@ -4,6 +4,8 @@ import { formatVolume } from "../core/chart-utils";
 
 interface MarketDataPanelProps {
   symbol: string;
+  exchange: string;
+  pricePrecision: number;
   resolution: string;
   quoteBar?: Bar;
   previousClose?: number;
@@ -19,6 +21,8 @@ interface MarketDataPanelProps {
 
 export function MarketDataPanel({
   symbol,
+  exchange,
+  pricePrecision,
   resolution,
   quoteBar,
   previousClose,
@@ -34,19 +38,20 @@ export function MarketDataPanel({
   const change = quoteBar && previousClose ? quoteBar.close - previousClose : 0;
   const changePercent = previousClose ? (change / previousClose) * 100 : 0;
   const quoteClass = change >= 0 ? "quote--up" : "quote--down";
+  const formatPrice = (value?: number) => value?.toFixed(pricePrecision) ?? "N/A";
 
   return (
     <>
       <div className="market-data-row">
         <div className="market-data__title">
-          <strong>{symbol}</strong><span>·</span><span>{RESOLUTIONS.find((item) => item.value === resolution)?.label}</span><span>· HOSE</span>
+          <strong>{symbol}</strong><span>·</span><span>{RESOLUTIONS.find((item) => item.value === resolution)?.label}</span><span>· {exchange || "N/A"}</span>
         </div>
         <div className="ohlcv-strip" aria-label="Open high low close volume">
-          <span>O <b>{quoteBar?.open.toFixed(2) ?? "N/A"}</b></span>
-          <span>H <b>{quoteBar?.high.toFixed(2) ?? "N/A"}</b></span>
-          <span>L <b>{quoteBar?.low.toFixed(2) ?? "N/A"}</b></span>
-          <span>C <b className={quoteClass}>{quoteBar?.close.toFixed(2) ?? "N/A"}</b></span>
-          {previousClose !== undefined && <span className={quoteClass}>{change >= 0 ? "+" : ""}{change.toFixed(2)} ({changePercent.toFixed(2)}%)</span>}
+          <span>O <b>{formatPrice(quoteBar?.open)}</b></span>
+          <span>H <b>{formatPrice(quoteBar?.high)}</b></span>
+          <span>L <b>{formatPrice(quoteBar?.low)}</b></span>
+          <span>C <b className={quoteClass}>{formatPrice(quoteBar?.close)}</b></span>
+          {previousClose !== undefined && <span className={quoteClass}>{change >= 0 ? "+" : ""}{change.toFixed(pricePrecision)} ({changePercent.toFixed(2)}%)</span>}
           <span className="ohlcv-strip__volume">Vol <b>{quoteBar ? formatVolume(quoteBar.volume) : "N/A"}</b></span>
         </div>
         {volumeEnabled && (
