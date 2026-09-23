@@ -210,6 +210,7 @@ interface SymbolSearchModalProps {
   onSelectSymbol: (symbol: string) => void;
   currentSymbol: string;
   initialQuery?: string;
+  title?: string;
 }
 
 function highlightMatch(text: string, query: string) {
@@ -252,6 +253,7 @@ export function SymbolSearchModal({
   onSelectSymbol,
   currentSymbol,
   initialQuery = "",
+  title = "Tìm kiếm Mã giao dịch",
 }: SymbolSearchModalProps) {
   const [query, setQuery] = useState(initialQuery || currentSymbol);
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -291,6 +293,10 @@ export function SymbolSearchModal({
     if (!isOpen) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Tab") {
+        e.preventDefault();
+        return;
+      }
       if (e.key === "Escape") {
         e.preventDefault();
         onClose();
@@ -346,10 +352,11 @@ export function SymbolSearchModal({
       >
         <div className="symbol-search-modal__header">
           <h2 id="symbol-search-title" className="symbol-search-modal__title">
-            Tìm kiếm Mã giao dịch
+            {title}
           </h2>
           <button
             type="button"
+            tabIndex={-1}
             className="symbol-search-modal__close-btn"
             onClick={onClose}
             aria-label="Đóng"
@@ -384,7 +391,7 @@ export function SymbolSearchModal({
             className="symbol-search-modal__input"
             data-clear-selection-on-outside-drag
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => setQuery(e.target.value.toUpperCase())}
             placeholder="Tìm kiếm"
             autoComplete="off"
             spellCheck={false}

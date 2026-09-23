@@ -9,6 +9,7 @@ import {
   type StudyId,
 } from "../config/chart-config";
 import { SymbolSearchModal } from "./SymbolSearchModal";
+import { CompareSymbolModal } from "./CompareSymbolModal";
 
 const HEADER_SVGS = {
   search: (
@@ -78,6 +79,8 @@ const HEADER_SVGS = {
 
 export interface ChartHeaderProps {
   symbol: string;
+  compareSymbols: string[];
+  recentCompareSymbols: string[];
   resolution: string;
   timeframeMenuOpen: boolean;
   indicatorMenuOpen: boolean;
@@ -89,9 +92,13 @@ export interface ChartHeaderProps {
   canUndo?: boolean;
   canRedo?: boolean;
   isSymbolModalOpen?: boolean;
+  isCompareModalOpen?: boolean;
   initialSearchQuery?: string;
   onSymbolModalToggle?: (open: boolean) => void;
+  onCompareModalToggle?: (open: boolean) => void;
   onSymbolChange: (symbol: string) => void;
+  onCompareSymbolAdd: (symbol: string) => void;
+  onCompareSymbolRemove: (symbol: string) => void;
   onResolutionChange: (resolution: string) => void;
   onTimeframeMenuToggle: (open: boolean) => void;
   onIndicatorMenuToggle: (open: boolean) => void;
@@ -106,6 +113,8 @@ export interface ChartHeaderProps {
 
 export function ChartHeader({
   symbol,
+  compareSymbols,
+  recentCompareSymbols,
   resolution,
   timeframeMenuOpen,
   indicatorMenuOpen,
@@ -117,9 +126,13 @@ export function ChartHeader({
   canUndo = false,
   canRedo = false,
   isSymbolModalOpen: controlledSymbolModalOpen,
+  isCompareModalOpen = false,
   initialSearchQuery = "",
   onSymbolModalToggle,
+  onCompareModalToggle,
   onSymbolChange,
+  onCompareSymbolAdd,
+  onCompareSymbolRemove,
   onResolutionChange,
   onTimeframeMenuToggle,
   onIndicatorMenuToggle,
@@ -150,6 +163,9 @@ export function ChartHeader({
 
   const timeframeDropdownRef = useRef<HTMLDivElement>(null);
   const indicatorDropdownRef = useRef<HTMLDetailsElement>(null);
+  const [expandedTimeframeGroups, setExpandedTimeframeGroups] = useState<Record<string, boolean>>(
+    () => Object.fromEntries(TIMEFRAME_GROUPS.map((group) => [group.label, true])),
+  );
 
   useEffect(() => {
     if (!timeframeMenuOpen && !indicatorMenuOpen) return;
@@ -217,8 +233,7 @@ export function ChartHeader({
             aria-label="So sánh hoặc Thêm mã"
             data-tooltip="So sánh hoặc Thêm mã"
             onClick={() => {
-              const otherSymbol = symbol === "VN30" ? "VNINDEX" : "VN30";
-              onSymbolChange(otherSymbol);
+              onCompareModalToggle?.(true);
             }}
           >
             <span className="header-btn__icon">{HEADER_SVGS.compare}</span>
@@ -233,6 +248,7 @@ export function ChartHeader({
           >
             <button
               type="button"
+              tabIndex={-1}
               className="header-btn header-btn--text"
               aria-label="Khung thời gian"
               data-tooltip="Khung thời gian"
@@ -247,24 +263,46 @@ export function ChartHeader({
             {timeframeMenuOpen && (
               <div className="header-dropdown__panel timeframe-dropdown__panel" role="menu">
                 {TIMEFRAME_GROUPS.map((group) => (
-                  <div className="timeframe-dropdown__group" key={group.label}>
-                    <div className="timeframe-dropdown__heading">{group.label}</div>
-                    {group.options.map((option) => (
-                      <button
-                        type="button"
-                        role="menuitemradio"
-                        aria-checked={option.value === resolution}
-                        key={option.value}
-                        className={
-                          option.value === resolution
-                            ? "header-dropdown__item header-dropdown__item--active"
-                            : "header-dropdown__item"
-                        }
-                        onClick={() => onResolutionChange(option.value)}
-                      >
-                        {option.label}
-                      </button>
-                    ))}
+                  <div
+                    className={`timeframe-dropdown__group${expandedTimeframeGroups[group.label] ? " timeframe-dropdown__group--expanded" : ""}`}
+                    key={group.label}
+                  >
+                    <button
+                      type="button"
+                      tabIndex={-1}
+                      className="timeframe-dropdown__heading"
+                      aria-expanded={expandedTimeframeGroups[group.label]}
+                      onClick={() => setExpandedTimeframeGroups((current) => ({
+                        ...current,
+                        [group.label]: !current[group.label],
+                      }))}
+                    >
+                      <span>{group.label}</span>
+                      <svg viewBox="0 0 12 8" width="12" height="8" aria-hidden="true">
+                        <path d="M1 7 6 2l5 5" />
+                      </svg>
+                    </button>
+                    <div className="timeframe-dropdown__options">
+                      <div className="timeframe-dropdown__options-inner">
+                        {group.options.map((option) => (
+                          <button
+                            type="button"
+                            tabIndex={-1}
+                            role="menuitemradio"
+                            aria-checked={option.value === resolution}
+                            key={option.value}
+                            className={
+                              option.value === resolution
+                                ? "header-dropdown__item header-dropdown__item--active"
+                                : "header-dropdown__item"
+                            }
+                            onClick={() => onResolutionChange(option.value)}
+                          >
+                            {option.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -452,6 +490,14 @@ export function ChartHeader({
         onSelectSymbol={onSymbolChange}
         currentSymbol={symbol}
         initialQuery={initialSearchQuery}
+      />
+      <CompareSymbolModal
+        isOpen={isCompareModalOpen}
+        onClose={() => onCompareModalToggle?.(false)}
+        selectedSymbols={compareSymbols}
+        recentSymbols={recentCompareSymbols}
+        onAddSymbol={onCompareSymbolAdd}
+        onRemoveSymbol={onCompareSymbolRemove}
       />
     </>
   );

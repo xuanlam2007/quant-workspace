@@ -48,9 +48,13 @@ import {
   DEFAULT_RESOLUTION,
   DEFAULT_SYMBOL,
   DEFAULT_VISIBLE_BARS,
+  COMPARE_SYMBOLS_STORAGE_KEY,
+  RECENT_COMPARE_SYMBOLS_STORAGE_KEY,
   PRICE_INDICATORS,
   RESOLUTION_STORAGE_KEY,
   SYMBOL_STORAGE_KEY,
+  normalizeStoredCompareSymbols,
+  normalizeStoredRecentCompareSymbols,
   normalizeStoredSymbol,
   normalizeStoredResolution,
   type MaType,
@@ -75,6 +79,7 @@ import { OutsideDragSelectionGuard } from "./chart/ui/OutsideDragSelectionGuard"
 const tickFormatters = new Map<string, Intl.DateTimeFormat>();
 const DRAWING_HISTORY_VERSION = 1;
 const MAX_DRAWING_HISTORY_STATES = 100;
+const COMPARE_COLORS = ["#ff9800", "#2962ff", "#ab47bc", "#26a69a", "#ef5350"];
 
 type StoredDrawingHistory = {
   version: typeof DRAWING_HISTORY_VERSION;
@@ -123,6 +128,7 @@ export default function Chart() {
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const volumeSmaSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const compareSeriesRef = useRef(new Map<string, ISeriesApi<"Line">>());
   const priceIndicatorSeriesRef = useRef(new Map<string, ISeriesApi<"Line">>());
   const macdSeriesRef = useRef<{
     histogram: ISeriesApi<"Histogram">;
@@ -167,6 +173,8 @@ export default function Chart() {
   } | null>(null);
 
   const [symbol, setSymbol] = useState(DEFAULT_SYMBOL);
+  const [compareSymbols, setCompareSymbols] = useState<string[]>([]);
+  const [recentCompareSymbols, setRecentCompareSymbols] = useState<string[]>([]);
   const [resolvedSymbol, setResolvedSymbol] = useState<{ symbol: string; info: SymbolInfo }>();
   const [symbolRestored, setSymbolRestored] = useState(false);
   const [resolution, setResolution] = useState(DEFAULT_RESOLUTION);
@@ -195,6 +203,7 @@ export default function Chart() {
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
   const [isSymbolModalOpen, setIsSymbolModalOpen] = useState(false);
+  const [isCompareModalOpen, setIsCompareModalOpen] = useState(false);
   const [symbolSearchInitialQuery, setSymbolSearchInitialQuery] = useState("");
   const [dataError, setDataError] = useState<string>();
   const [chartTimezone, setChartTimezone] = useState("Asia/Bangkok");
@@ -202,9 +211,20 @@ export default function Chart() {
 
   useEffect(() => {
     try {
-      setSymbol(normalizeStoredSymbol(localStorage.getItem(SYMBOL_STORAGE_KEY)));
+      const restoredSymbol = normalizeStoredSymbol(localStorage.getItem(SYMBOL_STORAGE_KEY));
+      setSymbol(restoredSymbol);
+      setCompareSymbols(normalizeStoredCompareSymbols(
+        localStorage.getItem(COMPARE_SYMBOLS_STORAGE_KEY),
+        restoredSymbol,
+      ));
+      setRecentCompareSymbols(normalizeStoredRecentCompareSymbols(
+        localStorage.getItem(RECENT_COMPARE_SYMBOLS_STORAGE_KEY),
+        restoredSymbol,
+      ));
     } catch {
       setSymbol(DEFAULT_SYMBOL);
+      setCompareSymbols([]);
+      setRecentCompareSymbols([]);
     } finally {
       setSymbolRestored(true);
     }
@@ -214,10 +234,12 @@ export default function Chart() {
     if (!symbolRestored) return;
     try {
       localStorage.setItem(SYMBOL_STORAGE_KEY, symbol);
+      localStorage.setItem(COMPARE_SYMBOLS_STORAGE_KEY, JSON.stringify(compareSymbols));
+      localStorage.setItem(RECENT_COMPARE_SYMBOLS_STORAGE_KEY, JSON.stringify(recentCompareSymbols));
     } catch {
       return;
     }
-  }, [symbol, symbolRestored]);
+  }, [compareSymbols, recentCompareSymbols, symbol, symbolRestored]);
 
   useEffect(() => {
     try {
@@ -478,6 +500,7 @@ export default function Chart() {
       priceLineVisible: true,
       priceLineColor: "#EB4D5C",
       lastValueVisible: true,
+      baseLineVisible: false,
       priceFormat: { type: "price", precision: 2, minMove: 0.01 },
     });
     const timelineSeries = chart.addSeries(LineSeries, {
@@ -696,6 +719,7 @@ export default function Chart() {
       seriesRef.current = null;
       volumeSeriesRef.current = null;
       volumeSmaSeriesRef.current = null;
+      compareSeriesRef.current.clear();
       priceIndicatorSeriesRef.current.clear();
       macdSeriesRef.current = null;
       rsiSeriesRef.current = null;
@@ -1024,6 +1048,73 @@ export default function Chart() {
   }, [persistDrawingHistory, rangeDays, resolution, symbol, symbolInfo, syncDrawingHistoryAvailability]);
 
   useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+
+    const activeSymbols = new Set(compareSymbols);
+    compareSeriesRef.current.forEach((series, compareSymbol) => {
+      if (activeSymbols.has(compareSymbol)) return;
+      chart.removeSeries(series);
+      compareSeriesRef.current.delete(compareSymbol);
+    });
+
+    let cancelled = false;
+    const controller = new AbortController();
+    const feeds: ReturnType<typeof connectPriceFeed>[] = [];
+    const { from, to } = rangeForResolution(resolution, rangeDays);
+
+    compareSymbols.forEach((compareSymbol, index) => {
+      let series = compareSeriesRef.current.get(compareSymbol);
+      if (!series) {
+        series = chart.addSeries(LineSeries, {
+          color: COMPARE_COLORS[index % COMPARE_COLORS.length],
+          lineWidth: 2,
+          priceScaleId: "left",
+          lastValueVisible: true,
+          priceLineVisible: true,
+          priceLineColor: COMPARE_COLORS[index % COMPARE_COLORS.length],
+          baseLineVisible: false,
+          crosshairMarkerVisible: false,
+        });
+        compareSeriesRef.current.set(compareSymbol, series);
+      }
+
+      void Promise.all([
+        fetchSymbolInfo(compareSymbol, controller.signal),
+        fetchHistory(compareSymbol, resolution, from, to, controller.signal),
+      ]).then(([info, bars]) => {
+        if (cancelled) return;
+        const compareBars = bars.filter((bar) => isTradingSessionTime(
+          bar.time,
+          resolution,
+          info.session,
+          info.timezone,
+        ));
+        series?.setData(compareBars.map((bar) => ({ time: bar.time, value: bar.close })));
+
+        const feed = connectPriceFeed(
+          compareSymbol,
+          (tick) => {
+            const bucket = bucketStart(tick.time, resolution);
+            if (!isTradingSessionTime(bucket, resolution, info.session, info.timezone)) return;
+            series?.update({ time: bucket, value: tick.price });
+          },
+          () => undefined,
+        );
+        feeds.push(feed);
+      }).catch(() => {
+        if (!cancelled) series?.setData([]);
+      });
+    });
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+      feeds.forEach((feed) => feed.close());
+    };
+  }, [compareSymbols, rangeDays, resolution]);
+
+  useEffect(() => {
     const feed = connectPriceFeed(
       symbol,
       (tick) => realtimeTickHandlerRef.current(tick),
@@ -1150,10 +1241,14 @@ export default function Chart() {
     const priceScale = chartRef.current?.priceScale("left");
     if (!priceScale) return;
     priceScale.applyOptions({
-      mode: scaleMode === "percent" ? PriceScaleMode.Percentage : scaleMode === "log" ? PriceScaleMode.Logarithmic : PriceScaleMode.Normal,
+      mode: compareSymbols.length > 0 || scaleMode === "percent"
+        ? PriceScaleMode.Percentage
+        : scaleMode === "log"
+          ? PriceScaleMode.Logarithmic
+          : PriceScaleMode.Normal,
     });
     priceScale.setAutoScale(autoScale);
-  }, [autoScale, scaleMode]);
+  }, [autoScale, compareSymbols.length, scaleMode]);
 
   useEffect(() => {
     lineToolsRef.current?.setLocked(drawingsLocked);
@@ -1420,6 +1515,8 @@ export default function Chart() {
       <OutsideDragSelectionGuard />
       <ChartHeader
         symbol={symbol}
+        compareSymbols={compareSymbols}
+        recentCompareSymbols={recentCompareSymbols}
         resolution={resolution}
         timeframeMenuOpen={timeframeMenuOpen}
         indicatorMenuOpen={indicatorMenuOpen}
@@ -1431,15 +1528,32 @@ export default function Chart() {
         canUndo={canUndo}
         canRedo={canRedo}
         isSymbolModalOpen={isSymbolModalOpen}
+        isCompareModalOpen={isCompareModalOpen}
         initialSearchQuery={symbolSearchInitialQuery}
         onSymbolModalToggle={(open) => {
           setIsSymbolModalOpen(open);
           if (!open) setSymbolSearchInitialQuery("");
         }}
+        onCompareModalToggle={setIsCompareModalOpen}
         onSymbolChange={(nextSymbol) => {
           setSymbol(nextSymbol);
+          setCompareSymbols((current) => current.filter((compareSymbol) => compareSymbol !== nextSymbol));
           setIsSymbolModalOpen(false);
           setSymbolSearchInitialQuery("");
+        }}
+        onCompareSymbolAdd={(nextSymbol) => {
+          if (nextSymbol !== symbol) {
+            setCompareSymbols((current) => current.includes(nextSymbol)
+              ? current
+              : [...current, nextSymbol]);
+            setRecentCompareSymbols((current) => [
+              nextSymbol,
+              ...current.filter((compareSymbol) => compareSymbol !== nextSymbol),
+            ].slice(0, 20));
+          }
+        }}
+        onCompareSymbolRemove={(compareSymbol) => {
+          setCompareSymbols((current) => current.filter((item) => item !== compareSymbol));
         }}
         onResolutionChange={(nextResolution) => {
           setRangeDays(undefined);

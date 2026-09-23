@@ -21,10 +21,33 @@ export const DEFAULT_RESOLUTION = "D";
 export const RESOLUTION_STORAGE_KEY = "chart.lastUsedTimeBasedResolution";
 export const DEFAULT_SYMBOL = SYMBOLS[0];
 export const SYMBOL_STORAGE_KEY = "chart.lastUsedSymbol";
+export const COMPARE_SYMBOLS_STORAGE_KEY = "chart.comparedSymbols";
+export const RECENT_COMPARE_SYMBOLS_STORAGE_KEY = "chart.recentComparedSymbols";
+
+function normalizeSymbol(value: unknown) {
+  const symbol = typeof value === "string" ? value.trim().toUpperCase() : "";
+  return /^[A-Z0-9]+$/.test(symbol) ? symbol : undefined;
+}
 
 export function normalizeStoredSymbol(value: string | null) {
-  const symbol = value?.trim().toUpperCase() ?? "";
-  return /^[A-Z0-9]+$/.test(symbol) ? symbol : DEFAULT_SYMBOL;
+  return normalizeSymbol(value) ?? DEFAULT_SYMBOL;
+}
+
+export function normalizeStoredCompareSymbols(value: string | null, primarySymbol: string) {
+  try {
+    const symbols = JSON.parse(value ?? "[]");
+    if (!Array.isArray(symbols)) return [];
+
+    return [...new Set(symbols
+      .map(normalizeSymbol)
+      .filter((symbol): symbol is string => Boolean(symbol && symbol !== primarySymbol)))];
+  } catch {
+    return [];
+  }
+}
+
+export function normalizeStoredRecentCompareSymbols(value: string | null, primarySymbol: string) {
+  return normalizeStoredCompareSymbols(value, primarySymbol);
 }
 
 export function normalizeStoredResolution(value: string | null) {
