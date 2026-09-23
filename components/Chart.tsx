@@ -45,9 +45,14 @@ import {
   priceRangeAppearance,
 } from "./chart/drawing/drawing-presets";
 import {
+  DEFAULT_RESOLUTION,
+  DEFAULT_SYMBOL,
   DEFAULT_VISIBLE_BARS,
   PRICE_INDICATORS,
-  SYMBOLS,
+  RESOLUTION_STORAGE_KEY,
+  SYMBOL_STORAGE_KEY,
+  normalizeStoredSymbol,
+  normalizeStoredResolution,
   type MaType,
   type RangePreset,
   type ScaleMode,
@@ -161,9 +166,11 @@ export default function Chart() {
     captureTarget: Element;
   } | null>(null);
 
-  const [symbol, setSymbol] = useState(SYMBOLS[0]);
+  const [symbol, setSymbol] = useState(DEFAULT_SYMBOL);
   const [resolvedSymbol, setResolvedSymbol] = useState<{ symbol: string; info: SymbolInfo }>();
-  const [resolution, setResolution] = useState("D");
+  const [symbolRestored, setSymbolRestored] = useState(false);
+  const [resolution, setResolution] = useState(DEFAULT_RESOLUTION);
+  const [resolutionRestored, setResolutionRestored] = useState(false);
   const [timeframeMenuOpen, setTimeframeMenuOpen] = useState(false);
   const [status, setStatus] = useState<ConnStatus>("disconnected");
   const [drawingsLocked, setDrawingsLocked] = useState(false);
@@ -192,6 +199,44 @@ export default function Chart() {
   const [dataError, setDataError] = useState<string>();
   const [chartTimezone, setChartTimezone] = useState("Asia/Bangkok");
   const symbolInfo = resolvedSymbol?.symbol === symbol ? resolvedSymbol.info : undefined;
+
+  useEffect(() => {
+    try {
+      setSymbol(normalizeStoredSymbol(localStorage.getItem(SYMBOL_STORAGE_KEY)));
+    } catch {
+      setSymbol(DEFAULT_SYMBOL);
+    } finally {
+      setSymbolRestored(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!symbolRestored) return;
+    try {
+      localStorage.setItem(SYMBOL_STORAGE_KEY, symbol);
+    } catch {
+      return;
+    }
+  }, [symbol, symbolRestored]);
+
+  useEffect(() => {
+    try {
+      setResolution(normalizeStoredResolution(localStorage.getItem(RESOLUTION_STORAGE_KEY)));
+    } catch {
+      setResolution(DEFAULT_RESOLUTION);
+    } finally {
+      setResolutionRestored(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!resolutionRestored) return;
+    try {
+      localStorage.setItem(RESOLUTION_STORAGE_KEY, resolution);
+    } catch {
+      return;
+    }
+  }, [resolution, resolutionRestored]);
 
   const handleTimezoneChange = useCallback((newTimezone: string) => {
     setChartTimezone(newTimezone);

@@ -17,6 +17,22 @@ export const RESOLUTIONS = [
   { value: "M", label: "1M" },
 ];
 
+export const DEFAULT_RESOLUTION = "D";
+export const RESOLUTION_STORAGE_KEY = "chart.lastUsedTimeBasedResolution";
+export const DEFAULT_SYMBOL = SYMBOLS[0];
+export const SYMBOL_STORAGE_KEY = "chart.lastUsedSymbol";
+
+export function normalizeStoredSymbol(value: string | null) {
+  const symbol = value?.trim().toUpperCase() ?? "";
+  return /^[A-Z0-9]+$/.test(symbol) ? symbol : DEFAULT_SYMBOL;
+}
+
+export function normalizeStoredResolution(value: string | null) {
+  return typeof value === "string" && RESOLUTIONS.some((resolution) => resolution.value === value)
+    ? value
+    : DEFAULT_RESOLUTION;
+}
+
 export const TIMEFRAME_GROUPS = [
   { label: "PHÚT", options: [{ value: "1", label: "1 phút" }, { value: "5", label: "5 phút" }, { value: "15", label: "15 phút" }, { value: "30", label: "30 phút" }] },
   { label: "GIỜ", options: [{ value: "60", label: "1 giờ" }] },
