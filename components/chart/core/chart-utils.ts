@@ -18,6 +18,28 @@ export function volumeColor(bar: Bar) {
   return isGrowing ? "rgba(83, 185, 135, 0.4)" : "rgba(235, 77, 92, 0.4)";
 }
 
+export function alignOverlayToMainBars(
+  mainBars: Bar[],
+  comparison: { time: Bar["time"]; value: number }[],
+) {
+  const aligned: { time: Bar["time"]; value: number }[] = [];
+  let compareIndex = 0;
+  let latestValue: number | undefined;
+
+  for (const bar of mainBars) {
+    const previousCompareIndex = compareIndex;
+    while (compareIndex < comparison.length && Number(comparison[compareIndex].time) <= Number(bar.time)) {
+      latestValue = comparison[compareIndex].value;
+      compareIndex += 1;
+    }
+    if (compareIndex > previousCompareIndex && latestValue !== undefined) {
+      aligned.push({ time: bar.time, value: latestValue });
+    }
+  }
+
+  return aligned;
+}
+
 export function isTradingSessionTime(
   time: Bar["time"],
   resolution: string,

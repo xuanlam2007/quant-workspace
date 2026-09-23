@@ -64,6 +64,7 @@ import {
 } from "./chart/config/chart-config";
 import { bollingerData, macdData, priceIndicatorData, rsiData, volumeMa } from "./chart/indicators/chart-indicators";
 import {
+  alignOverlayToMainBars,
   candleColor,
   drawingStorageKey,
   formatChartTime,
@@ -80,6 +81,27 @@ const tickFormatters = new Map<string, Intl.DateTimeFormat>();
 const DRAWING_HISTORY_VERSION = 1;
 const MAX_DRAWING_HISTORY_STATES = 100;
 const COMPARE_COLORS = ["#ff9800", "#2962ff", "#ab47bc", "#26a69a", "#ef5350"];
+
+function useVisibleCandleOpenAsPercentReference(series: ISeriesApi<"Candlestick">) {
+  type InternalCandle = { _internal_time: number; _internal_value: number[] };
+  type InternalSeries = {
+    _internal_firstBar: () => InternalCandle | null;
+    _internal_firstValue: () => { _internal_value: number; _internal_timePoint: number } | null;
+    _internal_priceScale: () => { _internal_isPercentage: () => boolean };
+  };
+  const internal = (series as unknown as { _internal__series?: InternalSeries })._internal__series;
+  if (!internal) return;
+  const originalFirstValue = internal._internal_firstValue.bind(internal);
+
+  // VNDIRECT dùng giá mở cửa của nến đầu tiên hiển thị làm mốc phần trăm.
+  internal._internal_firstValue = () => {
+    if (!internal._internal_priceScale()._internal_isPercentage()) return originalFirstValue();
+    const firstBar = internal._internal_firstBar();
+    return firstBar === null
+      ? null
+      : { _internal_value: firstBar._internal_value[0], _internal_timePoint: firstBar._internal_time };
+  };
+}
 
 type StoredDrawingHistory = {
   version: typeof DRAWING_HISTORY_VERSION;
@@ -129,6 +151,7 @@ export default function Chart() {
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const volumeSmaSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const compareSeriesRef = useRef(new Map<string, ISeriesApi<"Line">>());
+  const compareBarsRef = useRef(new Map<string, { time: Bar["time"]; value: number }[]>());
   const priceIndicatorSeriesRef = useRef(new Map<string, ISeriesApi<"Line">>());
   const macdSeriesRef = useRef<{
     histogram: ISeriesApi<"Histogram">;
@@ -143,8 +166,28 @@ export default function Chart() {
   const timelineSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const lineToolsRef = useRef<ILineToolsPlugin | null>(null);
   const currentBarRef = useRef<Bar | undefined>(undefined);
+  const previousMainTimeRef = useRef<number | undefined>(undefined);
   const barsByTimeRef = useRef(new Map<number, Bar>());
   const previousCloseByTimeRef = useRef(new Map<number, number>());
+  const syncCompareSeries = useCallback(() => {
+    const mainBars = [...barsByTimeRef.current.values()].sort((a, b) => Number(a.time) - Number(b.time));
+    compareSeriesRef.current.forEach((series, compareSymbol) => {
+      series.setData(alignOverlayToMainBars(mainBars, compareBarsRef.current.get(compareSymbol) ?? []));
+    });
+  }, []);
+  const updateCompareSeriesAtTime = useCallback((time: Bar["time"]) => {
+    compareSeriesRef.current.forEach((series, compareSymbol) => {
+      const points = compareBarsRef.current.get(compareSymbol);
+      if (!points) return;
+      for (let index = points.length - 1; index >= 0; index -= 1) {
+        if (Number(points[index].time) <= Number(time)) {
+          if (Number(points[index].time) <= (previousMainTimeRef.current ?? -Infinity)) break;
+          series.update({ time, value: points[index].value });
+          break;
+        }
+      }
+    });
+  }, []);
   const feedRef = useRef<ReturnType<typeof connectPriceFeed> | null>(null);
   const realtimeTickHandlerRef = useRef<(tick: PriceTick) => void>(() => undefined);
   const lastRealtimeBucketRef = useRef<number | undefined>(undefined);
@@ -208,6 +251,17 @@ export default function Chart() {
   const [dataError, setDataError] = useState<string>();
   const [chartTimezone, setChartTimezone] = useState("Asia/Bangkok");
   const symbolInfo = resolvedSymbol?.symbol === symbol ? resolvedSymbol.info : undefined;
+
+  useEffect(() => {
+    const disableTabNavigation = (event: KeyboardEvent) => {
+      if (event.key !== "Tab") return;
+      event.preventDefault();
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    };
+
+    document.addEventListener("keydown", disableTabNavigation, true);
+    return () => document.removeEventListener("keydown", disableTabNavigation, true);
+  }, []);
 
   useEffect(() => {
     try {
@@ -426,6 +480,8 @@ export default function Chart() {
       },
       localization: {
         timeFormatter: (time: Time) => formatChartTime(time, symbolTimezoneRef.current),
+        percentageFormatter: (value: number) => `${value > 0 ? "+" : ""}${value.toFixed(2)}%`,
+        tickmarksPercentageFormatter: (values: number[]) => values.map((value) => `${value.toFixed(2)}%`),
       },
       grid: {
         vertLines: { color: "#303948" },
@@ -491,6 +547,7 @@ export default function Chart() {
       crosshairMarkerVisible: false,
     });
     const series = chart.addSeries(CandlestickSeries, {
+      title: symbol,
       priceScaleId: "left",
       upColor: "#54BA88",
       downColor: "#EB4D5C",
@@ -503,6 +560,7 @@ export default function Chart() {
       baseLineVisible: false,
       priceFormat: { type: "price", precision: 2, minMove: 0.01 },
     });
+    useVisibleCandleOpenAsPercentReference(series);
     const timelineSeries = chart.addSeries(LineSeries, {
       priceScaleId: "",
       lineVisible: false,
@@ -720,6 +778,7 @@ export default function Chart() {
       volumeSeriesRef.current = null;
       volumeSmaSeriesRef.current = null;
       compareSeriesRef.current.clear();
+      compareBarsRef.current.clear();
       priceIndicatorSeriesRef.current.clear();
       macdSeriesRef.current = null;
       rsiSeriesRef.current = null;
@@ -742,11 +801,12 @@ export default function Chart() {
     const historyAbortController = new AbortController();
     loadOlderHistoryRef.current = () => undefined;
     setDataError(undefined);
-    series.applyOptions({ priceFormat: activePriceFormat });
+    series.applyOptions({ title: symbol, priceFormat: activePriceFormat });
     const realtimeTickBuffer = createRealtimeTickBuffer<PriceTick>(
       (tick) => Number(bucketStart(tick.time, resolution)),
     );
     currentBarRef.current = undefined;
+    previousMainTimeRef.current = undefined;
     drawingKeyRef.current = drawingStorageKey(symbol, resolution);
     hiddenDrawingsRef.current = null;
     setDrawingsHidden(false);
@@ -776,6 +836,7 @@ export default function Chart() {
         barsByTimeRef.current.clear();
         previousCloseByTimeRef.current.clear();
         currentBarRef.current = undefined;
+        previousMainTimeRef.current = undefined;
         setVisibleBar(undefined);
         setDataError(error instanceof Error ? error.message : "history fetch failed");
         return;
@@ -788,6 +849,7 @@ export default function Chart() {
         activeTimezone,
       ));
       series.setData(chartBars);
+      previousMainTimeRef.current = chartBars.at(-2) ? Number(chartBars.at(-2)?.time) : undefined;
       if (chartBars.length) {
         const color = candleColor(chartBars[chartBars.length - 1]);
         series.applyOptions({ priceLineColor: color });
@@ -811,6 +873,7 @@ export default function Chart() {
       updateStudySeries(chartBars);
       if (chartBars.length) timelineSeriesRef.current?.setData(futureTimelinePoints(Number(chartBars[chartBars.length - 1].time), resolution));
       barsByTimeRef.current = new Map(chartBars.map((bar) => [Number(bar.time), bar]));
+      syncCompareSeries();
       previousCloseByTimeRef.current = new Map(chartBars.slice(1).map((bar, index) => [Number(bar.time), chartBars[index].close]));
       let earliestHistoryTime = chartBars[0] ? Number(chartBars[0].time) : undefined;
       const historyWindowSeconds = Math.max(86400, to - from);
@@ -841,6 +904,8 @@ export default function Chart() {
             }
 
             barsByTimeRef.current = new Map(mergedBars.map((bar) => [Number(bar.time), bar]));
+            previousMainTimeRef.current = mergedBars.at(-2) ? Number(mergedBars.at(-2)?.time) : undefined;
+            syncCompareSeries();
             previousCloseByTimeRef.current = new Map(
               mergedBars.slice(1).map((bar, index) => [Number(bar.time), mergedBars[index].close]),
             );
@@ -979,6 +1044,7 @@ export default function Chart() {
       if (isNewRenderedBucket) timelineSeriesRef.current?.setData(futureTimelinePoints(bucketNumber, resolution));
 
       seriesRef.current?.update(bar);
+      updateCompareSeriesAtTime(bar.time);
       const color = candleColor(bar);
       if (color !== lastCandleColorRef.current) {
         seriesRef.current?.applyOptions({ priceLineColor: color });
@@ -1026,6 +1092,11 @@ export default function Chart() {
       if (isNewBucket && previousBar) {
         previousCloseByTimeRef.current.set(bucketNumber, previousBar.close);
       }
+      if (isNewBucket && bucketNumber > (lastRenderedRealtimeBucketRef.current ?? -Infinity)) {
+        previousMainTimeRef.current = previousBar
+          ? Number(previousBar.time)
+          : lastRenderedRealtimeBucketRef.current;
+      }
 
       currentBarRef.current = mergeTick(currentBarRef.current, tick.price, tick.volume, bucket);
       lastRealtimeBucketRef.current = bucketNumber;
@@ -1045,7 +1116,7 @@ export default function Chart() {
       realtimeTickHandlerRef.current = () => undefined;
       flushRealtimeRef.current = () => undefined;
     };
-  }, [persistDrawingHistory, rangeDays, resolution, symbol, symbolInfo, syncDrawingHistoryAvailability]);
+  }, [persistDrawingHistory, rangeDays, resolution, symbol, symbolInfo, syncCompareSeries, syncDrawingHistoryAvailability, updateCompareSeriesAtTime]);
 
   useEffect(() => {
     const chart = chartRef.current;
@@ -1056,6 +1127,7 @@ export default function Chart() {
       if (activeSymbols.has(compareSymbol)) return;
       chart.removeSeries(series);
       compareSeriesRef.current.delete(compareSymbol);
+      compareBarsRef.current.delete(compareSymbol);
     });
 
     let cancelled = false;
@@ -1067,9 +1139,10 @@ export default function Chart() {
       let series = compareSeriesRef.current.get(compareSymbol);
       if (!series) {
         series = chart.addSeries(LineSeries, {
+          title: compareSymbol,
           color: COMPARE_COLORS[index % COMPARE_COLORS.length],
           lineWidth: 2,
-          priceScaleId: "left",
+          priceScaleId: "right",
           lastValueVisible: true,
           priceLineVisible: true,
           priceLineColor: COMPARE_COLORS[index % COMPARE_COLORS.length],
@@ -1078,6 +1151,8 @@ export default function Chart() {
         });
         compareSeriesRef.current.set(compareSymbol, series);
       }
+      compareBarsRef.current.delete(compareSymbol);
+      series.setData([]);
 
       void Promise.all([
         fetchSymbolInfo(compareSymbol, controller.signal),
@@ -1090,20 +1165,31 @@ export default function Chart() {
           info.session,
           info.timezone,
         ));
-        series?.setData(compareBars.map((bar) => ({ time: bar.time, value: bar.close })));
+        compareBarsRef.current.set(compareSymbol, compareBars.map((bar) => ({ time: bar.time, value: bar.close })));
+        syncCompareSeries();
 
         const feed = connectPriceFeed(
           compareSymbol,
           (tick) => {
             const bucket = bucketStart(tick.time, resolution);
             if (!isTradingSessionTime(bucket, resolution, info.session, info.timezone)) return;
-            series?.update({ time: bucket, value: tick.price });
+            const points = compareBarsRef.current.get(compareSymbol);
+            if (!points) return;
+            const lastPoint = points.at(-1);
+            if (lastPoint && Number(bucket) < Number(lastPoint.time)) return;
+            if (lastPoint && Number(bucket) === Number(lastPoint.time)) lastPoint.value = tick.price;
+            else points.push({ time: bucket, value: tick.price });
+            const latestMainTime = currentBarRef.current?.time;
+            if (latestMainTime !== undefined) updateCompareSeriesAtTime(latestMainTime);
           },
           () => undefined,
         );
         feeds.push(feed);
       }).catch(() => {
-        if (!cancelled) series?.setData([]);
+        if (!cancelled) {
+          compareBarsRef.current.delete(compareSymbol);
+          series?.setData([]);
+        }
       });
     });
 
@@ -1112,7 +1198,7 @@ export default function Chart() {
       controller.abort();
       feeds.forEach((feed) => feed.close());
     };
-  }, [compareSymbols, rangeDays, resolution]);
+  }, [compareSymbols, rangeDays, resolution, syncCompareSeries, updateCompareSeriesAtTime]);
 
   useEffect(() => {
     const feed = connectPriceFeed(
@@ -1217,7 +1303,7 @@ export default function Chart() {
       chart.panes()[paneIndex]?.setHeight(140);
     }
 
-    const volumeVisible = active.has("volume");
+    const volumeVisible = active.has("volume") && compareSymbols.length === 0;
     volumeSeriesRef.current?.applyOptions({ visible: volumeVisible });
     volumeSmaSeriesRef.current?.applyOptions({ visible: volumeVisible });
     const bars = [...barsByTimeRef.current.values()]
@@ -1229,7 +1315,7 @@ export default function Chart() {
       ))
       .sort((a, b) => Number(a.time) - Number(b.time));
     updateStudySeries(bars);
-  }, [activeStudies, resolution, symbolInfo?.session, symbolInfo?.timezone]);
+  }, [activeStudies, compareSymbols.length, resolution, symbolInfo?.session, symbolInfo?.timezone]);
 
   useEffect(() => {
     const onFullscreenChange = () => setIsFullscreen(document.fullscreenElement !== null);
@@ -1238,17 +1324,52 @@ export default function Chart() {
   }, []);
 
   useEffect(() => {
-    const priceScale = chartRef.current?.priceScale("left");
-    if (!priceScale) return;
+    const chart = chartRef.current;
+    if (!chart) return;
+    const comparisonActive = compareSymbols.length > 0;
+    const priceScaleId = comparisonActive ? "right" : "left";
+    const mode = comparisonActive || scaleMode === "percent"
+      ? PriceScaleMode.Percentage
+      : scaleMode === "log"
+        ? PriceScaleMode.Logarithmic
+        : PriceScaleMode.Normal;
+
+    seriesRef.current?.applyOptions({
+      priceScaleId,
+      baseLineVisible: mode === PriceScaleMode.Percentage,
+      baseLineColor: "#596273",
+    });
+    compareSeriesRef.current.forEach((series) => series.applyOptions({ priceScaleId: "right" }));
+    priceIndicatorSeriesRef.current.forEach((series) => series.applyOptions({ priceScaleId }));
+    volumeSeriesRef.current?.applyOptions({
+      priceScaleId: comparisonActive ? "volume" : "right",
+      visible: activeStudies.includes("volume") && !comparisonActive,
+    });
+    volumeSmaSeriesRef.current?.applyOptions({
+      priceScaleId: comparisonActive ? "volume" : "right",
+      visible: activeStudies.includes("volume") && !comparisonActive,
+    });
+
+    chart.applyOptions({
+      leftPriceScale: {
+        visible: !comparisonActive,
+        scaleMargins: { top: 0.05, bottom: 0.05 },
+      },
+      rightPriceScale: {
+        visible: true,
+        scaleMargins: comparisonActive
+          ? { top: 0.05, bottom: 0.05 }
+          : { top: 0.02, bottom: 0 },
+      },
+    });
+
+    const priceScale = chart.priceScale(priceScaleId);
     priceScale.applyOptions({
-      mode: compareSymbols.length > 0 || scaleMode === "percent"
-        ? PriceScaleMode.Percentage
-        : scaleMode === "log"
-          ? PriceScaleMode.Logarithmic
-          : PriceScaleMode.Normal,
+      mode,
     });
     priceScale.setAutoScale(autoScale);
-  }, [autoScale, compareSymbols.length, scaleMode]);
+    if (!comparisonActive) chart.priceScale("right").applyOptions({ mode: PriceScaleMode.Normal });
+  }, [activeStudies, autoScale, compareSymbols.length, scaleMode]);
 
   useEffect(() => {
     lineToolsRef.current?.setLocked(drawingsLocked);
