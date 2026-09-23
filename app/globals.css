@@ -646,7 +646,7 @@ header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 84px;
+  height: 68px;
   padding: 0 25px;
   border-bottom: 1px solid #383d4a;
   background-color: #1E222D;
@@ -709,7 +709,7 @@ header {
 
 .compare-symbol-modal__section h3 {
   margin: 0;
-  padding: 24px 25px 10px;
+  padding: 16px 25px 8px;
   color: #8b92a5;
   font-size: 14px;
   font-weight: 500;
@@ -752,11 +752,11 @@ header {
 
 .compare-symbol-modal__row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 170px 0;
+  grid-template-columns: minmax(0, 1fr) 170px 38px;
   align-items: center;
   width: 100%;
-  min-height: 80px;
-  padding: 12px 25px;
+  min-height: 64px;
+  padding: 9px 25px;
   border: 0;
   border-bottom: 1px solid #2a2e39;
   background: transparent;
@@ -875,6 +875,20 @@ header {
   border-radius: 3px;
   animation: ui-pop-in var(--motion-base) var(--motion-ease) both;
   transform-origin: top left;
+}
+
+.timeframe-dropdown {
+  height: 100%;
+}
+
+.chart-header .header-btn {
+  height: 100%;
+  border-radius: 0;
+}
+
+.timeframe-dropdown > .header-btn {
+  min-width: 48px;
+  padding: 0 14px;
 }
 
 .timeframe-dropdown__group {
