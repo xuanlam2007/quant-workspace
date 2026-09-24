@@ -169,3 +169,19 @@ export function millisecondsUntilNextSecond(now: number) {
   const remainder = ((now % 1000) + 1000) % 1000;
   return remainder === 0 ? 1000 : 1000 - remainder;
 }
+
+export function barCloseCountdown(barTime: number, resolution: string, now: number) {
+  const secondsPerBar = resolution === "D" ? 86400
+    : resolution === "W" ? 604800
+      : resolution === "M" ? 2592000
+        : Number(resolution) * 60;
+  if (!Number.isFinite(secondsPerBar) || secondsPerBar <= 0) return null;
+  const remaining = Math.ceil(barTime + secondsPerBar - now);
+  if (remaining <= 0) return null;
+  const hours = Math.floor(remaining / 3600);
+  const minutes = Math.floor((remaining % 3600) / 60);
+  const seconds = remaining % 60;
+  return hours > 0
+    ? `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`
+    : `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}

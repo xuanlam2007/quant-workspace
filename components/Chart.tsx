@@ -12,6 +12,7 @@ import {
   LineType,
   type IChartApi,
   type ISeriesApi,
+  type IPriceLine,
   type Time,
 } from "lightweight-charts";
 import {
@@ -31,6 +32,7 @@ import { connectPriceFeed, type ConnStatus, type PriceTick } from "@/lib/dchart-
 import { bucketStart, mergeTick } from "@/lib/bar-builder";
 import { createRealtimeTickBuffer } from "@/lib/realtime-tick-buffer";
 import { ChartFooter } from "./chart/layout/ChartFooter";
+import { PriceAxisContextMenu, type PriceAxisMenuAction, type PriceAxisMenuState } from "./chart/layout/PriceAxisContextMenu";
 import { ChartHeader } from "./chart/layout/ChartHeader";
 import { MarketDataPanel } from "./chart/layout/MarketDataPanel";
 import { DrawingToolbar } from "./chart/drawing/DrawingToolbar";
@@ -65,6 +67,7 @@ import {
 import { bollingerData, macdData, priceIndicatorData, rsiData, volumeMa } from "./chart/indicators/chart-indicators";
 import {
   alignOverlayToMainBars,
+  barCloseCountdown,
   candleColor,
   drawingStorageKey,
   formatChartTime,
@@ -87,7 +90,7 @@ function useVisibleCandleOpenAsPercentReference(series: ISeriesApi<"Candlestick"
   type InternalSeries = {
     _internal_firstBar: () => InternalCandle | null;
     _internal_firstValue: () => { _internal_value: number; _internal_timePoint: number } | null;
-    _internal_priceScale: () => { _internal_isPercentage: () => boolean };
+    _internal_priceScale: () => { _internal_isPercentage: () => boolean; _internal_isIndexedTo100: () => boolean };
   };
   const internal = (series as unknown as { _internal__series?: InternalSeries })._internal__series;
   if (!internal) return;
@@ -95,7 +98,8 @@ function useVisibleCandleOpenAsPercentReference(series: ISeriesApi<"Candlestick"
 
   // VNDIRECT dùng giá mở cửa của nến đầu tiên hiển thị làm mốc phần trăm.
   internal._internal_firstValue = () => {
-    if (!internal._internal_priceScale()._internal_isPercentage()) return originalFirstValue();
+    const scale = internal._internal_priceScale();
+    if (!scale._internal_isPercentage() && !scale._internal_isIndexedTo100()) return originalFirstValue();
     const firstBar = internal._internal_firstBar();
     return firstBar === null
       ? null
@@ -164,6 +168,13 @@ export default function Chart() {
     lower: ISeriesApi<"Line">;
   } | null>(null);
   const timelineSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const highLowLinesRef = useRef<{ high: IPriceLine; low: IPriceLine } | null>(null);
+  const refreshHighLowRef = useRef<() => void>(() => undefined);
+  const mainScaleSideRef = useRef<"left" | "right">("left");
+  const previousMainScaleSideRef = useRef<"left" | "right">("left");
+  const indicatorScaleSidesRef = useRef<{ macd: "left" | "right"; rsi: "left" | "right" }>({ macd: "right", rsi: "right" });
+  const scaleRatioRef = useRef<number | null>(null);
+  const scaleLockedRef = useRef(false);
   const lineToolsRef = useRef<ILineToolsPlugin | null>(null);
   const currentBarRef = useRef<Bar | undefined>(undefined);
   const previousMainTimeRef = useRef<number | undefined>(undefined);
@@ -239,6 +250,16 @@ export default function Chart() {
   const [visibleBar, setVisibleBar] = useState<Bar | undefined>(undefined);
   const [rangeDays, setRangeDays] = useState<number | undefined>(undefined);
   const [scaleMode, setScaleMode] = useState<ScaleMode>("normal");
+  const [comparisonScaleMode, setComparisonScaleMode] = useState<ScaleMode | null>(null);
+  const [scaleSideOverride, setScaleSideOverride] = useState<"left" | "right" | null>(null);
+  const [indicatorScaleSides, setIndicatorScaleSides] = useState<{ macd: "left" | "right"; rsi: "left" | "right" }>({ macd: "right", rsi: "right" });
+  const [scaleLocked, setScaleLocked] = useState(false);
+  const [seriesOnlyScale, setSeriesOnlyScale] = useState(false);
+  const [axisLabels, setAxisLabels] = useState({ symbol: true, seriesValue: true, highLow: false, studyNames: false, studyValues: false, align: true });
+  const [axisLines, setAxisLines] = useState({ price: true, highLow: false });
+  const [countdownVisible, setCountdownVisible] = useState(false);
+  const [countdown, setCountdown] = useState<{ text: string; top: number } | null>(null);
+  const [axisMenu, setAxisMenu] = useState<PriceAxisMenuState | null>(null);
   const [autoScale, setAutoScale] = useState(true);
   const [indicatorMenuOpen, setIndicatorMenuOpen] = useState(false);
   const [indicatorSearch, setIndicatorSearch] = useState("");
@@ -250,6 +271,18 @@ export default function Chart() {
   const [symbolSearchInitialQuery, setSymbolSearchInitialQuery] = useState("");
   const [dataError, setDataError] = useState<string>();
   const [chartTimezone, setChartTimezone] = useState("Asia/Bangkok");
+  const comparisonActive = compareSymbols.length > 0;
+  const mainScaleSide = scaleSideOverride ?? (comparisonActive ? "right" : "left");
+  const effectiveScaleMode = comparisonActive ? (comparisonScaleMode ?? "percent") : scaleMode;
+  const axisLabelsRef = useRef(axisLabels);
+  const axisLinesRef = useRef(axisLines);
+  const seriesOnlyRef = useRef(seriesOnlyScale);
+  mainScaleSideRef.current = mainScaleSide;
+  indicatorScaleSidesRef.current = indicatorScaleSides;
+  scaleLockedRef.current = scaleLocked;
+  axisLabelsRef.current = axisLabels;
+  axisLinesRef.current = axisLines;
+  seriesOnlyRef.current = seriesOnlyScale;
   const symbolInfo = resolvedSymbol?.symbol === symbol ? resolvedSymbol.info : undefined;
 
   useEffect(() => {
@@ -408,6 +441,10 @@ export default function Chart() {
     smoothingLength,
     setSmoothingLength,
   } = useIndicatorSettings();
+  const secondaryLeftVisible = (activeStudies.includes("macd") && indicatorScaleSides.macd === "left")
+    || (activeStudies.includes("rsi") && indicatorScaleSides.rsi === "left");
+  const secondaryRightVisible = (activeStudies.includes("macd") && indicatorScaleSides.macd === "right")
+    || (activeStudies.includes("rsi") && indicatorScaleSides.rsi === "right");
   resolutionRef.current = resolution;
   symbolTimezoneRef.current = effectiveChartTimezone;
   maSettingsRef.current = { length: maLength, type: maType, smoothingLength };
@@ -577,6 +614,7 @@ export default function Chart() {
 
     chartRef.current = chart;
     seriesRef.current = series;
+    highLowLinesRef.current = null;
     volumeSeriesRef.current = volumeSeries;
     volumeSmaSeriesRef.current = volumeSmaSeries;
     timelineSeriesRef.current = timelineSeries;
@@ -664,10 +702,10 @@ export default function Chart() {
       const rightScaleWidth = chart.priceScale("right").width();
       if (x <= leftScaleWidth || x >= rect.width - rightScaleWidth || y >= chart.paneSize().height) return;
 
-      const priceRange = chart.priceScale("left").getVisibleRange();
+      const priceRange = chart.priceScale(mainScaleSideRef.current).getVisibleRange();
       if (!priceRange) return;
       const captureTarget = event.target instanceof Element ? event.target : element;
-      chart.priceScale("left").setVisibleRange(priceRange);
+      chart.priceScale(mainScaleSideRef.current).setVisibleRange(priceRange);
 
       panGestureRef.current = {
         pointerId: event.pointerId,
@@ -714,6 +752,11 @@ export default function Chart() {
           ? rightScale
           : null;
       if (!scale) return;
+      if (scale === chart.priceScale(mainScaleSideRef.current) && scaleLockedRef.current) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
 
       const range = scale.getVisibleRange();
       if (!range) return;
@@ -728,7 +771,7 @@ export default function Chart() {
 
       scale.setVisibleRange({ from: center - halfRange, to: center + halfRange });
       refreshDrawingOverlays();
-      if (scale === leftScale) {
+      if (scale === chart.priceScale(mainScaleSideRef.current)) {
         autoScaleRef.current = false;
         setAutoScale(false);
       }
@@ -783,6 +826,7 @@ export default function Chart() {
       macdSeriesRef.current = null;
       rsiSeriesRef.current = null;
       timelineSeriesRef.current = null;
+      highLowLinesRef.current = null;
     };
   }, [recordDrawingState]);
 
@@ -873,6 +917,7 @@ export default function Chart() {
       updateStudySeries(chartBars);
       if (chartBars.length) timelineSeriesRef.current?.setData(futureTimelinePoints(Number(chartBars[chartBars.length - 1].time), resolution));
       barsByTimeRef.current = new Map(chartBars.map((bar) => [Number(bar.time), bar]));
+      refreshHighLowRef.current();
       syncCompareSeries();
       previousCloseByTimeRef.current = new Map(chartBars.slice(1).map((bar, index) => [Number(bar.time), chartBars[index].close]));
       let earliestHistoryTime = chartBars[0] ? Number(chartBars[0].time) : undefined;
@@ -911,6 +956,7 @@ export default function Chart() {
             );
             earliestHistoryTime = Number(mergedBars[0].time);
             series.setData(mergedBars);
+            refreshHighLowRef.current();
             volumeSeriesRef.current?.setData(mergedBars.map((bar) => ({
               time: bar.time,
               value: bar.volume,
@@ -953,7 +999,7 @@ export default function Chart() {
           chart.timeScale().fitContent();
         }
 
-        chart.priceScale("left").setAutoScale(true);
+        chart.priceScale(mainScaleSideRef.current).setAutoScale(true);
       };
 
       focusLatestBars();
@@ -961,7 +1007,7 @@ export default function Chart() {
         requestAnimationFrame(() => {
           focusLatestBars();
           if (!autoScaleRef.current) {
-            const priceScale = chart.priceScale("left");
+            const priceScale = chart.priceScale(mainScaleSideRef.current);
             const priceRange = priceScale.getVisibleRange();
             if (priceRange) priceScale.setVisibleRange(priceRange);
             else priceScale.setAutoScale(false);
@@ -1044,6 +1090,7 @@ export default function Chart() {
       if (isNewRenderedBucket) timelineSeriesRef.current?.setData(futureTimelinePoints(bucketNumber, resolution));
 
       seriesRef.current?.update(bar);
+      refreshHighLowRef.current();
       updateCompareSeriesAtTime(bar.time);
       const color = candleColor(bar);
       if (color !== lastCandleColorRef.current) {
@@ -1139,15 +1186,16 @@ export default function Chart() {
       let series = compareSeriesRef.current.get(compareSymbol);
       if (!series) {
         series = chart.addSeries(LineSeries, {
-          title: compareSymbol,
+          title: axisLabelsRef.current.symbol ? compareSymbol : "",
           color: COMPARE_COLORS[index % COMPARE_COLORS.length],
           lineWidth: 2,
-          priceScaleId: "right",
-          lastValueVisible: true,
-          priceLineVisible: true,
+          priceScaleId: mainScaleSideRef.current,
+          lastValueVisible: axisLabelsRef.current.seriesValue,
+          priceLineVisible: axisLinesRef.current.price,
           priceLineColor: COMPARE_COLORS[index % COMPARE_COLORS.length],
           baseLineVisible: false,
           crosshairMarkerVisible: false,
+          autoscaleInfoProvider: seriesOnlyRef.current ? () => null : undefined,
         });
         compareSeriesRef.current.set(compareSymbol, series);
       }
@@ -1234,12 +1282,14 @@ export default function Chart() {
       let series = priceIndicatorSeriesRef.current.get(indicator.id);
       if (active.has(indicator.study) && !series) {
         series = chart.addSeries(LineSeries, {
+          title: axisLabelsRef.current.studyNames ? indicator.id : "",
           color: indicator.color,
           lineWidth: 2,
-          priceScaleId: "left",
-          lastValueVisible: false,
+          priceScaleId: mainScaleSideRef.current,
+          lastValueVisible: axisLabelsRef.current.studyValues,
           priceLineVisible: false,
           crosshairMarkerVisible: false,
+          autoscaleInfoProvider: seriesOnlyRef.current ? () => null : undefined,
         });
         priceIndicatorSeriesRef.current.set(indicator.id, series);
       } else if (!active.has(indicator.study) && series) {
@@ -1258,12 +1308,14 @@ export default function Chart() {
       let series = priceIndicatorSeriesRef.current.get(indicator.id);
       if (active.has("boll") && !series) {
         series = chart.addSeries(LineSeries, {
+          title: axisLabelsRef.current.studyNames ? indicator.id : "",
           color: indicator.color,
           lineWidth: 2,
-          priceScaleId: "left",
-          lastValueVisible: false,
+          priceScaleId: mainScaleSideRef.current,
+          lastValueVisible: axisLabelsRef.current.studyValues,
           priceLineVisible: false,
           crosshairMarkerVisible: false,
+          autoscaleInfoProvider: seriesOnlyRef.current ? () => null : undefined,
         });
         priceIndicatorSeriesRef.current.set(indicator.id, series);
       } else if (!active.has("boll") && series) {
@@ -1288,19 +1340,21 @@ export default function Chart() {
 
     let paneIndex = 1;
     if (active.has("macd")) {
-      const histogram = chart.addSeries(HistogramSeries, { priceLineVisible: false, lastValueVisible: false }, paneIndex);
-      const macd = chart.addSeries(LineSeries, { color: "#2962ff", lineWidth: 2, priceLineVisible: false, lastValueVisible: false }, paneIndex);
-      const signal = chart.addSeries(LineSeries, { color: "#ff6d00", lineWidth: 2, priceLineVisible: false, lastValueVisible: false }, paneIndex);
+      const histogram = chart.addSeries(HistogramSeries, { title: axisLabelsRef.current.studyNames ? "Histogram" : "", priceScaleId: indicatorScaleSidesRef.current.macd, priceLineVisible: false, lastValueVisible: axisLabelsRef.current.studyValues }, paneIndex);
+      const macd = chart.addSeries(LineSeries, { title: axisLabelsRef.current.studyNames ? "MACD" : "", priceScaleId: indicatorScaleSidesRef.current.macd, color: "#2962ff", lineWidth: 2, priceLineVisible: false, lastValueVisible: axisLabelsRef.current.studyValues }, paneIndex);
+      const signal = chart.addSeries(LineSeries, { title: axisLabelsRef.current.studyNames ? "Signal" : "", priceScaleId: indicatorScaleSidesRef.current.macd, color: "#ff6d00", lineWidth: 2, priceLineVisible: false, lastValueVisible: axisLabelsRef.current.studyValues }, paneIndex);
       macdSeriesRef.current = { histogram, macd, signal };
       chart.panes()[paneIndex]?.setHeight(140);
+      chart.priceScale(indicatorScaleSidesRef.current.macd, paneIndex).applyOptions({ mode: PriceScaleMode.Normal });
       paneIndex++;
     }
     if (active.has("rsi")) {
-      const rsi = chart.addSeries(LineSeries, { color: "#7e57c2", lineWidth: 2, priceLineVisible: false, lastValueVisible: false }, paneIndex);
-      const upper = chart.addSeries(LineSeries, { color: "#596273", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false }, paneIndex);
-      const lower = chart.addSeries(LineSeries, { color: "#596273", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false }, paneIndex);
+      const rsi = chart.addSeries(LineSeries, { title: axisLabelsRef.current.studyNames ? "RSI" : "", priceScaleId: indicatorScaleSidesRef.current.rsi, color: "#7e57c2", lineWidth: 2, priceLineVisible: false, lastValueVisible: axisLabelsRef.current.studyValues }, paneIndex);
+      const upper = chart.addSeries(LineSeries, { priceScaleId: indicatorScaleSidesRef.current.rsi, color: "#596273", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false }, paneIndex);
+      const lower = chart.addSeries(LineSeries, { priceScaleId: indicatorScaleSidesRef.current.rsi, color: "#596273", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false }, paneIndex);
       rsiSeriesRef.current = { rsi, upper, lower };
       chart.panes()[paneIndex]?.setHeight(140);
+      chart.priceScale(indicatorScaleSidesRef.current.rsi, paneIndex).applyOptions({ mode: PriceScaleMode.Normal });
     }
 
     const volumeVisible = active.has("volume") && compareSymbols.length === 0;
@@ -1326,38 +1380,43 @@ export default function Chart() {
   useEffect(() => {
     const chart = chartRef.current;
     if (!chart) return;
-    const comparisonActive = compareSymbols.length > 0;
-    const priceScaleId = comparisonActive ? "right" : "left";
-    const mode = comparisonActive || scaleMode === "percent"
+    const priceScaleId = mainScaleSide;
+    const mode = effectiveScaleMode === "percent"
       ? PriceScaleMode.Percentage
-      : scaleMode === "log"
+      : effectiveScaleMode === "indexed"
+        ? PriceScaleMode.IndexedTo100
+        : effectiveScaleMode === "log"
         ? PriceScaleMode.Logarithmic
         : PriceScaleMode.Normal;
 
     seriesRef.current?.applyOptions({
       priceScaleId,
-      baseLineVisible: mode === PriceScaleMode.Percentage,
+      baseLineVisible: mode === PriceScaleMode.Percentage || mode === PriceScaleMode.IndexedTo100,
       baseLineColor: "#596273",
     });
-    compareSeriesRef.current.forEach((series) => series.applyOptions({ priceScaleId: "right" }));
+    compareSeriesRef.current.forEach((series) => series.applyOptions({ priceScaleId }));
     priceIndicatorSeriesRef.current.forEach((series) => series.applyOptions({ priceScaleId }));
+    const volumeScaleId = comparisonActive ? "volume" : mainScaleSide === "right" ? "left" : "right";
     volumeSeriesRef.current?.applyOptions({
-      priceScaleId: comparisonActive ? "volume" : "right",
+      priceScaleId: volumeScaleId,
       visible: activeStudies.includes("volume") && !comparisonActive,
     });
     volumeSmaSeriesRef.current?.applyOptions({
-      priceScaleId: comparisonActive ? "volume" : "right",
+      priceScaleId: volumeScaleId,
       visible: activeStudies.includes("volume") && !comparisonActive,
     });
+    if (volumeScaleId === "volume") chart.priceScale("volume").applyOptions({ scaleMargins: { top: 0.8, bottom: 0 }, visible: false });
 
     chart.applyOptions({
       leftPriceScale: {
-        visible: !comparisonActive,
-        scaleMargins: { top: 0.05, bottom: 0.05 },
+        visible: mainScaleSide === "left" || !comparisonActive || secondaryLeftVisible,
+        scaleMargins: mainScaleSide === "left"
+          ? { top: 0.05, bottom: 0.05 }
+          : { top: 0.02, bottom: 0 },
       },
       rightPriceScale: {
-        visible: true,
-        scaleMargins: comparisonActive
+        visible: mainScaleSide === "right" || !comparisonActive || secondaryRightVisible,
+        scaleMargins: mainScaleSide === "right"
           ? { top: 0.05, bottom: 0.05 }
           : { top: 0.02, bottom: 0 },
       },
@@ -1367,9 +1426,108 @@ export default function Chart() {
     priceScale.applyOptions({
       mode,
     });
-    priceScale.setAutoScale(autoScale);
-    if (!comparisonActive) chart.priceScale("right").applyOptions({ mode: PriceScaleMode.Normal });
-  }, [activeStudies, autoScale, compareSymbols.length, scaleMode]);
+    priceScale.setAutoScale(autoScale && !scaleLocked);
+    if (previousMainScaleSideRef.current !== mainScaleSide) {
+      chart.priceScale(previousMainScaleSideRef.current).applyOptions({ mode: PriceScaleMode.Normal, invertScale: false });
+      previousMainScaleSideRef.current = mainScaleSide;
+    }
+  }, [activeStudies, autoScale, comparisonActive, effectiveScaleMode, mainScaleSide, scaleLocked, secondaryLeftVisible, secondaryRightVisible]);
+
+  useEffect(() => {
+    const series = seriesRef.current;
+    if (!series) return;
+    series.applyOptions({
+      title: axisLabels.symbol ? symbol : "",
+      lastValueVisible: axisLabels.seriesValue,
+      priceLineVisible: axisLines.price,
+    });
+    compareSeriesRef.current.forEach((compareSeries, compareSymbol) => compareSeries.applyOptions({
+      title: axisLabels.symbol ? compareSymbol : "",
+      lastValueVisible: axisLabels.seriesValue,
+      priceLineVisible: axisLines.price,
+    }));
+    priceIndicatorSeriesRef.current.forEach((studySeries, id) => studySeries.applyOptions({
+      title: axisLabels.studyNames ? id : "",
+      lastValueVisible: axisLabels.studyValues,
+    }));
+    const macd = macdSeriesRef.current;
+    macd?.histogram.applyOptions({ title: axisLabels.studyNames ? "Histogram" : "", lastValueVisible: axisLabels.studyValues });
+    macd?.macd.applyOptions({ title: axisLabels.studyNames ? "MACD" : "", lastValueVisible: axisLabels.studyValues });
+    macd?.signal.applyOptions({ title: axisLabels.studyNames ? "Signal" : "", lastValueVisible: axisLabels.studyValues });
+    const rsi = rsiSeriesRef.current;
+    rsi?.rsi.applyOptions({ title: axisLabels.studyNames ? "RSI" : "", lastValueVisible: axisLabels.studyValues });
+    volumeSeriesRef.current?.applyOptions({ title: axisLabels.studyNames ? "Volume" : "", lastValueVisible: axisLabels.studyValues });
+    volumeSmaSeriesRef.current?.applyOptions({ title: axisLabels.studyNames ? "Volume SMA" : "", lastValueVisible: axisLabels.studyValues });
+    chartRef.current?.priceScale(mainScaleSide).applyOptions({ alignLabels: axisLabels.align });
+  }, [axisLabels, axisLines.price, mainScaleSide, symbol]);
+
+  useEffect(() => {
+    const provider = seriesOnlyScale ? () => null : (original: () => unknown) => original();
+    compareSeriesRef.current.forEach((series) => series.applyOptions({ autoscaleInfoProvider: provider }));
+    priceIndicatorSeriesRef.current.forEach((series) => series.applyOptions({ autoscaleInfoProvider: provider }));
+  }, [seriesOnlyScale, activeStudies, compareSymbols.length]);
+
+  useEffect(() => {
+    const chart = chartRef.current;
+    const series = seriesRef.current;
+    if (!chart || !series) return;
+    const update = () => {
+      const visible = chart.timeScale().getVisibleRange();
+      const bars = [...barsByTimeRef.current.values()].filter((bar) => !visible || (
+        Number(bar.time) >= Number(visible.from) && Number(bar.time) <= Number(visible.to)
+      ));
+      if (!bars.length) {
+        highLowLinesRef.current?.high.applyOptions({ axisLabelVisible: false, lineVisible: false });
+        highLowLinesRef.current?.low.applyOptions({ axisLabelVisible: false, lineVisible: false });
+        return;
+      }
+      const high = Math.max(...bars.map((bar) => bar.high));
+      const low = Math.min(...bars.map((bar) => bar.low));
+      if (!highLowLinesRef.current) {
+        highLowLinesRef.current = {
+          high: series.createPriceLine({ price: high, color: "#596273", lineWidth: 1, lineStyle: 2, lineVisible: false, axisLabelVisible: false, title: "H" }),
+          low: series.createPriceLine({ price: low, color: "#596273", lineWidth: 1, lineStyle: 2, lineVisible: false, axisLabelVisible: false, title: "L" }),
+        };
+      }
+      highLowLinesRef.current.high.applyOptions({ price: high, axisLabelVisible: axisLabels.highLow, lineVisible: axisLines.highLow });
+      highLowLinesRef.current.low.applyOptions({ price: low, axisLabelVisible: axisLabels.highLow, lineVisible: axisLines.highLow });
+    };
+    refreshHighLowRef.current = update;
+    chart.timeScale().subscribeVisibleTimeRangeChange(update);
+    update();
+    return () => {
+      chart.timeScale().unsubscribeVisibleTimeRangeChange(update);
+      refreshHighLowRef.current = () => undefined;
+    };
+  }, [axisLabels.highLow, axisLines.highLow, resolution, symbol]);
+
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart || !scaleLocked) {
+      scaleRatioRef.current = null;
+      return;
+    }
+    const scale = chart.priceScale(mainScaleSide);
+    const initialRange = scale.getVisibleRange();
+    const initialBars = chart.timeScale().getVisibleLogicalRange();
+    if (!initialRange || !initialBars) return;
+    scaleRatioRef.current = (initialRange.to - initialRange.from) / Math.max(1, initialBars.to - initialBars.from);
+    const preserveRatio = () => {
+      const range = scale.getVisibleRange();
+      const bars = chart.timeScale().getVisibleLogicalRange();
+      const ratio = scaleRatioRef.current;
+      if (!range || !bars || ratio === null) return;
+      const span = ratio * Math.max(1, bars.to - bars.from);
+      const center = (range.from + range.to) / 2;
+      scale.setVisibleRange({ from: center - span / 2, to: center + span / 2 });
+    };
+    chart.timeScale().subscribeVisibleLogicalRangeChange(preserveRatio);
+    window.addEventListener("resize", preserveRatio);
+    return () => {
+      chart.timeScale().unsubscribeVisibleLogicalRangeChange(preserveRatio);
+      window.removeEventListener("resize", preserveRatio);
+    };
+  }, [mainScaleSide, scaleLocked]);
 
   useEffect(() => {
     lineToolsRef.current?.setLocked(drawingsLocked);
@@ -1380,6 +1538,27 @@ export default function Chart() {
       const target = event.target as HTMLElement | null;
       if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
         return;
+      }
+      if (event.altKey && !event.ctrlKey && !event.metaKey) {
+        const scale = chartRef.current?.priceScale(mainScaleSide);
+        const key = event.key.toLowerCase();
+        if (scale && ["r", "p", "l", "i"].includes(key)) {
+          event.preventDefault();
+          if (key === "r") {
+            setScaleLocked(false);
+            setAutoScale(true);
+            scale.setAutoScale(true);
+          } else if (key === "i") {
+            scale.applyOptions({ invertScale: !scale.options().invertScale });
+          } else {
+            const mode: ScaleMode = key === "p"
+              ? effectiveScaleMode === "percent" ? "normal" : "percent"
+              : effectiveScaleMode === "log" ? "normal" : "log";
+            if (comparisonActive) setComparisonScaleMode(mode);
+            else setScaleMode(mode);
+          }
+          return;
+        }
       }
       if (event.key === "Delete" || event.key === "Backspace") {
         const beforeDelete = lineToolsRef.current?.exportLineTools();
@@ -1414,7 +1593,146 @@ export default function Chart() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [recordDrawingState, restoreDrawingState, syncDrawingHistoryAvailability]);
+  }, [comparisonActive, effectiveScaleMode, mainScaleSide, recordDrawingState, restoreDrawingState, syncDrawingHistoryAvailability]);
+
+  const closeAxisMenu = useCallback(() => setAxisMenu(null), []);
+  const onAxisContextMenu = (event: React.MouseEvent<HTMLElement>) => {
+    const chart = chartRef.current;
+    const element = containerRef.current;
+    if (!chart || !element) return;
+    const rect = element.getBoundingClientRect();
+    const paneIndex = chart.panes().findIndex((pane) => {
+      const paneRect = pane.getHTMLElement()?.getBoundingClientRect();
+      return paneRect && event.clientY >= paneRect.top && event.clientY < paneRect.bottom;
+    });
+    if (paneIndex < 0) return;
+    const leftWidth = chart.priceScale("left", paneIndex).width();
+    const rightWidth = chart.priceScale("right", paneIndex).width();
+    const x = event.clientX - rect.left;
+    const side = leftWidth > 0 && x <= leftWidth
+      ? "left"
+      : rightWidth > 0 && x >= rect.width - rightWidth
+        ? "right"
+        : null;
+    if (!side) return;
+    const hasSeriesOnAxis = chart.panes()[paneIndex].getSeries().some((series) =>
+      (series.options().priceScaleId ?? "right") === side,
+    );
+    if (!hasSeriesOnAxis) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setAxisMenu({ x: event.clientX, y: event.clientY, side, paneIndex });
+  };
+
+  const runAxisMenuAction = (action: PriceAxisMenuAction) => {
+    const chart = chartRef.current;
+    if (!chart || !axisMenu) return;
+    const { side, paneIndex } = axisMenu;
+    const scale = chart.priceScale(side, paneIndex);
+    const isMainAxis = paneIndex === 0 && side === mainScaleSide;
+    const setMainMode = (mode: ScaleMode) => {
+      if (comparisonActive) setComparisonScaleMode(mode);
+      else setScaleMode(mode);
+    };
+    switch (action) {
+      case "reset":
+        if (isMainAxis) {
+          setScaleLocked(false);
+          setAutoScale(true);
+        }
+        scale.setAutoScale(true);
+        break;
+      case "auto":
+        if (isMainAxis) {
+          setScaleLocked(false);
+          setAutoScale(!scale.options().autoScale);
+        } else scale.setAutoScale(!scale.options().autoScale);
+        break;
+      case "lock":
+        if (isMainAxis) {
+          if (!scaleLocked) setAutoScale(false);
+          setScaleLocked(!scaleLocked);
+        }
+        break;
+      case "seriesOnly":
+        setSeriesOnlyScale((current) => !current);
+        break;
+      case "invert":
+        scale.applyOptions({ invertScale: !scale.options().invertScale });
+        break;
+      case "normal":
+      case "percent":
+      case "indexed":
+      case "log": {
+        const mode = action === "normal" ? PriceScaleMode.Normal
+          : action === "percent" ? PriceScaleMode.Percentage
+            : action === "indexed" ? PriceScaleMode.IndexedTo100
+              : PriceScaleMode.Logarithmic;
+        if (isMainAxis) setMainMode(action);
+        else scale.applyOptions({ mode });
+        break;
+      }
+      case "move": {
+        const destination = side === "left" ? "right" : "left";
+        if (paneIndex === 0) setScaleSideOverride(isMainAxis ? destination : side);
+        else {
+          const paneSeries = chart.panes()[paneIndex].getSeries();
+          const study = macdSeriesRef.current && paneSeries.includes(macdSeriesRef.current.macd)
+            ? "macd"
+            : rsiSeriesRef.current && paneSeries.includes(rsiSeriesRef.current.rsi)
+              ? "rsi" : null;
+          paneSeries.forEach((series) => {
+            if ((series.options().priceScaleId ?? "right") === side) series.applyOptions({ priceScaleId: destination });
+          });
+          if (study) setIndicatorScaleSides((current) => ({ ...current, [study]: destination }));
+          chart.priceScale(destination, paneIndex).applyOptions({ visible: true });
+          chart.applyOptions(destination === "left"
+            ? { leftPriceScale: { visible: true } }
+            : { rightPriceScale: { visible: true } });
+        }
+        break;
+      }
+      case "symbolLabels": setAxisLabels((current) => ({ ...current, symbol: !current.symbol })); break;
+      case "seriesValue": setAxisLabels((current) => ({ ...current, seriesValue: !current.seriesValue })); break;
+      case "highLowLabels": setAxisLabels((current) => ({ ...current, highLow: !current.highLow })); break;
+      case "studyNames": setAxisLabels((current) => ({ ...current, studyNames: !current.studyNames })); break;
+      case "studyValues": setAxisLabels((current) => ({ ...current, studyValues: !current.studyValues })); break;
+      case "alignLabels":
+        scale.applyOptions({ alignLabels: !scale.options().alignLabels });
+        if (isMainAxis) setAxisLabels((current) => ({ ...current, align: !current.align }));
+        break;
+      case "priceLine": setAxisLines((current) => ({ ...current, price: !current.price })); break;
+      case "highLowLines": setAxisLines((current) => ({ ...current, highLow: !current.highLow })); break;
+      case "countdown": setCountdownVisible((current) => !current); break;
+    }
+  };
+
+  useEffect(() => {
+    if (!countdownVisible) {
+      setCountdown(null);
+      return;
+    }
+    const update = () => {
+      const chart = chartRef.current;
+      const series = seriesRef.current;
+      const bar = currentBarRef.current ?? [...barsByTimeRef.current.values()].at(-1);
+      const now = Date.now() / 1000;
+      if (!chart || !series || !bar || !isTradingSessionTime(now as Bar["time"], "1", symbolInfo?.session, symbolInfo?.timezone)) {
+        setCountdown(null);
+        return;
+      }
+      const text = barCloseCountdown(Number(bar.time), resolution, now);
+      const coordinate = series.priceToCoordinate(bar.close);
+      if (!text || coordinate === null) {
+        setCountdown(null);
+        return;
+      }
+      setCountdown({ text, top: (containerRef.current?.offsetTop ?? 0) + coordinate + 12 });
+    };
+    update();
+    const timer = window.setInterval(update, 1000);
+    return () => window.clearInterval(timer);
+  }, [countdownVisible, resolution, symbolInfo?.session, symbolInfo?.timezone]);
 
   const startDrawing = (type: LineToolType) => {
     if (drawingsLocked || !lineToolsRef.current) return;
@@ -1630,6 +1948,11 @@ export default function Chart() {
     syncDrawingHistoryAvailability();
   }, [restoreDrawingState, syncDrawingHistoryAvailability]);
 
+  const menuScale = axisMenu && chartRef.current?.panes()[axisMenu.paneIndex]
+    ? chartRef.current.priceScale(axisMenu.side, axisMenu.paneIndex)
+    : null;
+  const menuScaleOptions = menuScale?.options();
+
   return (
     <div id="app">
       <DelayedTooltip />
@@ -1731,7 +2054,13 @@ export default function Chart() {
             id="chart"
             ref={containerRef}
             className={activeDrawingTool || eraserMode ? "chart--tool-active" : "chart--pan"}
+            onContextMenuCapture={onAxisContextMenu}
           />
+          {countdown && countdownVisible && (
+            <div className="price-axis-countdown" style={{ top: countdown.top, ...(mainScaleSide === "right" ? { right: 0 } : { left: 0 }) }}>
+              {countdown.text}
+            </div>
+          )}
           {dataError && <div className="chart-data-error" role="alert">{dataError}</div>}
           {selectedDrawing && chartRef.current && seriesRef.current && (
             <DrawingAxisRangeHighlight
@@ -1767,17 +2096,39 @@ export default function Chart() {
           )}
           <ChartFooter
             rangeDays={rangeDays}
-            scaleMode={scaleMode}
+            scaleMode={effectiveScaleMode}
             autoScale={autoScale}
             timezone={chartTimezone}
             exchangeTimezone={symbolInfo?.timezone}
             onRangeChange={applyRangePreset}
-            onScaleModeChange={setScaleMode}
-            onAutoScaleToggle={() => setAutoScale((enabled) => !enabled)}
+            onScaleModeChange={(mode) => {
+              if (comparisonActive) setComparisonScaleMode(mode);
+              else setScaleMode(mode);
+            }}
+            onAutoScaleToggle={() => {
+              setScaleLocked(false);
+              setAutoScale((enabled) => !enabled);
+            }}
             onTimezoneChange={handleTimezoneChange}
           />
         </div>
       </div>
+      {axisMenu && menuScaleOptions && (
+        <PriceAxisContextMenu
+          position={axisMenu}
+          mode={menuScaleOptions.mode}
+          autoScale={menuScaleOptions.autoScale}
+          inverted={menuScaleOptions.invertScale}
+          locked={axisMenu.paneIndex === 0 && axisMenu.side === mainScaleSide && scaleLocked}
+          seriesOnly={seriesOnlyScale}
+          labels={{ ...axisLabels, align: menuScaleOptions.alignLabels }}
+          lines={axisLines}
+          countdown={countdownVisible}
+          isMainAxis={axisMenu.paneIndex === 0 && axisMenu.side === mainScaleSide}
+          onAction={runAxisMenuAction}
+          onClose={closeAxisMenu}
+        />
+      )}
       {editingTextDrawing?.toolType === "Text" && textDialogOpen && (
         <TextToolDialog
           text={editingTextDrawing.options.text}

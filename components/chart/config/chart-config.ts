@@ -2,7 +2,7 @@ import type { LineToolType } from "lightweight-charts-line-tools-core";
 
 export type MaType = "SMA" | "EMA" | "WMA";
 export type StudyId = "volume" | "ma" | "ema" | "macd" | "rsi" | "boll";
-export type ScaleMode = "normal" | "percent" | "log";
+export type ScaleMode = "normal" | "percent" | "indexed" | "log";
 
 export const SYMBOLS = ["VN30", "VNINDEX"];
 
