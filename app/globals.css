@@ -2259,12 +2259,12 @@ main#chart.chart--tool-active canvas {
   color: inherit;
   background: transparent;
   cursor: pointer;
-  font: 600 13px var(--font-ui);
+  font: 400 14px Arial;
 }
-.chart-footer button:hover { color: #fff; background: #252d3d; }
-.chart-footer .chart-footer__active { color: #fff; background: #2962ff; }
+.chart-footer button:hover { background: #252d3d; }
+.chart-footer .chart-footer__active { color: #2962ff}
 .chart-footer__settings { gap: 6px; }
-.chart-footer__settings span { color: #d3d9e4; font-family: var(--font-num); }
+.chart-footer__settings span { color: #d3d9e4; font-family: Arial, sans-serif; }
 
 .chart-footer__timezone-wrapper {
   position: relative;
