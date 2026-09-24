@@ -260,6 +260,8 @@ export default function Chart() {
   const [countdownVisible, setCountdownVisible] = useState(false);
   const [countdown, setCountdown] = useState<{ text: string; top: number } | null>(null);
   const [axisMenu, setAxisMenu] = useState<PriceAxisMenuState | null>(null);
+  const [hoverAxis, setHoverAxis] = useState<{ side: "left" | "right"; paneIndex: number; left: number; top: number; width: number } | null>(null);
+  const [footerAxis, setFooterAxis] = useState<{ side: "left" | "right"; paneIndex: number } | null>(null);
   const [autoScale, setAutoScale] = useState(true);
   const [indicatorMenuOpen, setIndicatorMenuOpen] = useState(false);
   const [indicatorSearch, setIndicatorSearch] = useState("");
@@ -274,6 +276,14 @@ export default function Chart() {
   const comparisonActive = compareSymbols.length > 0;
   const mainScaleSide = scaleSideOverride ?? (comparisonActive ? "right" : "left");
   const effectiveScaleMode = comparisonActive ? (comparisonScaleMode ?? "percent") : scaleMode;
+  const setMainScaleMode = useCallback((mode: ScaleMode) => {
+    if (comparisonActive) setComparisonScaleMode(mode);
+    else setScaleMode(mode);
+  }, [comparisonActive]);
+  const toggleMainAutoScale = useCallback(() => {
+    setScaleLocked(false);
+    setAutoScale((enabled) => !enabled);
+  }, []);
   const axisLabelsRef = useRef(axisLabels);
   const axisLinesRef = useRef(axisLines);
   const seriesOnlyRef = useRef(seriesOnlyScale);
@@ -1554,8 +1564,7 @@ export default function Chart() {
             const mode: ScaleMode = key === "p"
               ? effectiveScaleMode === "percent" ? "normal" : "percent"
               : effectiveScaleMode === "log" ? "normal" : "log";
-            if (comparisonActive) setComparisonScaleMode(mode);
-            else setScaleMode(mode);
+            setMainScaleMode(mode);
           }
           return;
         }
@@ -1593,35 +1602,81 @@ export default function Chart() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [comparisonActive, effectiveScaleMode, mainScaleSide, recordDrawingState, restoreDrawingState, syncDrawingHistoryAvailability]);
+  }, [effectiveScaleMode, mainScaleSide, recordDrawingState, restoreDrawingState, setMainScaleMode, syncDrawingHistoryAvailability]);
 
   const closeAxisMenu = useCallback(() => setAxisMenu(null), []);
-  const onAxisContextMenu = (event: React.MouseEvent<HTMLElement>) => {
+  const axisAtPoint = (clientX: number, clientY: number) => {
     const chart = chartRef.current;
     const element = containerRef.current;
-    if (!chart || !element) return;
+    if (!chart || !element) return null;
     const rect = element.getBoundingClientRect();
     const paneIndex = chart.panes().findIndex((pane) => {
       const paneRect = pane.getHTMLElement()?.getBoundingClientRect();
-      return paneRect && event.clientY >= paneRect.top && event.clientY < paneRect.bottom;
+      return paneRect && clientY >= paneRect.top && clientY < paneRect.bottom;
     });
-    if (paneIndex < 0) return;
+    if (paneIndex < 0) return null;
     const leftWidth = chart.priceScale("left", paneIndex).width();
     const rightWidth = chart.priceScale("right", paneIndex).width();
-    const x = event.clientX - rect.left;
-    const side = leftWidth > 0 && x <= leftWidth
+    const x = clientX - rect.left;
+    const side: "left" | "right" | null = leftWidth > 0 && x <= leftWidth
       ? "left"
       : rightWidth > 0 && x >= rect.width - rightWidth
         ? "right"
         : null;
-    if (!side) return;
+    if (!side) return null;
     const hasSeriesOnAxis = chart.panes()[paneIndex].getSeries().some((series) =>
       (series.options().priceScaleId ?? "right") === side,
     );
-    if (!hasSeriesOnAxis) return;
+    if (!hasSeriesOnAxis) return null;
+    return { side, paneIndex, width: side === "left" ? leftWidth : rightWidth, axisLeft: side === "left" ? rect.left : rect.right - rightWidth, paneBottom: chart.panes()[paneIndex].getHTMLElement()!.getBoundingClientRect().bottom };
+  };
+  const onAxisHover = (event: React.MouseEvent<HTMLElement>) => {
+    const axis = axisAtPoint(event.clientX, event.clientY);
+    if (!axis) {
+      setHoverAxis((current) => current ? null : current);
+      return;
+    }
+    const stageRect = containerRef.current!.parentElement!.getBoundingClientRect();
+    const next = {
+      side: axis.side,
+      paneIndex: axis.paneIndex,
+      left: axis.axisLeft - stageRect.left,
+      top: axis.paneBottom - stageRect.top - 31,
+      width: axis.width,
+    };
+    setFooterAxis((current) => current?.side === axis.side && current.paneIndex === axis.paneIndex
+      ? current : { side: axis.side, paneIndex: axis.paneIndex });
+    setHoverAxis((current) => current
+      && current.side === next.side
+      && current.paneIndex === next.paneIndex
+      && current.left === next.left
+      && current.top === next.top
+      && current.width === next.width ? current : next);
+  };
+  const onAxisContextMenu = (event: React.MouseEvent<HTMLElement>) => {
+    const axis = axisAtPoint(event.clientX, event.clientY);
+    if (!axis) return;
     event.preventDefault();
     event.stopPropagation();
-    setAxisMenu({ x: event.clientX, y: event.clientY, side, paneIndex });
+    setFooterAxis({ side: axis.side, paneIndex: axis.paneIndex });
+    setAxisMenu({ x: event.clientX, y: event.clientY, side: axis.side, paneIndex: axis.paneIndex });
+  };
+
+  const toggleHoverAxisMode = (mode: "auto" | "log") => {
+    const chart = chartRef.current;
+    if (!chart || !hoverAxis) return;
+    const scale = chart.priceScale(hoverAxis.side, hoverAxis.paneIndex);
+    const isMainAxis = hoverAxis.paneIndex === 0 && hoverAxis.side === mainScaleSide;
+    if (mode === "auto") {
+      if (isMainAxis) toggleMainAutoScale();
+      else scale.setAutoScale(!scale.options().autoScale);
+    } else if (isMainAxis) {
+      const next: ScaleMode = effectiveScaleMode === "log" ? "normal" : "log";
+      setMainScaleMode(next);
+    } else {
+      scale.applyOptions({ mode: scale.options().mode === PriceScaleMode.Logarithmic ? PriceScaleMode.Normal : PriceScaleMode.Logarithmic });
+    }
+    setHoverAxis((current) => current ? { ...current } : current);
   };
 
   const runAxisMenuAction = (action: PriceAxisMenuAction) => {
@@ -1630,10 +1685,6 @@ export default function Chart() {
     const { side, paneIndex } = axisMenu;
     const scale = chart.priceScale(side, paneIndex);
     const isMainAxis = paneIndex === 0 && side === mainScaleSide;
-    const setMainMode = (mode: ScaleMode) => {
-      if (comparisonActive) setComparisonScaleMode(mode);
-      else setScaleMode(mode);
-    };
     switch (action) {
       case "reset":
         if (isMainAxis) {
@@ -1643,10 +1694,8 @@ export default function Chart() {
         scale.setAutoScale(true);
         break;
       case "auto":
-        if (isMainAxis) {
-          setScaleLocked(false);
-          setAutoScale(!scale.options().autoScale);
-        } else scale.setAutoScale(!scale.options().autoScale);
+        if (isMainAxis) toggleMainAutoScale();
+        else scale.setAutoScale(!scale.options().autoScale);
         break;
       case "lock":
         if (isMainAxis) {
@@ -1668,7 +1717,7 @@ export default function Chart() {
           : action === "percent" ? PriceScaleMode.Percentage
             : action === "indexed" ? PriceScaleMode.IndexedTo100
               : PriceScaleMode.Logarithmic;
-        if (isMainAxis) setMainMode(action);
+        if (isMainAxis) setMainScaleMode(action);
         else scale.applyOptions({ mode });
         break;
       }
@@ -1952,6 +2001,25 @@ export default function Chart() {
     ? chartRef.current.priceScale(axisMenu.side, axisMenu.paneIndex)
     : null;
   const menuScaleOptions = menuScale?.options();
+  const hoveredPane = hoverAxis && chartRef.current?.panes()[hoverAxis.paneIndex];
+  const hoveredScaleOptions = hoveredPane?.getSeries().some((series) =>
+    (series.options().priceScaleId ?? "right") === hoverAxis?.side,
+  ) ? chartRef.current?.priceScale(hoverAxis!.side, hoverAxis!.paneIndex).options() : null;
+  const hoveredIsMainAxis = hoverAxis?.paneIndex === 0 && hoverAxis.side === mainScaleSide;
+  const selectedFooterPane = footerAxis && chartRef.current?.panes()[footerAxis.paneIndex];
+  const footerAxisIsValid = selectedFooterPane?.getSeries().some((series) =>
+    (series.options().priceScaleId ?? "right") === footerAxis?.side,
+  );
+  const footerTarget = footerAxisIsValid ? footerAxis! : { side: mainScaleSide, paneIndex: 0 };
+  const footerIsMainAxis = footerTarget.paneIndex === 0 && footerTarget.side === mainScaleSide;
+  const footerScaleOptions = chartRef.current?.panes()[footerTarget.paneIndex]
+    ? chartRef.current.priceScale(footerTarget.side, footerTarget.paneIndex).options()
+    : null;
+  const footerScaleMode: ScaleMode = footerIsMainAxis ? effectiveScaleMode
+    : footerScaleOptions?.mode === PriceScaleMode.Percentage ? "percent"
+      : footerScaleOptions?.mode === PriceScaleMode.IndexedTo100 ? "indexed"
+        : footerScaleOptions?.mode === PriceScaleMode.Logarithmic ? "log" : "normal";
+  const footerAutoScale = footerIsMainAxis ? autoScale && !scaleLocked : footerScaleOptions?.autoScale ?? autoScale;
 
   return (
     <div id="app">
@@ -2033,7 +2101,7 @@ export default function Chart() {
           onClearIndicators={clearIndicators}
           onClearAll={clearChartObjects}
         />
-        <div className="chart-stage">
+        <div className="chart-stage" onMouseMoveCapture={onAxisHover} onMouseLeave={() => setHoverAxis(null)}>
           <MarketDataPanel
             symbol={symbol}
             exchange={symbolInfo?.exchange ?? ""}
@@ -2056,6 +2124,31 @@ export default function Chart() {
             className={activeDrawingTool || eraserMode ? "chart--tool-active" : "chart--pan"}
             onContextMenuCapture={onAxisContextMenu}
           />
+          {hoverAxis && hoveredScaleOptions && (
+            <div
+              className={`price-axis-hover price-axis-hover--${hoverAxis.side}`}
+              style={{ left: hoverAxis.left, top: hoverAxis.top, width: hoverAxis.width }}
+            >
+              <button
+                type="button"
+                tabIndex={-1}
+                aria-label="Tự động (khớp Dữ liệu với Màn hình)"
+                aria-pressed={hoveredIsMainAxis ? autoScale && !scaleLocked : hoveredScaleOptions.autoScale}
+                data-tooltip="Tự động (khớp Dữ liệu với Màn hình)"
+                data-tooltip-disabled="true"
+                onClick={() => toggleHoverAxisMode("auto")}
+              >A</button>
+              <button
+                type="button"
+                tabIndex={-1}
+                aria-label="Logarit"
+                aria-pressed={hoveredIsMainAxis ? effectiveScaleMode === "log" : hoveredScaleOptions.mode === PriceScaleMode.Logarithmic}
+                data-tooltip="Logarit"
+                data-tooltip-disabled="true"
+                onClick={() => toggleHoverAxisMode("log")}
+              >L</button>
+            </div>
+          )}
           {countdown && countdownVisible && (
             <div className="price-axis-countdown" style={{ top: countdown.top, ...(mainScaleSide === "right" ? { right: 0 } : { left: 0 }) }}>
               {countdown.text}
@@ -2096,18 +2189,28 @@ export default function Chart() {
           )}
           <ChartFooter
             rangeDays={rangeDays}
-            scaleMode={effectiveScaleMode}
-            autoScale={autoScale}
+            scaleMode={footerScaleMode}
+            autoScale={footerAutoScale}
             timezone={chartTimezone}
             exchangeTimezone={symbolInfo?.timezone}
             onRangeChange={applyRangePreset}
             onScaleModeChange={(mode) => {
-              if (comparisonActive) setComparisonScaleMode(mode);
-              else setScaleMode(mode);
+              if (footerIsMainAxis) setMainScaleMode(mode);
+              else {
+                const priceScaleMode = mode === "percent" ? PriceScaleMode.Percentage
+                  : mode === "indexed" ? PriceScaleMode.IndexedTo100
+                    : mode === "log" ? PriceScaleMode.Logarithmic : PriceScaleMode.Normal;
+                chartRef.current?.priceScale(footerTarget.side, footerTarget.paneIndex).applyOptions({ mode: priceScaleMode });
+                setFooterAxis({ ...footerTarget });
+              }
             }}
             onAutoScaleToggle={() => {
-              setScaleLocked(false);
-              setAutoScale((enabled) => !enabled);
+              if (footerIsMainAxis) toggleMainAutoScale();
+              else {
+                const scale = chartRef.current?.priceScale(footerTarget.side, footerTarget.paneIndex);
+                if (scale) scale.setAutoScale(!scale.options().autoScale);
+                setFooterAxis({ ...footerTarget });
+              }
             }}
             onTimezoneChange={handleTimezoneChange}
           />
@@ -2117,7 +2220,7 @@ export default function Chart() {
         <PriceAxisContextMenu
           position={axisMenu}
           mode={menuScaleOptions.mode}
-          autoScale={menuScaleOptions.autoScale}
+          autoScale={axisMenu.paneIndex === 0 && axisMenu.side === mainScaleSide ? autoScale && !scaleLocked : menuScaleOptions.autoScale}
           inverted={menuScaleOptions.invertScale}
           locked={axisMenu.paneIndex === 0 && axisMenu.side === mainScaleSide && scaleLocked}
           seriesOnly={seriesOnlyScale}

@@ -1117,6 +1117,65 @@ header {
   box-shadow: 0 12px 32px #0008;
 }
 .price-axis-menu--submenu-right .price-axis-menu__submenu { right: auto; left: calc(100% - 2px); }
+.price-axis-hover {
+  position: absolute;
+  z-index: 9;
+  display: flex;
+  height: 27px;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  background: #1c202b;
+  pointer-events: none;
+}
+.price-axis-hover button {
+  position: relative;
+  width: 22px;
+  height: 24px;
+  border: 1px solid #434b5a;
+  border-radius: 4px;
+  padding: 0;
+  color: #d1d4dc;
+  background: #20242f;
+  font: 400 14px var(--font-ui);
+  line-height: 22px;
+  cursor: pointer;
+  pointer-events: auto;
+}
+.price-axis-hover button:hover { color: #fff; background: #30394e; }
+.price-axis-hover button[aria-pressed="true"] { color: #fff; background: #214789; border-color: #214789; }
+.price-axis-hover button::before {
+  position: absolute;
+  bottom: calc(100% + 2px);
+  left: 50%;
+  border: 6px solid transparent;
+  border-top-color: #343a49;
+  content: "";
+  opacity: 0;
+  transform: translateX(-50%);
+  visibility: hidden;
+}
+.price-axis-hover button::after {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: -8px;
+  width: max-content;
+  max-width: calc(100vw - 24px);
+  border-radius: 4px;
+  padding: 5px 10px;
+  color: #fff;
+  background: #343a49;
+  box-shadow: 0 2px 5px #0004;
+  content: attr(data-tooltip);
+  font: 500 13px/19px var(--font-ui);
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+  white-space: nowrap;
+}
+.price-axis-hover--left button::after { right: auto; left: -8px; }
+.price-axis-hover button:hover::before,
+.price-axis-hover button:hover::after { opacity: 1; visibility: visible; }
 .price-axis-countdown {
   position: absolute;
   z-index: 140;
