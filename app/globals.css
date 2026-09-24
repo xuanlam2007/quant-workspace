@@ -2309,7 +2309,7 @@ main#chart.chart--tool-active canvas {
   z-index: 100;
   display: flex;
   width: 272px;
-  max-height: min(736px, calc(100vh - 58px));
+  max-height: min(736px, calc(100vh - 100px));
   flex-direction: column;
   overflow-y: auto;
   padding: 7px 0;
