@@ -31,7 +31,7 @@ export function createRealtimeTickBuffer<T>(
       queued = [];
       buffered.forEach((value) => {
         const bucketTime = getBucketTime(value);
-        if (latestHistoryTime === undefined || bucketTime > latestHistoryTime) {
+        if (latestHistoryTime === undefined || bucketTime >= latestHistoryTime) {
           consume(value);
         }
       });

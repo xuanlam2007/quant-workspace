@@ -47,10 +47,10 @@ export function normalizePriceTick(data: RawPriceTick): PriceTick | undefined {
   const price = Number(data.price);
   const volume = Number(data.volume) || 0;
   const rawTime = Number(data.time);
-  if (!symbol || !Number.isFinite(price)) return undefined;
-  const time = Number.isFinite(rawTime) && rawTime > 0
-    ? rawTime < 1e12 ? rawTime * 1000 : rawTime
-    : Date.now();
+  if (!symbol || !Number.isFinite(price) || !Number.isFinite(rawTime) || rawTime <= 0) {
+    return undefined;
+  }
+  const time = rawTime < 1e12 ? rawTime * 1000 : rawTime;
   return { symbol, price, volume, time };
 }
 
