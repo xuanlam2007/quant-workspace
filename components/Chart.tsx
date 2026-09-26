@@ -92,7 +92,7 @@ const DRAWING_HISTORY_VERSION = 1;
 const MAX_DRAWING_HISTORY_STATES = 100;
 const COMPARE_COLORS = ["#ff9800", "#2962ff", "#ab47bc", "#26a69a", "#ef5350"];
 
-function useVisibleCandleOpenAsPercentReference(series: ISeriesApi<"Candlestick">) {
+function installVisibleCandleOpenAsPercentReference(series: ISeriesApi<"Candlestick">) {
   type InternalCandle = { _internal_time: number; _internal_value: number[] };
   type InternalSeries = {
     _internal_firstBar: () => InternalCandle | null;
@@ -638,7 +638,7 @@ export default function Chart() {
       baseLineVisible: false,
       priceFormat: { type: "price", precision: 2, minMove: 0.01 },
     });
-    useVisibleCandleOpenAsPercentReference(series);
+    installVisibleCandleOpenAsPercentReference(series);
     const timelineSeries = chart.addSeries(LineSeries, {
       priceScaleId: "",
       lineVisible: false,
