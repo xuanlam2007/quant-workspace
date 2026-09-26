@@ -1443,6 +1443,10 @@ main#chart.chart--tool-active canvas {
   cursor: crosshair !important;
 }
 
+main#chart.chart--zoom {
+  touch-action: none;
+}
+
 .chart-stage {
   position: relative;
   display: flex;
@@ -1453,6 +1457,14 @@ main#chart.chart--tool-active canvas {
   background: var(--bg);
   border-radius: 4px;
   overflow: hidden;
+}
+
+.chart-zoom-selection {
+  position: absolute;
+  z-index: 7;
+  pointer-events: none;
+  border: 1px solid #2962ff;
+  background: rgba(41, 98, 255, 0.16);
 }
 
 .chart-data-error {

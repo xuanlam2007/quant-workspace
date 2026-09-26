@@ -15,6 +15,8 @@ type ToolbarIconName = VndirectToolbarIconName;
 
 interface DrawingToolbarProps {
   activeTool: LineToolType | null;
+  zoomActive: boolean;
+  canUndoZoom: boolean;
   eraserMode: boolean;
   locked: boolean;
   magnetMode: MagnetMode;
@@ -27,7 +29,8 @@ interface DrawingToolbarProps {
   onToggleStayInDrawingMode: () => void;
   onToggleLock: () => void;
   onToggleVisibility: () => void;
-  onZoomIn: () => void;
+  onToggleZoom: () => void;
+  onUndoZoom: () => void;
   onClear: () => void;
   onClearIndicators: () => void;
   onClearAll: () => void;
@@ -53,6 +56,8 @@ function MenuCaret() {
 
 export function DrawingToolbar({
   activeTool,
+  zoomActive,
+  canUndoZoom,
   eraserMode,
   locked,
   magnetMode,
@@ -65,7 +70,8 @@ export function DrawingToolbar({
   onToggleStayInDrawingMode,
   onToggleLock,
   onToggleVisibility,
-  onZoomIn,
+  onToggleZoom,
+  onUndoZoom,
   onClear,
   onClearIndicators,
   onClearAll,
@@ -221,9 +227,14 @@ export function DrawingToolbar({
       <button className="toolbar-button" data-tooltip="Đo biên độ giá" data-tooltip-placement="right" aria-label="Đo biên độ giá" onClick={() => selectTool("PriceRange")} disabled={locked}>
         <ToolbarIcon name="measure" />
       </button>
-      <button className="toolbar-button" data-tooltip="Phóng to" data-tooltip-placement="right" aria-label="Phóng to" onClick={onZoomIn}>
+      <button className={`toolbar-button ${zoomActive ? "toolbar-button--active" : ""}`} tabIndex={-1} aria-pressed={zoomActive} data-tooltip="Chọn vùng để phóng to" data-tooltip-placement="right" aria-label="Chọn vùng để phóng to" onClick={onToggleZoom}>
         <ToolbarIcon name="zoom" />
       </button>
+      {canUndoZoom && (
+        <button className="toolbar-button" tabIndex={-1} data-tooltip="Trở về khung nhìn trước" data-tooltip-placement="right" aria-label="Trở về khung nhìn trước" onClick={onUndoZoom}>
+          <ToolbarIcon name="zoomOut" />
+        </button>
+      )}
       <span className="toolbar-divider" />
       <button
         className={`toolbar-button ${magnetMode > 0 ? "toolbar-button--active" : ""}`}

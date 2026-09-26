@@ -31,6 +31,13 @@ import {
 import { connectPriceFeed, type ConnStatus, type PriceTick } from "@/lib/dchart-socket";
 import { bucketStart, mergeTick } from "@/lib/bar-builder";
 import { createRealtimeTickBuffer } from "@/lib/realtime-tick-buffer";
+import {
+  bundlePriceWheelRange,
+  bundleTimeWheelRange,
+  bundleWheelDelta,
+  selectedZoomRange,
+  type WheelState,
+} from "./chart/core/chart-zoom";
 import { ChartFooter } from "./chart/layout/ChartFooter";
 import { PriceAxisContextMenu, type PriceAxisMenuAction, type PriceAxisMenuState } from "./chart/layout/PriceAxisContextMenu";
 import { ChartHeader } from "./chart/layout/ChartHeader";
@@ -225,6 +232,26 @@ export default function Chart() {
     active: boolean;
     captureTarget: Element;
   } | null>(null);
+  const zoomModeRef = useRef(false);
+  const zoomStartRef = useRef<{
+    pointerId: number;
+    x: number;
+    y: number;
+    plotLeft: number;
+    plotRight: number;
+    plotHeight: number;
+  } | null>(null);
+  const zoomHistoryRef = useRef<{
+    leftOffset: number;
+    rightOffset: number;
+    barSpacing: number;
+    priceRange: { from: number; to: number } | null;
+    autoScale: boolean;
+    followLatest: boolean;
+  }[]>([]);
+  const followLatestRef = useRef(true);
+  const viewportInteractionRef = useRef(0);
+  const historyLoadGenerationRef = useRef(0);
 
   const [symbol, setSymbol] = useState(DEFAULT_SYMBOL);
   const [compareSymbols, setCompareSymbols] = useState<string[]>([]);
@@ -263,6 +290,9 @@ export default function Chart() {
   const [hoverAxis, setHoverAxis] = useState<{ side: "left" | "right"; paneIndex: number; left: number; top: number; width: number } | null>(null);
   const [footerAxis, setFooterAxis] = useState<{ side: "left" | "right"; paneIndex: number } | null>(null);
   const [autoScale, setAutoScale] = useState(true);
+  const [zoomMode, setZoomMode] = useState(false);
+  const [zoomHistoryCount, setZoomHistoryCount] = useState(0);
+  const [zoomSelection, setZoomSelection] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
   const [indicatorMenuOpen, setIndicatorMenuOpen] = useState(false);
   const [indicatorSearch, setIndicatorSearch] = useState("");
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -290,6 +320,7 @@ export default function Chart() {
   mainScaleSideRef.current = mainScaleSide;
   indicatorScaleSidesRef.current = indicatorScaleSides;
   scaleLockedRef.current = scaleLocked;
+  zoomModeRef.current = zoomMode;
   axisLabelsRef.current = axisLabels;
   axisLinesRef.current = axisLines;
   seriesOnlyRef.current = seriesOnlyScale;
@@ -552,11 +583,11 @@ export default function Chart() {
         secondsVisible: false,
         borderColor: "#262b38",
         barSpacing: 14,
-        minBarSpacing: 6,
+        minBarSpacing: 0.5,
         rightOffset: 6,
         fixRightEdge: false,
         lockVisibleTimeRangeOnResize: true,
-        rightBarStaysOnScroll: false,
+        rightBarStaysOnScroll: true,
         tickMarkFormatter: (time: Time) => formatTick(
           time,
           resolutionRef.current,
@@ -564,13 +595,13 @@ export default function Chart() {
         ),
       },
       handleScroll: {
-        mouseWheel: true,
+        mouseWheel: false,
         pressedMouseMove: true,
         horzTouchDrag: true,
         vertTouchDrag: true,
       },
       handleScale: {
-        mouseWheel: true,
+        mouseWheel: false,
         pinch: true,
         axisPressedMouseMove: { time: true, price: true },
         axisDoubleClickReset: { time: true, price: true },
@@ -695,6 +726,121 @@ export default function Chart() {
     chart.timeScale().subscribeVisibleLogicalRangeChange(refreshDrawingOverlays);
     lineToolsRef.current = lineTools;
 
+    const onZoomPointerDown = (event: PointerEvent) => {
+      if (!zoomModeRef.current || event.button !== 0) return;
+      const element = containerRef.current;
+      if (!element) return;
+      const rect = element.getBoundingClientRect();
+      const plotLeft = chart.priceScale("left").width();
+      const plotRight = rect.width - chart.priceScale("right").width();
+      const plotHeight = chart.paneSize().height;
+      const x = event.clientX - rect.left;
+      const y = event.clientY - rect.top;
+      if (x < plotLeft || x > plotRight || y < 0 || y > plotHeight) return;
+      event.preventDefault();
+      event.stopPropagation();
+      zoomStartRef.current = { pointerId: event.pointerId, x, y, plotLeft, plotRight, plotHeight };
+      element.setPointerCapture(event.pointerId);
+      setZoomSelection({ left: x, top: y + element.offsetTop, width: 0, height: 0 });
+    };
+
+    const onZoomPointerMove = (event: PointerEvent) => {
+      const start = zoomStartRef.current;
+      if (!start || start.pointerId !== event.pointerId) return;
+      const element = containerRef.current;
+      if (!element) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const rect = element.getBoundingClientRect();
+      const x = Math.max(start.plotLeft, Math.min(start.plotRight, event.clientX - rect.left));
+      const y = Math.max(0, Math.min(start.plotHeight, event.clientY - rect.top));
+      setZoomSelection({
+        left: Math.min(start.x, x),
+        top: Math.min(start.y, y) + element.offsetTop,
+        width: Math.abs(x - start.x),
+        height: Math.abs(y - start.y),
+      });
+    };
+
+    const onZoomPointerEnd = (event: PointerEvent) => {
+      const start = zoomStartRef.current;
+      if (!start || start.pointerId !== event.pointerId) return;
+      const element = containerRef.current;
+      if (!element) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (element.hasPointerCapture(event.pointerId)) element.releasePointerCapture(event.pointerId);
+      zoomStartRef.current = null;
+      setZoomSelection(null);
+      zoomModeRef.current = false;
+      setZoomMode(false);
+      chart.applyOptions({ handleScroll: { pressedMouseMove: true } });
+      if (event.type === "pointercancel") return;
+
+      const rect = element.getBoundingClientRect();
+      const endX = Math.max(start.plotLeft, Math.min(start.plotRight, event.clientX - rect.left));
+      const endY = Math.max(0, Math.min(start.plotHeight, event.clientY - rect.top));
+      if (Math.abs(endX - start.x) < 4) return;
+      const timeScale = chart.timeScale();
+      const first = timeScale.coordinateToLogical(start.x - start.plotLeft);
+      const last = timeScale.coordinateToLogical(endX - start.plotLeft);
+      const selectedTime = first === null || last === null
+        ? null
+        : selectedZoomRange(Math.round(first), Math.round(last), 1);
+      const previousTime = timeScale.getVisibleLogicalRange();
+      if (!selectedTime || !previousTime) return;
+      const targetTime = { from: selectedTime.from - 0.5, to: selectedTime.to + 0.5 };
+
+      const priceScale = chart.priceScale(mainScaleSideRef.current);
+      const previousPrice = priceScale.getVisibleRange();
+      const firstPrice = series.coordinateToPrice(start.y);
+      const lastPrice = series.coordinateToPrice(endY);
+      const selectedPrice = Math.abs(endY - start.y) >= 4 && firstPrice !== null && lastPrice !== null
+        ? selectedZoomRange(firstPrice, lastPrice, 1e-8)
+        : null;
+      zoomHistoryRef.current.push({
+        leftOffset: previousTime.from - targetTime.from,
+        rightOffset: previousTime.to - targetTime.to,
+        barSpacing: chart.paneSize().width / (previousTime.to - previousTime.from),
+        priceRange: previousPrice,
+        autoScale: priceScale.options().autoScale,
+        followLatest: followLatestRef.current,
+      });
+      setZoomHistoryCount(zoomHistoryRef.current.length);
+      followLatestRef.current = false;
+      viewportInteractionRef.current += 1;
+      timeScale.setVisibleLogicalRange(targetTime);
+      if (selectedPrice) {
+        autoScaleRef.current = false;
+        setAutoScale(false);
+        priceScale.setVisibleRange(selectedPrice);
+      }
+    };
+
+    const cancelZoomOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || !zoomModeRef.current) return;
+      zoomStartRef.current = null;
+      setZoomSelection(null);
+      zoomModeRef.current = false;
+      setZoomMode(false);
+      chart.applyOptions({ handleScroll: { pressedMouseMove: true } });
+    };
+
+    let userGesture: { pointerId: number; x: number; y: number } | null = null;
+    const onUserPointerDown = (event: PointerEvent) => {
+      if (event.button === 0 && !zoomModeRef.current) {
+        userGesture = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
+      }
+    };
+    const onUserPointerMove = (event: PointerEvent) => {
+      if (!userGesture || userGesture.pointerId !== event.pointerId || !event.buttons) return;
+      if (Math.hypot(event.clientX - userGesture.x, event.clientY - userGesture.y) < 4) return;
+      userGesture = null;
+      followLatestRef.current = false;
+      viewportInteractionRef.current += 1;
+    };
+    const onUserPointerEnd = () => { userGesture = null; };
+
     const onPointerDown = (event: PointerEvent) => {
       if (event.button !== 0) return;
       const selectedTools = lineToolsRef.current?.getSelectedLineTools();
@@ -748,9 +894,11 @@ export default function Chart() {
       if (gesture.captureTarget.hasPointerCapture(event.pointerId)) gesture.captureTarget.releasePointerCapture(event.pointerId);
     };
 
-    const onAxisWheel = (event: WheelEvent) => {
+    let plotWheelState: WheelState = { totalX: 0, totalY: 0, lastTime: 0 };
+    let axisWheelState: WheelState = { totalX: 0, totalY: 0, lastTime: 0 };
+    const onChartWheel = (event: WheelEvent) => {
       const element = containerRef.current;
-      if (!element || event.deltaY === 0) return;
+      if (!element) return;
 
       const rect = element.getBoundingClientRect();
       const pointerX = event.clientX - rect.left;
@@ -761,30 +909,51 @@ export default function Chart() {
         : pointerX >= rect.width - rightScale.width()
           ? rightScale
           : null;
-      if (!scale) return;
-      if (scale === chart.priceScale(mainScaleSideRef.current) && scaleLockedRef.current) {
+      if (scale) {
+        const wheel = bundleWheelDelta(event.deltaX, event.deltaY, event.deltaMode, event.timeStamp, axisWheelState);
+        axisWheelState = wheel.state;
+        if (wheel.y === 0) return;
         event.preventDefault();
         event.stopPropagation();
+        if (scale === chart.priceScale(mainScaleSideRef.current) && scaleLockedRef.current) return;
+        if ([PriceScaleMode.Percentage, PriceScaleMode.IndexedTo100].includes(scale.options().mode)) return;
+        const range = scale.getVisibleRange();
+        if (!range) return;
+        const nextRange = bundlePriceWheelRange(range, chart.paneSize().height, event.clientY - rect.top, wheel.y);
+        if (!nextRange) return;
+        followLatestRef.current = false;
+        viewportInteractionRef.current += 1;
+        scale.setVisibleRange(nextRange);
+        refreshDrawingOverlays();
+        if (scale === chart.priceScale(mainScaleSideRef.current)) {
+          autoScaleRef.current = false;
+          setAutoScale(false);
+        }
         return;
       }
 
-      const range = scale.getVisibleRange();
+      const wheel = bundleWheelDelta(event.deltaX, event.deltaY, event.deltaMode, event.timeStamp, plotWheelState);
+      plotWheelState = wheel.state;
+      if (wheel.x === 0 && wheel.y === 0) return;
+      const timeScale = chart.timeScale();
+      const range = timeScale.getVisibleLogicalRange();
       if (!range) return;
-      const height = Math.max(1, chart.paneSize().height);
-      const pointerY = Math.max(0, Math.min(height, event.clientY - rect.top));
-      const startPoint = height - pointerY;
-      const targetPoint = Math.max(0, startPoint - 15 * Math.sign(event.deltaY));
-      const padding = (height - 1) * 0.2;
-      const scaleFactor = Math.max((startPoint + padding) / (targetPoint + padding), 0.1);
-      const center = (Number(range.from) + Number(range.to)) / 2;
-      const halfRange = ((Number(range.to) - Number(range.from)) * scaleFactor) / 2;
-
-      scale.setVisibleRange({ from: center - halfRange, to: center + halfRange });
-      refreshDrawingOverlays();
-      if (scale === chart.priceScale(mainScaleSideRef.current)) {
-        autoScaleRef.current = false;
-        setAutoScale(false);
-      }
+      const plotWidth = rect.width - leftScale.width() - rightScale.width();
+      if (plotWidth <= 0) return;
+      const pointerFraction = (pointerX - leftScale.width()) / plotWidth;
+      const zoomedRange = wheel.y !== 0
+        ? bundleTimeWheelRange(range, wheel.y, event.ctrlKey || event.metaKey ? pointerFraction : undefined)
+        : range;
+      if (!zoomedRange) return;
+      const spacing = plotWidth / (zoomedRange.to - zoomedRange.from);
+      const scrollBars = 80 * wheel.x / spacing;
+      const nextRange = {
+        from: zoomedRange.from + scrollBars,
+        to: zoomedRange.to + scrollBars,
+      };
+      followLatestRef.current = false;
+      viewportInteractionRef.current += 1;
+      timeScale.setVisibleLogicalRange(nextRange);
       event.preventDefault();
       event.stopPropagation();
     };
@@ -795,7 +964,16 @@ export default function Chart() {
     element.addEventListener("pointermove", onPointerMove);
     element.addEventListener("pointerup", finishPan);
     element.addEventListener("pointercancel", finishPan);
-    element.addEventListener("wheel", onAxisWheel, { capture: true, passive: false });
+    element.addEventListener("pointerdown", onZoomPointerDown, true);
+    element.addEventListener("pointermove", onZoomPointerMove, true);
+    element.addEventListener("pointerup", onZoomPointerEnd, true);
+    element.addEventListener("pointercancel", onZoomPointerEnd, true);
+    element.addEventListener("pointerdown", onUserPointerDown, true);
+    element.addEventListener("pointermove", onUserPointerMove, true);
+    element.addEventListener("pointerup", onUserPointerEnd, true);
+    element.addEventListener("pointercancel", onUserPointerEnd, true);
+    element.addEventListener("wheel", onChartWheel, { capture: true, passive: false });
+    window.addEventListener("keydown", cancelZoomOnEscape);
 
     // Đồng bộ kích thước biểu đồ và plugin ngay từ lần bố trí đầu tiên
     const syncChartSize = () => {
@@ -804,7 +982,12 @@ export default function Chart() {
       const width = Math.round(element.clientWidth);
       const height = Math.round(element.clientHeight);
       if (width > 0 && height > 0) {
+        const visibleTime = chart.timeScale().getVisibleRange();
+        const manualScale = !autoScaleRef.current ? chart.priceScale(mainScaleSideRef.current) : null;
+        const visiblePrice = manualScale?.getVisibleRange();
         chart.resize(width, height);
+        if (visibleTime) chart.timeScale().setVisibleRange(visibleTime);
+        if (visiblePrice) manualScale?.setVisibleRange(visiblePrice);
         refreshDrawingOverlays();
       }
     };
@@ -820,7 +1003,16 @@ export default function Chart() {
       element.removeEventListener("pointermove", onPointerMove);
       element.removeEventListener("pointerup", finishPan);
       element.removeEventListener("pointercancel", finishPan);
-      element.removeEventListener("wheel", onAxisWheel, true);
+      element.removeEventListener("pointerdown", onZoomPointerDown, true);
+      element.removeEventListener("pointermove", onZoomPointerMove, true);
+      element.removeEventListener("pointerup", onZoomPointerEnd, true);
+      element.removeEventListener("pointercancel", onZoomPointerEnd, true);
+      element.removeEventListener("pointerdown", onUserPointerDown, true);
+      element.removeEventListener("pointermove", onUserPointerMove, true);
+      element.removeEventListener("pointerup", onUserPointerEnd, true);
+      element.removeEventListener("pointercancel", onUserPointerEnd, true);
+      element.removeEventListener("wheel", onChartWheel, true);
+      window.removeEventListener("keydown", cancelZoomOnEscape);
       resizeObserver.disconnect();
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(refreshDrawingOverlays);
       lineTools.destroy();
@@ -850,6 +1042,12 @@ export default function Chart() {
     const activePriceFormat = symbolPriceFormat(symbolInfo);
 
     let cancelled = false;
+    const loadGeneration = ++historyLoadGenerationRef.current;
+    const interactionAtLoad = viewportInteractionRef.current;
+    followLatestRef.current = true;
+    autoScaleRef.current = true;
+    setAutoScale(true);
+    setScaleLocked(false);
     let loadingOlderHistory = false;
     let olderHistoryExhausted = false;
     const historyAbortController = new AbortController();
@@ -861,6 +1059,12 @@ export default function Chart() {
     );
     currentBarRef.current = undefined;
     previousMainTimeRef.current = undefined;
+    zoomHistoryRef.current = [];
+    setZoomHistoryCount(0);
+    zoomStartRef.current = null;
+    setZoomSelection(null);
+    zoomModeRef.current = false;
+    setZoomMode(false);
     drawingKeyRef.current = drawingStorageKey(symbol, resolution);
     hiddenDrawingsRef.current = null;
     setDrawingsHidden(false);
@@ -938,8 +1142,6 @@ export default function Chart() {
         loadingOlderHistory = true;
         const pageTo = earliestHistoryTime - 1;
         const pageFrom = pageTo - historyWindowSeconds;
-        const visibleRange = chart.timeScale().getVisibleRange();
-
         void fetchHistory(symbol, resolution, pageFrom, pageTo, historyAbortController.signal)
           .then((olderBars) => {
             if (cancelled) return;
@@ -957,6 +1159,10 @@ export default function Chart() {
               olderHistoryExhausted = true;
               return;
             }
+
+            const visibleRange = chart.timeScale().getVisibleRange();
+            const priceScale = chart.priceScale(mainScaleSideRef.current);
+            const priceRange = !autoScaleRef.current ? priceScale.getVisibleRange() : null;
 
             barsByTimeRef.current = new Map(mergedBars.map((bar) => [Number(bar.time), bar]));
             previousMainTimeRef.current = mergedBars.at(-2) ? Number(mergedBars.at(-2)?.time) : undefined;
@@ -981,6 +1187,7 @@ export default function Chart() {
             ));
             updateStudySeries(mergedBars);
             if (visibleRange) chart.timeScale().setVisibleRange(visibleRange);
+            if (priceRange) priceScale.setVisibleRange(priceRange);
             setDataError(undefined);
           })
           .catch((error: unknown) => {
@@ -993,37 +1200,33 @@ export default function Chart() {
       };
       const visibleBars = DEFAULT_VISIBLE_BARS;
 
-      // Gọi lại sau khi kích thước biểu đồ ổn định để tránh nến bị nén
       const focusLatestBars = () => {
-        if (cancelled) return;
+        if (cancelled || chartBars.length === 0) return;
 
         if (rangeDays !== undefined) {
-          // Chế độ đặt sẵn hiển thị toàn bộ dữ liệu đã tải
-          chart.timeScale().fitContent();
+          chart.timeScale().setVisibleLogicalRange({ from: 0, to: chartBars.length + 5 });
         } else if (chartBars.length > visibleBars) {
           chart.timeScale().setVisibleLogicalRange({
             from: Math.max(0, chartBars.length - visibleBars),
             to: chartBars.length + 6,
           });
         } else {
-          chart.timeScale().fitContent();
+          chart.timeScale().setVisibleLogicalRange({ from: 0, to: chartBars.length + 5 });
         }
 
         chart.priceScale(mainScaleSideRef.current).setAutoScale(true);
       };
 
-      focusLatestBars();
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          focusLatestBars();
-          if (!autoScaleRef.current) {
-            const priceScale = chart.priceScale(mainScaleSideRef.current);
-            const priceRange = priceScale.getVisibleRange();
-            if (priceRange) priceScale.setVisibleRange(priceRange);
-            else priceScale.setAutoScale(false);
-          }
-        });
-      });
+      const initializeViewport = () => {
+        if (cancelled || historyLoadGenerationRef.current !== loadGeneration
+          || viewportInteractionRef.current !== interactionAtLoad) return;
+        if (chart.paneSize().width === 0) {
+          requestAnimationFrame(initializeViewport);
+          return;
+        }
+        focusLatestBars();
+      };
+      requestAnimationFrame(initializeViewport);
       const savedDrawings = localStorage.getItem(drawingKeyRef.current);
       const normalizedDrawings = savedDrawings
         ? normalizeDrawingState(savedDrawings)
@@ -1097,6 +1300,14 @@ export default function Chart() {
     const renderRealtimeBar = (bar: Bar) => {
       const bucketNumber = Number(bar.time);
       const isNewRenderedBucket = lastRenderedRealtimeBucketRef.current !== bucketNumber;
+      const activeChart = chartRef.current;
+      const timeScale = activeChart?.timeScale();
+      const visibleLogical = isNewRenderedBucket ? timeScale?.getVisibleLogicalRange() : null;
+      const visibleTime = isNewRenderedBucket ? timeScale?.getVisibleRange() : null;
+      const manualPriceScale = activeChart && !autoScaleRef.current
+        ? activeChart.priceScale(mainScaleSideRef.current)
+        : null;
+      const visiblePrice = manualPriceScale?.getVisibleRange();
       if (isNewRenderedBucket) timelineSeriesRef.current?.setData(futureTimelinePoints(bucketNumber, resolution));
 
       seriesRef.current?.update(bar);
@@ -1125,6 +1336,15 @@ export default function Chart() {
       if (priceIndicatorSeriesRef.current.size > 0 || macdSeriesRef.current || rsiSeriesRef.current) {
         updateStudySeries(allBars);
       }
+
+      if (isNewRenderedBucket && timeScale) {
+        if (followLatestRef.current && visibleLogical) {
+          timeScale.setVisibleLogicalRange({ from: visibleLogical.from + 1, to: visibleLogical.to + 1 });
+        } else if (visibleTime) {
+          timeScale.setVisibleRange(visibleTime);
+        }
+      }
+      if (visiblePrice) manualPriceScale?.setVisibleRange(visiblePrice);
 
       lastRenderedRealtimeBucketRef.current = bucketNumber;
       setLastPrice(bar.close.toFixed(activePriceFormat.precision));
@@ -1391,6 +1611,11 @@ export default function Chart() {
     const chart = chartRef.current;
     if (!chart) return;
     const priceScaleId = mainScaleSide;
+    const scaleSideChanged = previousMainScaleSideRef.current !== mainScaleSide;
+    const visibleTime = scaleSideChanged ? chart.timeScale().getVisibleRange() : null;
+    const previousPriceRange = scaleSideChanged && !autoScale
+      ? chart.priceScale(previousMainScaleSideRef.current).getVisibleRange()
+      : null;
     const mode = effectiveScaleMode === "percent"
       ? PriceScaleMode.Percentage
       : effectiveScaleMode === "indexed"
@@ -1437,9 +1662,11 @@ export default function Chart() {
       mode,
     });
     priceScale.setAutoScale(autoScale && !scaleLocked);
-    if (previousMainScaleSideRef.current !== mainScaleSide) {
+    if (scaleSideChanged) {
       chart.priceScale(previousMainScaleSideRef.current).applyOptions({ mode: PriceScaleMode.Normal, invertScale: false });
       previousMainScaleSideRef.current = mainScaleSide;
+      if (visibleTime) chart.timeScale().setVisibleRange(visibleTime);
+      if (previousPriceRange) priceScale.setVisibleRange(previousPriceRange);
     }
   }, [activeStudies, autoScale, comparisonActive, effectiveScaleMode, mainScaleSide, scaleLocked, secondaryLeftVisible, secondaryRightVisible]);
 
@@ -1785,6 +2012,10 @@ export default function Chart() {
 
   const startDrawing = (type: LineToolType) => {
     if (drawingsLocked || !lineToolsRef.current) return;
+    zoomModeRef.current = false;
+    zoomStartRef.current = null;
+    setZoomMode(false);
+    setZoomSelection(null);
     if (drawingsHidden && hiddenDrawingsRef.current) {
       lineToolsRef.current.importLineTools(hiddenDrawingsRef.current);
       hiddenDrawingsRef.current = null;
@@ -1800,6 +2031,10 @@ export default function Chart() {
 
   const selectCursor = () => {
     const lineTools = lineToolsRef.current;
+    zoomModeRef.current = false;
+    zoomStartRef.current = null;
+    setZoomMode(false);
+    setZoomSelection(null);
     drawingGestureRef.current = false;
     activeDrawingToolRef.current = null;
     eraserModeRef.current = false;
@@ -1847,13 +2082,40 @@ export default function Chart() {
     setDrawingsHidden(true);
   };
 
-  const zoomInChart = () => {
-    const timeScale = chartRef.current?.timeScale();
-    const range = timeScale?.getVisibleLogicalRange();
-    if (!timeScale || !range) return;
-    const center = (range.from + range.to) / 2;
-    const halfSpan = (range.to - range.from) * 0.4;
-    timeScale.setVisibleLogicalRange({ from: center - halfSpan, to: center + halfSpan });
+  const toggleZoomMode = () => {
+    const active = zoomModeRef.current;
+    selectCursor();
+    if (active) return;
+    zoomModeRef.current = true;
+    setZoomMode(true);
+    chartRef.current?.applyOptions({ handleScroll: { pressedMouseMove: false } });
+  };
+
+  const undoZoom = () => {
+    const previous = zoomHistoryRef.current.pop();
+    const chart = chartRef.current;
+    if (!previous || !chart) return;
+    const timeScale = chart.timeScale();
+    const current = timeScale.getVisibleLogicalRange();
+    if (current) {
+      timeScale.applyOptions({ barSpacing: previous.barSpacing });
+      timeScale.setVisibleLogicalRange({
+        from: current.from + previous.leftOffset,
+        to: current.to + previous.rightOffset,
+      });
+    }
+    const priceScale = chart.priceScale(mainScaleSideRef.current);
+    followLatestRef.current = previous.followLatest;
+    if (previous.autoScale) {
+      autoScaleRef.current = true;
+      setAutoScale(true);
+      priceScale.setAutoScale(true);
+    } else if (previous.priceRange) {
+      autoScaleRef.current = false;
+      setAutoScale(false);
+      priceScale.setVisibleRange(previous.priceRange);
+    }
+    setZoomHistoryCount(zoomHistoryRef.current.length);
   };
 
   const clearDrawings = () => {
@@ -2084,6 +2346,8 @@ export default function Chart() {
       <div className="chart-shell">
         <DrawingToolbar
           activeTool={activeDrawingTool}
+          zoomActive={zoomMode}
+          canUndoZoom={zoomHistoryCount > 0}
           eraserMode={eraserMode}
           locked={drawingsLocked}
           magnetMode={magnetMode}
@@ -2096,7 +2360,8 @@ export default function Chart() {
           onToggleStayInDrawingMode={() => setStayInDrawingMode((enabled) => !enabled)}
           onToggleLock={toggleDrawingLock}
           onToggleVisibility={toggleDrawingsVisibility}
-          onZoomIn={zoomInChart}
+          onToggleZoom={toggleZoomMode}
+          onUndoZoom={undoZoom}
           onClear={clearDrawings}
           onClearIndicators={clearIndicators}
           onClearAll={clearChartObjects}
@@ -2121,9 +2386,12 @@ export default function Chart() {
           <main
             id="chart"
             ref={containerRef}
-            className={activeDrawingTool || eraserMode ? "chart--tool-active" : "chart--pan"}
+            className={zoomMode ? "chart--tool-active chart--zoom" : activeDrawingTool || eraserMode ? "chart--tool-active" : "chart--pan"}
             onContextMenuCapture={onAxisContextMenu}
           />
+          {zoomSelection && (
+            <div className="chart-zoom-selection" style={zoomSelection} aria-hidden="true" />
+          )}
           {hoverAxis && hoveredScaleOptions && (
             <div
               className={`price-axis-hover price-axis-hover--${hoverAxis.side}`}
