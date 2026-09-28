@@ -1338,7 +1338,11 @@ export default function Chart() {
       }
 
       if (isNewRenderedBucket && timeScale) {
-        if (followLatestRef.current && visibleLogical) {
+        const previousBarIndex = barsByTimeRef.current.size - 2;
+        const previousBarVisible = visibleLogical != null
+          && previousBarIndex >= visibleLogical.from
+          && previousBarIndex <= visibleLogical.to;
+        if (visibleLogical && (followLatestRef.current || previousBarVisible)) {
           timeScale.setVisibleLogicalRange({ from: visibleLogical.from + 1, to: visibleLogical.to + 1 });
         } else if (visibleTime) {
           timeScale.setVisibleRange(visibleTime);
