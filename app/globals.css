@@ -752,7 +752,8 @@ header {
 
 .compare-symbol-modal__row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 170px 38px;
+  grid-template-columns: minmax(0, 1fr) 170px;
+  column-gap: 12px;
   align-items: center;
   width: 100%;
   min-height: 64px;
@@ -765,6 +766,10 @@ header {
   font-family: var(--font-ui);
   text-align: left;
   position: relative;
+}
+
+.compare-symbol-modal__row--with-check {
+  grid-template-columns: minmax(0, 1fr) 170px 34px;
 }
 
 .compare-symbol-modal__row:hover {

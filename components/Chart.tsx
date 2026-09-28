@@ -1617,9 +1617,6 @@ export default function Chart() {
     const priceScaleId = mainScaleSide;
     const scaleSideChanged = previousMainScaleSideRef.current !== mainScaleSide;
     const visibleTime = scaleSideChanged ? chart.timeScale().getVisibleRange() : null;
-    const previousPriceRange = scaleSideChanged && !autoScale
-      ? chart.priceScale(previousMainScaleSideRef.current).getVisibleRange()
-      : null;
     const mode = effectiveScaleMode === "percent"
       ? PriceScaleMode.Percentage
       : effectiveScaleMode === "indexed"
@@ -1627,6 +1624,10 @@ export default function Chart() {
         : effectiveScaleMode === "log"
         ? PriceScaleMode.Logarithmic
         : PriceScaleMode.Normal;
+    const modeChanged = chart.priceScale(previousMainScaleSideRef.current).options().mode !== mode;
+    const previousPriceRange = scaleSideChanged && !modeChanged && !autoScale
+      ? chart.priceScale(previousMainScaleSideRef.current).getVisibleRange()
+      : null;
 
     seriesRef.current?.applyOptions({
       priceScaleId,
@@ -1666,6 +1667,12 @@ export default function Chart() {
       mode,
     });
     priceScale.setAutoScale(autoScale && !scaleLocked);
+    if (modeChanged) {
+      autoScaleRef.current = true;
+      setAutoScale(true);
+      setScaleLocked(false);
+      priceScale.setAutoScale(true);
+    }
     if (scaleSideChanged) {
       chart.priceScale(previousMainScaleSideRef.current).applyOptions({ mode: PriceScaleMode.Normal, invertScale: false });
       previousMainScaleSideRef.current = mainScaleSide;
@@ -2321,6 +2328,7 @@ export default function Chart() {
         }}
         onCompareSymbolAdd={(nextSymbol) => {
           if (nextSymbol !== symbol) {
+            if (compareSymbols.length === 0) setComparisonScaleMode(null);
             setCompareSymbols((current) => current.includes(nextSymbol)
               ? current
               : [...current, nextSymbol]);

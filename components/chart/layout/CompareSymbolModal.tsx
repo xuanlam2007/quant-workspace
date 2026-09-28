@@ -70,7 +70,7 @@ function SymbolRow({
 }) {
   return (
     <div
-      className={`compare-symbol-modal__row${showActions ? " compare-symbol-modal__row--actions" : ""}${selected ? " compare-symbol-modal__row--selected" : ""}`}
+      className={`compare-symbol-modal__row${showCheck ? " compare-symbol-modal__row--with-check" : ""}${showActions ? " compare-symbol-modal__row--actions" : ""}${selected ? " compare-symbol-modal__row--selected" : ""}`}
       role="button"
       onClick={onClick}
     >
@@ -91,7 +91,7 @@ function SymbolRow({
       )}
       {showActions && (
         <span className="compare-symbol-modal__actions" onClick={(event) => event.stopPropagation()}>
-          <button type="button" tabIndex={-1} className="compare-symbol-modal__action">Cùng % quy mô</button>
+          <button type="button" tabIndex={-1} className="compare-symbol-modal__action" onClick={onClick}>Cùng % quy mô</button>
           <button type="button" tabIndex={-1} className="compare-symbol-modal__action">Khung giá mới</button>
           <button type="button" tabIndex={-1} className="compare-symbol-modal__action">Ngăn mới</button>
         </span>
