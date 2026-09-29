@@ -10,7 +10,7 @@ export function drawingStorageKey(symbol: string, resolution: string) {
 }
 
 export function candleColor(bar: Bar) {
-  return bar.close > bar.open ? "#54BA88" : "#EB4D5C";
+  return bar.close >= bar.open ? "#54BA88" : "#EB4D5C";
 }
 
 export function volumeColor(bar: Bar) {
@@ -18,26 +18,8 @@ export function volumeColor(bar: Bar) {
   return isGrowing ? "rgba(83, 185, 135, 0.4)" : "rgba(235, 77, 92, 0.4)";
 }
 
-export function alignOverlayToMainBars(
-  mainBars: Bar[],
-  comparison: { time: Bar["time"]; value: number }[],
-) {
-  const aligned: { time: Bar["time"]; value: number }[] = [];
-  let compareIndex = 0;
-  let latestValue: number | undefined;
-
-  for (const bar of mainBars) {
-    const previousCompareIndex = compareIndex;
-    while (compareIndex < comparison.length && Number(comparison[compareIndex].time) <= Number(bar.time)) {
-      latestValue = comparison[compareIndex].value;
-      compareIndex += 1;
-    }
-    if (compareIndex > previousCompareIndex && latestValue !== undefined) {
-      aligned.push({ time: bar.time, value: latestValue });
-    }
-  }
-
-  return aligned;
+export function comparisonSeriesPoints(bars: Bar[]) {
+  return bars.map((bar) => ({ time: bar.time, value: bar.close }));
 }
 
 export function isTradingSessionTime(
