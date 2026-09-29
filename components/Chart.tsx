@@ -9,6 +9,7 @@ import {
   LineSeries,
   CrosshairMode,
   PriceScaleMode,
+  LineStyle,
   LineType,
   type IChartApi,
   type ISeriesApi,
@@ -41,7 +42,7 @@ import {
 import { ChartFooter } from "./chart/layout/ChartFooter";
 import { PriceAxisContextMenu, type PriceAxisMenuAction, type PriceAxisMenuState } from "./chart/layout/PriceAxisContextMenu";
 import { ChartHeader } from "./chart/layout/ChartHeader";
-import { MarketDataPanel } from "./chart/layout/MarketDataPanel";
+import { MarketDataPanel, type ComparisonQuote } from "./chart/layout/MarketDataPanel";
 import { DrawingToolbar } from "./chart/drawing/DrawingToolbar";
 import { DrawingPropertiesToolbar } from "./chart/drawing/DrawingPropertiesToolbar";
 import { DrawingAxisRangeHighlight } from "./chart/drawing/DrawingAxisRangeHighlight";
@@ -73,9 +74,9 @@ import {
 } from "./chart/config/chart-config";
 import { bollingerData, macdData, priceIndicatorData, rsiData, volumeMa } from "./chart/indicators/chart-indicators";
 import {
-  alignOverlayToMainBars,
   barCloseCountdown,
   candleColor,
+  comparisonSeriesPoints,
   drawingStorageKey,
   formatChartTime,
   futureTimelinePoints,
@@ -90,7 +91,7 @@ import { OutsideDragSelectionGuard } from "./chart/ui/OutsideDragSelectionGuard"
 const tickFormatters = new Map<string, Intl.DateTimeFormat>();
 const DRAWING_HISTORY_VERSION = 1;
 const MAX_DRAWING_HISTORY_STATES = 100;
-const COMPARE_COLORS = ["#ff9800", "#2962ff", "#ab47bc", "#26a69a", "#ef5350"];
+const COMPARE_COLORS = ["#F57C00", "#2962ff", "#ab47bc", "#26a69a", "#ef5350"];
 
 function installVisibleCandleOpenAsPercentReference(series: ISeriesApi<"Candlestick">) {
   type InternalCandle = { _internal_time: number; _internal_value: number[] };
@@ -184,26 +185,11 @@ export default function Chart() {
   const scaleLockedRef = useRef(false);
   const lineToolsRef = useRef<ILineToolsPlugin | null>(null);
   const currentBarRef = useRef<Bar | undefined>(undefined);
-  const previousMainTimeRef = useRef<number | undefined>(undefined);
   const barsByTimeRef = useRef(new Map<number, Bar>());
   const previousCloseByTimeRef = useRef(new Map<number, number>());
   const syncCompareSeries = useCallback(() => {
-    const mainBars = [...barsByTimeRef.current.values()].sort((a, b) => Number(a.time) - Number(b.time));
     compareSeriesRef.current.forEach((series, compareSymbol) => {
-      series.setData(alignOverlayToMainBars(mainBars, compareBarsRef.current.get(compareSymbol) ?? []));
-    });
-  }, []);
-  const updateCompareSeriesAtTime = useCallback((time: Bar["time"]) => {
-    compareSeriesRef.current.forEach((series, compareSymbol) => {
-      const points = compareBarsRef.current.get(compareSymbol);
-      if (!points) return;
-      for (let index = points.length - 1; index >= 0; index -= 1) {
-        if (Number(points[index].time) <= Number(time)) {
-          if (Number(points[index].time) <= (previousMainTimeRef.current ?? -Infinity)) break;
-          series.update({ time, value: points[index].value });
-          break;
-        }
-      }
+      series.setData(compareBarsRef.current.get(compareSymbol) ?? []);
     });
   }, []);
   const feedRef = useRef<ReturnType<typeof connectPriceFeed> | null>(null);
@@ -275,6 +261,8 @@ export default function Chart() {
   textDialogOpenRef.current = textDialogOpen;
   const [drawingViewportVersion, setDrawingViewportVersion] = useState(0);
   const [visibleBar, setVisibleBar] = useState<Bar | undefined>(undefined);
+  const [comparisonQuotes, setComparisonQuotes] = useState<ComparisonQuote[]>([]);
+  const [mainSeriesVisible, setMainSeriesVisible] = useState(true);
   const [rangeDays, setRangeDays] = useState<number | undefined>(undefined);
   const [scaleMode, setScaleMode] = useState<ScaleMode>("normal");
   const [comparisonScaleMode, setComparisonScaleMode] = useState<ScaleMode | null>(null);
@@ -290,6 +278,7 @@ export default function Chart() {
   const [hoverAxis, setHoverAxis] = useState<{ side: "left" | "right"; paneIndex: number; left: number; top: number; width: number } | null>(null);
   const [footerAxis, setFooterAxis] = useState<{ side: "left" | "right"; paneIndex: number } | null>(null);
   const [autoScale, setAutoScale] = useState(true);
+  const copiedPriceRef = useRef<number | null>(null);
   const [zoomMode, setZoomMode] = useState(false);
   const [zoomHistoryCount, setZoomHistoryCount] = useState(0);
   const [zoomSelection, setZoomSelection] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
@@ -1043,6 +1032,7 @@ export default function Chart() {
 
     let cancelled = false;
     const loadGeneration = ++historyLoadGenerationRef.current;
+    let realtimeRenderFrame: number | undefined;
     const interactionAtLoad = viewportInteractionRef.current;
     followLatestRef.current = true;
     autoScaleRef.current = true;
@@ -1058,7 +1048,6 @@ export default function Chart() {
       (tick) => Number(bucketStart(tick.time, resolution)),
     );
     currentBarRef.current = undefined;
-    previousMainTimeRef.current = undefined;
     zoomHistoryRef.current = [];
     setZoomHistoryCount(0);
     zoomStartRef.current = null;
@@ -1094,7 +1083,6 @@ export default function Chart() {
         barsByTimeRef.current.clear();
         previousCloseByTimeRef.current.clear();
         currentBarRef.current = undefined;
-        previousMainTimeRef.current = undefined;
         setVisibleBar(undefined);
         setDataError(error instanceof Error ? error.message : "history fetch failed");
         return;
@@ -1107,7 +1095,6 @@ export default function Chart() {
         activeTimezone,
       ));
       series.setData(chartBars);
-      previousMainTimeRef.current = chartBars.at(-2) ? Number(chartBars.at(-2)?.time) : undefined;
       if (chartBars.length) {
         const color = candleColor(chartBars[chartBars.length - 1]);
         series.applyOptions({ priceLineColor: color });
@@ -1165,7 +1152,6 @@ export default function Chart() {
             const priceRange = !autoScaleRef.current ? priceScale.getVisibleRange() : null;
 
             barsByTimeRef.current = new Map(mergedBars.map((bar) => [Number(bar.time), bar]));
-            previousMainTimeRef.current = mergedBars.at(-2) ? Number(mergedBars.at(-2)?.time) : undefined;
             syncCompareSeries();
             previousCloseByTimeRef.current = new Map(
               mergedBars.slice(1).map((bar, index) => [Number(bar.time), mergedBars[index].close]),
@@ -1302,9 +1288,10 @@ export default function Chart() {
       const isNewRenderedBucket = lastRenderedRealtimeBucketRef.current !== bucketNumber;
       const activeChart = chartRef.current;
       const timeScale = activeChart?.timeScale();
+      const panning = Boolean(panGestureRef.current?.active);
       const visibleLogical = isNewRenderedBucket ? timeScale?.getVisibleLogicalRange() : null;
       const visibleTime = isNewRenderedBucket ? timeScale?.getVisibleRange() : null;
-      const manualPriceScale = activeChart && !autoScaleRef.current
+      const manualPriceScale = isNewRenderedBucket && activeChart && !autoScaleRef.current
         ? activeChart.priceScale(mainScaleSideRef.current)
         : null;
       const visiblePrice = manualPriceScale?.getVisibleRange();
@@ -1312,7 +1299,6 @@ export default function Chart() {
 
       seriesRef.current?.update(bar);
       refreshHighLowRef.current();
-      updateCompareSeriesAtTime(bar.time);
       const color = candleColor(bar);
       if (color !== lastCandleColorRef.current) {
         seriesRef.current?.applyOptions({ priceLineColor: color });
@@ -1342,7 +1328,9 @@ export default function Chart() {
         const previousBarVisible = visibleLogical != null
           && previousBarIndex >= visibleLogical.from
           && previousBarIndex <= visibleLogical.to;
-        if (visibleLogical && (followLatestRef.current || previousBarVisible)) {
+        if (panning && visibleTime) {
+          timeScale.setVisibleRange(visibleTime);
+        } else if (visibleLogical && (followLatestRef.current || previousBarVisible)) {
           timeScale.setVisibleLogicalRange({ from: visibleLogical.from + 1, to: visibleLogical.to + 1 });
         } else if (visibleTime) {
           timeScale.setVisibleRange(visibleTime);
@@ -1356,8 +1344,12 @@ export default function Chart() {
     };
 
     flushRealtimeRef.current = () => {
+      if (realtimeRenderFrame !== undefined) {
+        window.cancelAnimationFrame(realtimeRenderFrame);
+        realtimeRenderFrame = undefined;
+      }
       const bar = currentBarRef.current;
-      if (bar) renderRealtimeBar(bar);
+      if (bar && !cancelled) renderRealtimeBar(bar);
     };
 
     function processRealtimeTick(tick: PriceTick) {
@@ -1370,19 +1362,21 @@ export default function Chart() {
       const isNewBucket = lastRealtimeBucketRef.current !== bucketNumber;
       const previousBar = currentBarRef.current;
       if (previousBar && bucketNumber < Number(previousBar.time)) return;
+      // Vẽ nến cũ trước khi sang nến mới để giữ đủ dữ liệu OHLCV.
+      if (isNewBucket && realtimeRenderFrame !== undefined) flushRealtimeRef.current();
       if (isNewBucket && previousBar) {
         previousCloseByTimeRef.current.set(bucketNumber, previousBar.close);
       }
-      if (isNewBucket && bucketNumber > (lastRenderedRealtimeBucketRef.current ?? -Infinity)) {
-        previousMainTimeRef.current = previousBar
-          ? Number(previousBar.time)
-          : lastRenderedRealtimeBucketRef.current;
-      }
-
       currentBarRef.current = mergeTick(currentBarRef.current, tick.price, tick.volume, bucket);
       lastRealtimeBucketRef.current = bucketNumber;
       barsByTimeRef.current.set(bucketNumber, currentBarRef.current);
-      if (!panGestureRef.current?.active) renderRealtimeBar(currentBarRef.current);
+      // Gộp các lần vẽ trong cùng một khung hình, vẫn xử lý đầy đủ từng giao dịch.
+      if (realtimeRenderFrame === undefined) {
+        realtimeRenderFrame = window.requestAnimationFrame(() => {
+          realtimeRenderFrame = undefined;
+          flushRealtimeRef.current();
+        });
+      }
     }
 
     realtimeTickHandlerRef.current = (tick) => {
@@ -1392,18 +1386,20 @@ export default function Chart() {
     return () => {
       cancelled = true;
       historyAbortController.abort();
+      if (realtimeRenderFrame !== undefined) window.cancelAnimationFrame(realtimeRenderFrame);
       realtimeTickBuffer.dispose();
       loadOlderHistoryRef.current = () => undefined;
       realtimeTickHandlerRef.current = () => undefined;
       flushRealtimeRef.current = () => undefined;
     };
-  }, [persistDrawingHistory, rangeDays, resolution, symbol, symbolInfo, syncCompareSeries, syncDrawingHistoryAvailability, updateCompareSeriesAtTime]);
+  }, [persistDrawingHistory, rangeDays, resolution, symbol, symbolInfo, syncCompareSeries, syncDrawingHistoryAvailability]);
 
   useEffect(() => {
     const chart = chartRef.current;
     if (!chart) return;
 
     const activeSymbols = new Set(compareSymbols);
+    setComparisonQuotes((current) => current.filter((quote) => activeSymbols.has(quote.symbol)));
     compareSeriesRef.current.forEach((series, compareSymbol) => {
       if (activeSymbols.has(compareSymbol)) return;
       chart.removeSeries(series);
@@ -1425,7 +1421,7 @@ export default function Chart() {
           lineWidth: 2,
           priceScaleId: mainScaleSideRef.current,
           lastValueVisible: axisLabelsRef.current.seriesValue,
-          priceLineVisible: axisLinesRef.current.price,
+          priceLineVisible: false,
           priceLineColor: COMPARE_COLORS[index % COMPARE_COLORS.length],
           baseLineVisible: false,
           crosshairMarkerVisible: false,
@@ -1447,8 +1443,26 @@ export default function Chart() {
           info.session,
           info.timezone,
         ));
-        compareBarsRef.current.set(compareSymbol, compareBars.map((bar) => ({ time: bar.time, value: bar.close })));
+        compareBarsRef.current.set(compareSymbol, comparisonSeriesPoints(compareBars));
         syncCompareSeries();
+        const latestCompareBar = compareBars.at(-1);
+        const comparePreviousClose = compareBars.at(-2)?.close ?? latestCompareBar?.close ?? 0;
+        if (latestCompareBar) {
+          const change = latestCompareBar.close - comparePreviousClose;
+          const quote: ComparisonQuote = {
+            symbol: compareSymbol,
+            description: info.description,
+            exchange: info.exchange,
+            price: latestCompareBar.close,
+            change,
+            changePercent: comparePreviousClose ? change / comparePreviousClose * 100 : 0,
+            color: COMPARE_COLORS[index % COMPARE_COLORS.length],
+          };
+          setComparisonQuotes((current) => [
+            ...current.filter((item) => item.symbol !== compareSymbol),
+            quote,
+          ]);
+        }
 
         const feed = connectPriceFeed(
           compareSymbol,
@@ -1461,8 +1475,16 @@ export default function Chart() {
             if (lastPoint && Number(bucket) < Number(lastPoint.time)) return;
             if (lastPoint && Number(bucket) === Number(lastPoint.time)) lastPoint.value = tick.price;
             else points.push({ time: bucket, value: tick.price });
-            const latestMainTime = currentBarRef.current?.time;
-            if (latestMainTime !== undefined) updateCompareSeriesAtTime(latestMainTime);
+            series?.update({ time: bucket, value: tick.price });
+            const change = tick.price - comparePreviousClose;
+            setComparisonQuotes((current) => current.map((quote) => quote.symbol === compareSymbol
+              ? {
+                  ...quote,
+                  price: tick.price,
+                  change,
+                  changePercent: comparePreviousClose ? change / comparePreviousClose * 100 : 0,
+                }
+              : quote));
           },
           () => undefined,
         );
@@ -1480,7 +1502,7 @@ export default function Chart() {
       controller.abort();
       feeds.forEach((feed) => feed.close());
     };
-  }, [compareSymbols, rangeDays, resolution, syncCompareSeries, updateCompareSeriesAtTime]);
+  }, [compareSymbols, rangeDays, resolution, syncCompareSeries]);
 
   useEffect(() => {
     const feed = connectPriceFeed(
@@ -1667,12 +1689,6 @@ export default function Chart() {
       mode,
     });
     priceScale.setAutoScale(autoScale && !scaleLocked);
-    if (modeChanged) {
-      autoScaleRef.current = true;
-      setAutoScale(true);
-      setScaleLocked(false);
-      priceScale.setAutoScale(true);
-    }
     if (scaleSideChanged) {
       chart.priceScale(previousMainScaleSideRef.current).applyOptions({ mode: PriceScaleMode.Normal, invertScale: false });
       previousMainScaleSideRef.current = mainScaleSide;
@@ -1680,6 +1696,10 @@ export default function Chart() {
       if (previousPriceRange) priceScale.setVisibleRange(previousPriceRange);
     }
   }, [activeStudies, autoScale, comparisonActive, effectiveScaleMode, mainScaleSide, scaleLocked, secondaryLeftVisible, secondaryRightVisible]);
+
+  useEffect(() => {
+    seriesRef.current?.applyOptions({ visible: mainSeriesVisible });
+  }, [mainSeriesVisible]);
 
   useEffect(() => {
     const series = seriesRef.current;
@@ -1692,7 +1712,7 @@ export default function Chart() {
     compareSeriesRef.current.forEach((compareSeries, compareSymbol) => compareSeries.applyOptions({
       title: axisLabels.symbol ? compareSymbol : "",
       lastValueVisible: axisLabels.seriesValue,
-      priceLineVisible: axisLines.price,
+      priceLineVisible: false,
     }));
     priceIndicatorSeriesRef.current.forEach((studySeries, id) => studySeries.applyOptions({
       title: axisLabels.studyNames ? id : "",
@@ -1733,8 +1753,8 @@ export default function Chart() {
       const low = Math.min(...bars.map((bar) => bar.low));
       if (!highLowLinesRef.current) {
         highLowLinesRef.current = {
-          high: series.createPriceLine({ price: high, color: "#596273", lineWidth: 1, lineStyle: 2, lineVisible: false, axisLabelVisible: false, title: "H" }),
-          low: series.createPriceLine({ price: low, color: "#596273", lineWidth: 1, lineStyle: 2, lineVisible: false, axisLabelVisible: false, title: "L" }),
+          high: series.createPriceLine({ price: high, color: "#142E61", lineWidth: 1, lineStyle: 2, lineVisible: false, axisLabelVisible: false, title: "Đỉnh" }),
+          low: series.createPriceLine({ price: low, color: "#142E61", lineWidth: 1, lineStyle: 2, lineVisible: false, axisLabelVisible: false, title: "Đáy" }),
         };
       }
       highLowLinesRef.current.high.applyOptions({ price: high, axisLabelVisible: axisLabels.highLow, lineVisible: axisLines.highLow });
@@ -2270,6 +2290,54 @@ export default function Chart() {
     syncDrawingHistoryAvailability();
   }, [restoreDrawingState, syncDrawingHistoryAvailability]);
 
+  const copyMainPrice = async (price: number) => {
+    copiedPriceRef.current = price;
+    try {
+      await navigator.clipboard.writeText(String(price));
+    } catch {}
+  };
+
+  const pasteMainPrice = async () => {
+    let price = copiedPriceRef.current;
+    try {
+      const clipboardText = (await navigator.clipboard.readText()).trim();
+      if (clipboardText) {
+        const parsedPrice = Number(clipboardText.replaceAll(",", ""));
+        if (Number.isFinite(parsedPrice)) price = parsedPrice;
+      }
+    } catch {}
+    if (price === null || !Number.isFinite(price)) return;
+    seriesRef.current?.createPriceLine({
+      price,
+      color: "#8b92a5",
+      lineWidth: 1,
+      lineStyle: LineStyle.Dashed,
+      axisLabelVisible: true,
+      title: "Pasted price",
+    });
+  };
+
+  const moveMainSeriesToPane = (direction: "above" | "below") => {
+    const chart = chartRef.current;
+    const series = seriesRef.current;
+    if (!chart || !series) return;
+    const currentPane = series.getPane().paneIndex();
+    const newPane = chart.addPane(true);
+    if (direction === "above") {
+      newPane.moveTo(currentPane);
+      series.moveToPane(currentPane);
+    } else {
+      series.moveToPane(newPane.paneIndex());
+    }
+  };
+
+  const moveMainSeriesOrder = (direction: "front" | "back") => {
+    const series = seriesRef.current;
+    if (!series) return;
+    const lastOrder = Math.max(0, series.getPane().getSeries().length - 1);
+    series.setSeriesOrder(direction === "front" ? lastOrder : 0);
+  };
+
   const menuScale = axisMenu && chartRef.current?.panes()[axisMenu.paneIndex]
     ? chartRef.current.priceScale(axisMenu.side, axisMenu.paneIndex)
     : null;
@@ -2382,15 +2450,30 @@ export default function Chart() {
           <MarketDataPanel
             symbol={symbol}
             exchange={symbolInfo?.exchange ?? ""}
+            symbolInfo={symbolInfo}
             pricePrecision={currentPriceFormat.precision}
             resolution={resolution}
             quoteBar={quoteBar}
             previousClose={previousClose}
+            comparisons={comparisonQuotes}
+            seriesVisible={mainSeriesVisible}
+            scaleSide={mainScaleSide}
             volumeEnabled={activeStudies.includes("volume")}
             currentVolumeMa={currentVolumeMa}
             maLength={maLength}
             maType={maType}
             smoothingLength={smoothingLength}
+            seriesValueVisible={axisLabels.seriesValue}
+            priceLineVisible={axisLines.price}
+            onToggleSeriesVisibility={() => setMainSeriesVisible((visible) => !visible)}
+            onCopyPrice={(price) => void copyMainPrice(price)}
+            onPastePrice={() => void pasteMainPrice()}
+            onMoveToPane={moveMainSeriesToPane}
+            onMoveSeriesOrder={moveMainSeriesOrder}
+            onPinToScale={setScaleSideOverride}
+            onToggleSeriesValue={() => setAxisLabels((current) => ({ ...current, seriesValue: !current.seriesValue }))}
+            onTogglePriceLine={() => setAxisLines((current) => ({ ...current, price: !current.price }))}
+            onToggleVolume={() => toggleStudy("volume")}
             onMaLengthChange={setMaLength}
             onMaTypeChange={setMaType}
             onSmoothingLengthChange={setSmoothingLength}
