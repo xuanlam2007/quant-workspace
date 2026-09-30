@@ -32,6 +32,8 @@ const menuIcons = {
 export interface SourceLegend {
   id: string;
   label: string;
+  parameters?: string;
+  hasSettings?: boolean;
   color: string;
   value?: string;
   top: number;
@@ -60,10 +62,11 @@ interface MarketDataPanelProps {
   previousClose?: number;
   sourceLegends: SourceLegend[];
   volumeRowTop: number;
-  onMoveSourceToPane: (id: string, direction: "above" | "below") => void;
+  onMoveSourceToPane: (id: string, direction: "above" | "below" | "new-above" | "new-below") => void;
   onMoveSourceOrder: (id: string, direction: "front" | "back") => void;
   onToggleSourceVisibility: (id: string) => void;
   onRemoveSource: (id: string) => void;
+  onOpenSourceSettings: (id: string) => void;
   onPinSourceToScale: (id: string, side: "left" | "right") => void;
   seriesVisible: boolean;
   scaleSide: "left" | "right";
@@ -93,7 +96,7 @@ interface MarketDataPanelProps {
   onToggleSeriesVisibility: () => void;
   onCopyPrice: (price: number) => void;
   onPastePrice: () => void;
-  onMoveToPane: (direction: "above" | "below") => void;
+  onMoveToPane: (direction: "above" | "below" | "new-above" | "new-below") => void;
   canMoveToPane: boolean;
   onMoveSeriesOrder: (direction: "front" | "back") => void;
   onPinToScale: (side: "left" | "right") => void;
@@ -101,7 +104,7 @@ interface MarketDataPanelProps {
   onTogglePriceLine: () => void;
   onRemoveVolume: () => void;
   onToggleVolumeVisibility: () => void;
-  onMoveVolumeToPane: (direction: "above" | "below") => void;
+  onMoveVolumeToPane: (direction: "above" | "below" | "new-above" | "new-below") => void;
   onMoveVolumeSeriesOrder: (direction: "front" | "back") => void;
   onPinVolumeToScale: (side: "left" | "right") => void;
   onMaLengthChange: (length: number) => void;
@@ -126,6 +129,7 @@ export function MarketDataPanel({
   onMoveSourceOrder,
   onToggleSourceVisibility,
   onRemoveSource,
+  onOpenSourceSettings,
   onPinSourceToScale,
   seriesVisible,
   scaleSide,
@@ -368,9 +372,10 @@ export function MarketDataPanel({
       {sourceLegends.map((source) => (
         <div className={`indicator-data-row source-legend-row${!source.visible ? " indicator-data-row--hidden" : ""}`} key={source.id} style={{ position: "absolute", top: source.top - paneTop }} onContextMenu={(event) => { event.preventDefault(); setSourceMenuId(source.id); setSourceMenuPosition({ left: Math.min(event.clientX, window.innerWidth - 456), top: Math.min(event.clientY, window.innerHeight - 460) }); }}>
           <div className={`indicator-data__title${selectedLegend === source.id ? " indicator-data__title--selected" : ""}${!source.visible ? " indicator-data__title--hidden" : ""}`} onClick={() => onSelectLegend(source.id)}>
-            <span className="indicator-data__name">{source.label}</span>
+            <span className="indicator-data__name">{source.label}</span>{source.parameters && <span className="indicator-data__parameters">{source.parameters}</span>}
             <div className="indicator-data__actions">
               <button type="button" tabIndex={-1} aria-label={source.visible ? "Ẩn" : "Hiển thị"} onMouseEnter={(event) => showVisibilityTooltip(event, source.visible ? "Ẩn" : "Hiển thị")} onMouseLeave={() => setVisibilityTooltip(null)} onClick={() => { setVisibilityTooltip(null); onToggleSourceVisibility(source.id); }}>{source.visible ? legendIcons.eye : legendIcons.crossedEye}</button>
+              {source.hasSettings && <button type="button" tabIndex={-1} aria-label="Cài đặt" onClick={() => onOpenSourceSettings(source.id)}>{HEADER_SVGS.settings}</button>}
               <button type="button" tabIndex={-1} aria-label="Loại bỏ" onClick={() => onRemoveSource(source.id)}>{legendIcons.remove}</button>
               <button type="button" tabIndex={-1} aria-label="Thêm nữa" onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); setSubmenu(null); setSourceMenuId(source.id); setSourceMenuPosition({ left: Math.min(rect.left, window.innerWidth - 456), top: Math.min(rect.bottom + 5, window.innerHeight - 460) }); }}>{legendIcons.more}</button>
             </div>
@@ -380,13 +385,13 @@ export function MarketDataPanel({
       ))}
 
       {volumeEnabled && <div className={`indicator-data-row${volumeHidden ? " indicator-data-row--hidden" : ""}`} style={{ position: "absolute", top: volumeRowTop - paneTop }}>
-        {appearance.studyTitleVisible && <div className={`indicator-data__title${selectedLegend === "volume" ? " indicator-data__title--selected" : ""}${volumeHidden ? " indicator-data__title--hidden" : ""}`} onClick={(event) => { if (event.target === event.currentTarget || (event.target as HTMLElement).closest("span")) onSelectLegend("volume"); }}><span className="indicator-data__name">Khối lượng {maType} {smoothingLength}</span><div className="indicator-data__actions">
+        {appearance.studyTitleVisible && <div className={`indicator-data__title${selectedLegend === "volume" ? " indicator-data__title--selected" : ""}${volumeHidden ? " indicator-data__title--hidden" : ""}`} onClick={(event) => { if (event.target === event.currentTarget || (event.target as HTMLElement).closest("span")) onSelectLegend("volume"); }}><span className="indicator-data__name">Khối lượng</span><span className="indicator-data__parameters">{volumeSettings.maVisible ? `${volumeSettings.maLength} ` : ""}{maType} {smoothingLength}</span><div className="indicator-data__actions">
           <button type="button" tabIndex={-1} aria-label={volumeHidden ? "Hiển thị" : "Ẩn"} aria-pressed={!volumeHidden} onMouseEnter={(event) => showVisibilityTooltip(event, volumeHidden ? "Hiển thị" : "Ẩn")} onMouseLeave={() => setVisibilityTooltip(null)} onClick={() => { setVisibilityTooltip(null); onToggleVolumeVisibility(); }}>{volumeHidden ? legendIcons.crossedEye : legendIcons.eye}</button>
           <button type="button" tabIndex={-1} aria-label="Cài đặt" aria-pressed={volumeSettingsOpen} onClick={() => setVolumeSettingsOpen((open) => !open)}>{HEADER_SVGS.settings}</button>
           <button type="button" tabIndex={-1} aria-label="Loại bỏ" onClick={onRemoveVolume}>{legendIcons.remove}</button>
           <button type="button" tabIndex={-1} aria-label="Thêm nữa" onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); setVolumeMenuPosition({ left: Math.min(rect.left, window.innerWidth - 456), top: Math.min(rect.bottom + 5, window.innerHeight - 460) }); setVolumeMenuOpen(true); }}>{legendIcons.more}</button>
         </div></div>}
-        {!loading && appearance.studyValueVisible && volumeSettings.statusValueVisible && <div className="indicator-data__values"><span className="indicator-data__volume">{quoteBar ? formatVolume(quoteBar.volume) : "N/A"}</span>{volumeSettings.smoothedVisible && <span className="indicator-data__ma">{currentVolumeMa !== undefined ? formatVolume(currentVolumeMa) : "N/A"}</span>}</div>}
+        {!loading && appearance.studyValueVisible && volumeSettings.statusValueVisible && <div className="indicator-data__values"><span className="indicator-data__volume" style={{ color: quoteBar && quoteBar.close >= (volumeSettings.colorByPreviousClose && previousClose !== undefined ? previousClose : quoteBar.open) ? volumeSettings.upColor : volumeSettings.downColor }}>{quoteBar ? formatVolume(quoteBar.volume) : "N/A"}</span>{volumeSettings.smoothedVisible && <span className="indicator-data__ma">{currentVolumeMa !== undefined ? formatVolume(currentVolumeMa) : "N/A"}</span>}</div>}
       </div>}
 
       {activeSource && createPortal(<div ref={sourceMenuRef} className="series-menu source-series-menu" role="menu" aria-label={`Tùy chọn ${activeSource.label}`} style={{ left: sourceMenuPosition.left, top: sourceMenuPosition.top }}>
@@ -396,7 +401,7 @@ export function MarketDataPanel({
         </div>
         {(activeSource.shared || activeSource.paneIndex > 0 || activeSource.paneIndex < paneCount - 1) && <div className="series-menu__submenu-wrap" onMouseEnter={() => setSubmenu("pane")} onMouseLeave={() => setSubmenu(null)}>
           <button type="button" role="menuitem" tabIndex={-1} className="series-menu__item" aria-haspopup="menu" aria-expanded={submenu === "pane"} onClick={() => setSubmenu(submenu === "pane" ? null : "pane")}><span className="series-menu__icon">{menuIcons.pane}</span><span className="series-menu__label">Chuyển tới</span><span className="series-menu__chevron">{menuIcons.chevron}</span></button>
-          {submenu === "pane" && <div className="series-menu__submenu" role="menu" aria-label="Chuyển tới">{(activeSource.shared || activeSource.paneIndex > 0) && renderMenuButton(activeSource.shared ? "Cửa sổ mới bên trên" : "Cửa sổ hiện có bên trên", () => onMoveSourceToPane(activeSource.id, "above"))}{(activeSource.shared || activeSource.paneIndex < paneCount - 1) && renderMenuButton(activeSource.shared ? "Cửa sổ mới bên dưới" : "Cửa sổ hiện có bên dưới", () => onMoveSourceToPane(activeSource.id, "below"))}</div>}
+          {submenu === "pane" && <div className="series-menu__submenu" role="menu" aria-label="Chuyển tới">{activeSource.paneIndex > 0 && renderMenuButton("Cửa sổ hiện có bên trên", () => onMoveSourceToPane(activeSource.id, "above"))}{activeSource.shared && renderMenuButton("Cửa sổ mới bên trên", () => onMoveSourceToPane(activeSource.id, "new-above"))}{activeSource.paneIndex < paneCount - 1 && renderMenuButton("Cửa sổ hiện có bên dưới", () => onMoveSourceToPane(activeSource.id, "below"))}{activeSource.shared && renderMenuButton("Cửa sổ mới bên dưới", () => onMoveSourceToPane(activeSource.id, "new-below"))}</div>}
         </div>}
         <div className="series-menu__submenu-wrap" onMouseEnter={() => setSubmenu("scale")} onMouseLeave={() => setSubmenu(null)}>
           <button type="button" role="menuitem" tabIndex={-1} className="series-menu__item" aria-haspopup="menu" aria-expanded={submenu === "scale"} onClick={() => setSubmenu(submenu === "scale" ? null : "scale")}><span className="series-menu__icon">{menuIcons.scale}</span><span className="series-menu__label">Ghim theo Tỷ lệ (hiện tại bên {activeSource.scaleSide === "right" ? "phải" : "trái"})</span><span className="series-menu__chevron">{menuIcons.chevron}</span></button>
@@ -405,6 +410,7 @@ export function MarketDataPanel({
         <div className="series-menu__divider" />
         {renderMenuButton(activeSource.visible ? "Ẩn" : "Hiện", () => onToggleSourceVisibility(activeSource.id), false, activeSource.visible ? "hide" : "show")}
         {renderMenuButton("Loại bỏ", () => onRemoveSource(activeSource.id))}
+        {activeSource.hasSettings && renderMenuButton("Cài đặt…", () => onOpenSourceSettings(activeSource.id), false, "settings")}
       </div>, document.body)}
       {volumeMenuOpen && createPortal(<div ref={volumeMenuRef} className="series-menu volume-series-menu" role="menu" aria-label="Tùy chọn khối lượng" style={{ left: volumeMenuPosition.left, top: volumeMenuPosition.top }}>
         <div className="series-menu__submenu-wrap" onMouseEnter={() => setSubmenu("order")} onMouseLeave={() => setSubmenu(null)}>
@@ -414,7 +420,7 @@ export function MarketDataPanel({
         {renderMenuButton("Khả năng hiển thị trong các khoảng thời gian", () => setVolumeSettingsOpen(true))}
         <div className="series-menu__submenu-wrap" onMouseEnter={() => setSubmenu("pane")} onMouseLeave={() => setSubmenu(null)}>
           <button type="button" role="menuitem" tabIndex={-1} className="series-menu__item" aria-haspopup="menu" aria-expanded={submenu === "pane"} onClick={() => setSubmenu(submenu === "pane" ? null : "pane")}><span className="series-menu__icon">{menuIcons.pane}</span><span className="series-menu__label">Chuyển tới</span><span className="series-menu__chevron">{menuIcons.chevron}</span></button>
-          {submenu === "pane" && <div className="series-menu__submenu" role="menu" aria-label="Chuyển tới">{(volumePaneShared || volumePaneIndex > 0) && renderMenuButton(volumePaneShared ? "Cửa sổ mới bên trên" : "Cửa sổ hiện có bên trên", () => onMoveVolumeToPane("above"))}{(volumePaneShared || volumePaneIndex < paneCount - 1) && renderMenuButton(volumePaneShared ? "Cửa sổ mới bên dưới" : "Cửa sổ hiện có bên dưới", () => onMoveVolumeToPane("below"))}</div>}
+          {submenu === "pane" && <div className="series-menu__submenu" role="menu" aria-label="Chuyển tới">{volumePaneIndex > 0 && renderMenuButton("Cửa sổ hiện có bên trên", () => onMoveVolumeToPane("above"))}{volumePaneShared && renderMenuButton("Cửa sổ mới bên trên", () => onMoveVolumeToPane("new-above"))}{volumePaneIndex < paneCount - 1 && renderMenuButton("Cửa sổ hiện có bên dưới", () => onMoveVolumeToPane("below"))}{volumePaneShared && renderMenuButton("Cửa sổ mới bên dưới", () => onMoveVolumeToPane("new-below"))}</div>}
         </div>
         <div className="series-menu__submenu-wrap" onMouseEnter={() => setSubmenu("scale")} onMouseLeave={() => setSubmenu(null)}>
           <button type="button" role="menuitem" tabIndex={-1} className="series-menu__item" aria-haspopup="menu" aria-expanded={submenu === "scale"} onClick={() => setSubmenu(submenu === "scale" ? null : "scale")}><span className="series-menu__icon">{menuIcons.scale}</span><span className="series-menu__label">Ghim theo Tỷ lệ (hiện tại bên {volumeScaleSide === "right" ? "phải" : "trái"})</span><span className="series-menu__chevron">{menuIcons.chevron}</span></button>
@@ -453,8 +459,8 @@ export function MarketDataPanel({
                       {renderMenuButton("Đưa xuống sau", () => onMoveSeriesOrder("back"))}
                     </>}
                     {id === "pane" && <>
-                      {(mainPaneShared || mainPaneIndex > 0) && renderMenuButton(mainPaneShared ? "Cửa sổ mới bên trên" : "Cửa sổ hiện có bên trên", () => onMoveToPane("above"))}
-                      {(mainPaneShared || mainPaneIndex < paneCount - 1) && renderMenuButton(mainPaneShared ? "Cửa sổ mới bên dưới" : "Cửa sổ hiện có bên dưới", () => onMoveToPane("below"))}
+                      {mainPaneIndex > 0 && renderMenuButton("Cửa sổ hiện có bên trên", () => onMoveToPane("above"))}{mainPaneShared && renderMenuButton("Cửa sổ mới bên trên", () => onMoveToPane("new-above"))}
+                      {mainPaneIndex < paneCount - 1 && renderMenuButton("Cửa sổ hiện có bên dưới", () => onMoveToPane("below"))}{mainPaneShared && renderMenuButton("Cửa sổ mới bên dưới", () => onMoveToPane("new-below"))}
                     </>}
                     {id === "scale" && <>
                       {renderMenuButton("Bên trái", () => onPinToScale("left"))}

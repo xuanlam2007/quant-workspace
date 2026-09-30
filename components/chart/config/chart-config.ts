@@ -163,6 +163,33 @@ export const STUDY_CATALOG: Array<{ id: StudyId; label: string; description: str
   { id: "boll", label: "Bollinger Bands", description: "20, 2", color: "#ff6d00" },
 ];
 
+export const BUNDLED_STUDY_NAMES = [
+  "52 Week High/Low", "Accelerator Oscillator", "Accumulation/Distribution", "Accumulative Swing Index",
+  "Advance/Decline", "Anchored VWAP", "Arnaud Legoux Moving Average", "Aroon", "Average Directional Index",
+  "Average Price", "Average True Range", "Awesome Oscillator", "Balance of Power", "Bollinger Bands",
+  "Bollinger Bands %B", "Bollinger Bands Width", "Chaikin Money Flow", "Chaikin Oscillator",
+  "Chaikin Volatility", "Chande Kroll Stop", "Chande Momentum Oscillator", "Chop Zone", "Choppiness Index",
+  "Commodity Channel Index", "Compare", "Connors RSI", "Coppock Curve", "Correlation - Log",
+  "Correlation Coeff", "Detrended Price Oscillator", "Directional Movement Index", "Donchian Channels",
+  "Double Exponential Moving Average", "Ease of Movement", "Elders Force Index", "EMA Cross", "Envelopes",
+  "Fisher Transform", "Guppy Multiple Moving Average", "Historical Volatility", "Hull MA", "Ichimoku Cloud",
+  "Keltner Channels", "Klinger Oscillator", "Know Sure Thing", "Least Squares Moving Average",
+  "Linear Regression Curve", "Linear Regression Slope", "MA Cross", "MA with EMA Cross", "Majority Rule",
+  "Mass Index", "McGinley Dynamic", "Median Price", "Momentum", "Money Flow Index", "Moving Average",
+  "Moving Average Adaptive", "Moving Average Channel", "Moving Average Convergence/Divergence",
+  "Moving Average Double", "Moving Average Exponential", "Moving Average Hamming", "Moving Average Multiple",
+  "Moving Average Triple", "Moving Average Weighted", "Net Volume", "On Balance Volume", "Overlay",
+  "Parabolic SAR", "Pivot Points Standard", "Price Channel", "Price Oscillator", "Price Volume Trend",
+  "Rate Of Change", "Ratio", "Regression Trend", "Relative Strength Index", "Relative Vigor Index",
+  "Relative Volatility Index", "Sessions", "SMI Ergodic Indicator/Oscillator", "Smoothed Moving Average",
+  "Spread", "Standard Deviation", "Standard Error", "Standard Error Bands", "Stochastic",
+  "Stochastic RSI", "SuperTrend", "Trend Strength Index", "Triple EMA", "TRIX",
+  "True Strength Index", "Typical Price", "Ultimate Oscillator", "Volatility Close-to-Close",
+  "Volatility Index", "Volatility O-H-L-C", "Volatility Zero Trend Close-to-Close", "Volume",
+  "Volume Oscillator", "Vortex Indicator", "VWAP", "VWMA", "Willams %R", "Williams Alligator",
+  "Williams Fractals", "ZigZag",
+] as const;
+
 export const PRICE_INDICATORS = [
   { id: "MA20", study: "ma" as const, length: 20, type: "SMA" as const, color: "#f7941d" },
   { id: "MA50", study: "ma" as const, length: 50, type: "SMA" as const, color: "#1dcf6f" },

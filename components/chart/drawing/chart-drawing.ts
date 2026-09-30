@@ -21,14 +21,19 @@ import { LineToolPriceRange } from "lightweight-charts-line-tools-price-range";
 import { LineToolLongShortPosition } from "lightweight-charts-line-tools-long-short-position";
 import { LineToolText } from "lightweight-charts-line-tools-text";
 
-function createPaneCoordinateChart(chart: IChartApi): IChartApi {
+function createPaneCoordinateChart(chart: IChartApi, series: ISeriesApi<"Candlestick", Time>): IChartApi {
   const chartElement = chart.chartElement();
   const elementProxy = new Proxy(chartElement, {
     get(target, property) {
       if (property === "getBoundingClientRect") {
         return () => {
           const rect = target.getBoundingClientRect();
-          const leftInset = chart.priceScale("left").width();
+          let leftInset = 0;
+          try {
+            leftInset = chart.priceScale("left", series.getPane().paneIndex()).width();
+          } catch {
+            // Khi chuyển pane, trục giá có thể chưa được khởi tạo.
+          }
           return new DOMRect(
             rect.x + leftInset,
             rect.y,
@@ -58,7 +63,7 @@ export function createDrawingTools(
   series: ISeriesApi<"Candlestick", Time>
 ): ILineToolsPlugin {
   installAnchorHoverEnhancement();
-  const lineTools = createLineToolsPlugin(createPaneCoordinateChart(chart), series);
+  const lineTools = createLineToolsPlugin(createPaneCoordinateChart(chart, series), series);
   lineTools.registerLineTool("TrendLine", LineToolTrendLine);
   lineTools.registerLineTool("Arrow", LineToolSharpArrow);
   lineTools.registerLineTool("Ray", LineToolRay);

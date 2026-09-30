@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { LineStyle } from "lightweight-charts";
 import type { TextOptions } from "lightweight-charts-line-tools-core";
+import { ChartColorPicker } from "../layout/ChartColorPicker";
 
 interface TextToolDialogProps {
   text: TextOptions;
@@ -236,15 +237,7 @@ export function TextToolDialog({ text, onCancel, onConfirm }: TextToolDialogProp
         {tab === "text" ? (
           <div className="text-tool-dialog__body">
             <div className="text-tool-formatting">
-              <label className="text-tool-color-btn" data-tooltip="Màu chữ">
-                <span className="text-tool-color-swatch" style={{ background: draft.font.color }} />
-                <input
-                  type="color"
-                  aria-label="Màu chữ"
-                  value={draft.font.color}
-                  onChange={(event) => updateFont({ color: event.target.value })}
-                />
-              </label>
+              <ChartColorPicker label="Màu chữ" value={draft.font.color} onChange={(value) => updateFont({ color: value })}/>
 
               <div className="text-tool-select-box text-tool-size-select">
                 <select

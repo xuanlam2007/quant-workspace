@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { connectionStatusLabel, type ConnStatus } from "@/lib/dchart-socket";
 import {
   RESOLUTIONS,
-  STUDY_CATALOG,
+  BUNDLED_STUDY_NAMES,
   TIMEFRAME_GROUPS,
   type StudyId,
 } from "../config/chart-config";
@@ -104,6 +104,7 @@ export interface ChartHeaderProps {
   onIndicatorMenuToggle: (open: boolean) => void;
   onIndicatorSearchChange: (search: string) => void;
   onStudyToggle: (id: StudyId) => void;
+  onAddReferenceStudy: (name: string) => void;
   onDownloadSnapshot: () => void;
   onToggleFullscreen: () => void;
   onUndo?: () => void;
@@ -138,6 +139,7 @@ export function ChartHeader({
   onIndicatorMenuToggle,
   onIndicatorSearchChange,
   onStudyToggle,
+  onAddReferenceStudy,
   onDownloadSnapshot,
   onToggleFullscreen,
   onUndo,
@@ -197,12 +199,36 @@ export function ChartHeader({
     onIndicatorMenuToggle,
   ]);
 
+  const [favoriteStudyNames, setFavoriteStudyNames] = useState<string[]>(["Volume"]);
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem("vndirect-chart:favorite-studies") ?? "null");
+      if (Array.isArray(saved)) setFavoriteStudyNames(saved.filter((name): name is string => typeof name === "string"));
+    } catch {}
+  }, []);
+  const toggleFavoriteStudy = (name: string) => {
+    setFavoriteStudyNames((current) => {
+      const next = current.includes(name) ? current.filter((item) => item !== name) : [...current, name];
+      localStorage.setItem("vndirect-chart:favorite-studies", JSON.stringify(next));
+      return next;
+    });
+  };
+  const supportedStudyNames: Record<string, StudyId> = {
+    Volume: "volume", "Moving Average": "ma", "Moving Average Exponential": "ema",
+    "Moving Average Convergence/Divergence": "macd", "Relative Strength Index": "rsi", "Bollinger Bands": "boll",
+  };
+  const translatedStudyNames: Record<string, string> = {
+    Volume: "Khối lượng", "Chaikin Volatility": "Biến động Chaikin",
+    "Volatility Close-to-Close": "Biến động Close-to-Close",
+    "Volatility Zero Trend Close-to-Close": "Biến động không theo xu hướng Close-to-Close",
+    "Volatility O-H-L-C": "Biến động O-H-L-C", "Klinger Oscillator": "Biến động giá Klinger",
+    "Detrended Price Oscillator": "Chuyển động Định hướng",
+  };
   const normalizedSearch = indicatorSearch.trim().toLocaleLowerCase("vi");
-  const filteredStudies = STUDY_CATALOG.filter((study) =>
-    `${study.label} ${study.description}`
-      .toLocaleLowerCase("vi")
-      .includes(normalizedSearch)
-  );
+  const filteredStudies = BUNDLED_STUDY_NAMES.filter((name) =>
+    `${name} ${translatedStudyNames[name] ?? ""}`.toLocaleLowerCase("vi").includes(normalizedSearch)
+  ).sort((a, b) => Number(favoriteStudyNames.includes(b)) - Number(favoriteStudyNames.includes(a))
+    || (translatedStudyNames[a] ?? a).localeCompare(translatedStudyNames[b] ?? b, "vi"));
 
   const currentResolutionLabel =
     RESOLUTIONS.find((item) => item.value === resolution)?.label ?? "1D";
@@ -361,31 +387,15 @@ export function ChartHeader({
                   autoFocus
                 />
               </label>
-              <div className="indicator-menu__heading">Tên chỉ báo</div>
               <div className="indicator-menu__list">
-                {filteredStudies.map((study) => (
-                  <label
-                    key={study.id}
-                    className={
-                      activeStudies.includes(study.id)
-                        ? "indicator-menu__option indicator-menu__option--active"
-                        : "indicator-menu__option"
-                    }
-                  >
-                    <input
-                      type="checkbox"
-                      checked={activeStudies.includes(study.id)}
-                      onChange={() => onStudyToggle(study.id)}
-                    />
-                    <i style={{ background: study.color }} />
-                    <span>
-                      <b>{study.label}</b>
-                      <small>
-                        {study.id === "volume" ? maDescription : study.description}
-                      </small>
-                    </span>
-                  </label>
-                ))}
+                {filteredStudies.map((name) => {
+                  const id = supportedStudyNames[name];
+                  const active = id && activeStudies.includes(id);
+                  return <div key={name} className={`indicator-menu__option${active ? " indicator-menu__option--active" : ""}`}>
+                    <button type="button" tabIndex={-1} className={`indicator-menu__favorite${favoriteStudyNames.includes(name) ? " is-active" : ""}`} aria-label={favoriteStudyNames.includes(name) ? "Loại bỏ khỏi mục yêu thích" : "Thêm vào mục yêu thích"} onClick={() => toggleFavoriteStudy(name)}><svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path fill="currentColor" d="m12 2.6 2.9 5.9 6.5.9-4.7 4.6 1.1 6.5-5.8-3.1-5.8 3.1 1.1-6.5-4.7-4.6 6.5-.9L12 2.6Z"/></svg></button>
+                    <button type="button" tabIndex={-1} className="indicator-menu__study" title={id === "volume" ? maDescription : undefined} onClick={() => onAddReferenceStudy(name)}>{translatedStudyNames[name] ?? name}</button>
+                  </div>;
+                })}
                 {filteredStudies.length === 0 && (
                   <div className="indicator-menu__empty">Không tìm thấy chỉ báo</div>
                 )}

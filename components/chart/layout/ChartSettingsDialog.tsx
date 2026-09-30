@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { ScaleMode } from "../config/chart-config";
+import { ChartColorPicker } from "./ChartColorPicker";
 
 export interface ChartAppearance {
   upColor: string;
@@ -91,7 +92,7 @@ export function ChartSettingsDialog({ open, appearance, scaleMode, autoScale, in
 
   const update = <K extends keyof ChartAppearance>(key: K, value: ChartAppearance[K]) => setDraft((current) => ({ ...current, [key]: value }));
   const check = (key: keyof ChartAppearance, label: string) => <label className="chart-settings__check"><input tabIndex={-1} type="checkbox" checked={Boolean(draft[key])} onChange={(event) => update(key, event.target.checked as never)}/><span>{label}</span></label>;
-  const color = (key: keyof ChartAppearance, label: string) => <label className="chart-settings__row"><span>{label}</span><input tabIndex={-1} type="color" value={String(draft[key])} onChange={(event) => update(key, event.target.value as never)}/></label>;
+  const color = (key: keyof ChartAppearance, label: string) => <div className="chart-settings__row"><span>{label}</span><ChartColorPicker label={label} value={String(draft[key])} onChange={(value) => update(key, value as never)}/></div>;
   const number = (key: keyof ChartAppearance, label: string, min: number, max: number, unit = "") => <label className="chart-settings__row"><span>{label}</span><input tabIndex={-1} type="number" min={min} max={max} value={Number(draft[key])} onChange={(event) => update(key, Math.max(min, Math.min(max, Number(event.target.value) || min)) as never)}/><small>{unit}</small></label>;
   const axisCheck = (key: keyof ChartSettingsDialogProps["axisLabels"], label: string) => <label className="chart-settings__check"><input tabIndex={-1} type="checkbox" checked={axisLabels[key]} onChange={(event) => onAxisLabelChange(key, event.target.checked)}/><span>{label}</span></label>;
 
@@ -153,7 +154,7 @@ export function ChartSettingsDialog({ open, appearance, scaleMode, autoScale, in
           </>}
         </div>
       </div>
-      <footer><button type="button" tabIndex={-1} className="chart-settings__template" onClick={() => setDraft(DEFAULT_CHART_APPEARANCE)}>Bản mẫu⌄</button><span/><button type="button" tabIndex={-1} className="chart-settings__cancel" onClick={() => { onAppearanceChange(initial); onClose(); }}>Hủy bỏ</button><button type="button" tabIndex={-1} className="chart-settings__ok" onClick={() => { onAppearanceChange(draft); onClose(); }}>Ok</button></footer>
+      <footer><span/><button type="button" tabIndex={-1} className="chart-settings__cancel" onClick={() => { onAppearanceChange(initial); onClose(); }}>Hủy bỏ</button><button type="button" tabIndex={-1} className="chart-settings__ok" onClick={() => { onAppearanceChange(draft); onClose(); }}>Ok</button></footer>
     </section>
   </div>;
 }

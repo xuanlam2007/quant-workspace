@@ -25,6 +25,15 @@ export function PriceRangeStats({ drawing, chart, series, chartTop, bars, viewpo
   const x = chart.timeScale().timeToCoordinate(end.timestamp as Time);
   const y = series.priceToCoordinate(end.price);
   if (x === null || y === null) return null;
+  const pane = series.getPane();
+  const chartRect = chart.chartElement().getBoundingClientRect();
+  const paneTop = (pane.getHTMLElement()?.getBoundingClientRect().top ?? chartRect.top) - chartRect.top;
+  let leftInset = 0;
+  try {
+    leftInset = chart.priceScale("left", pane.paneIndex()).width();
+  } catch {
+    // Trục giá có thể chưa sẵn sàng trong lúc chuyển pane.
+  }
 
   const difference = end.price - start.price;
   const percentage = start.price === 0 ? 0 : (difference / start.price) * 100;
@@ -45,7 +54,7 @@ export function PriceRangeStats({ drawing, chart, series, chartTop, bars, viewpo
   return (
     <div
       className="price-range-stats"
-      style={{ left: x, top: chartTop + y + 12, background: color }}
+      style={{ left: leftInset + x, top: chartTop + paneTop + y + 12, background: color }}
       aria-label={`Biên độ giá ${difference.toFixed(2)}, ${percentage.toFixed(2)} phần trăm`}
     >
       <strong>{sign}{difference.toFixed(2)} ({sign}{percentage.toFixed(2)}%), {sign}{ticks}</strong>

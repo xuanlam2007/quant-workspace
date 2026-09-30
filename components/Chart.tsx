@@ -43,6 +43,7 @@ import {
   selectedZoomRange,
   type WheelState,
 } from "./chart/core/chart-zoom";
+import { PaneControls } from "./chart/layout/PaneControls";
 import { ChartFooter } from "./chart/layout/ChartFooter";
 import { PriceAxisContextMenu, type PriceAxisMenuAction, type PriceAxisMenuState } from "./chart/layout/PriceAxisContextMenu";
 import { ChartHeader } from "./chart/layout/ChartHeader";
@@ -89,6 +90,9 @@ import {
   isTradingSessionTime,
   rangeForResolution,
 } from "./chart/core/chart-utils";
+import { useReferenceStudies, type ReferenceSeries } from "./chart/indicators/useReferenceStudies";
+import { ReferenceStudySettingsDialog } from "./chart/layout/ReferenceStudySettingsDialog";
+import { formatVolume } from "./chart/core/chart-utils";
 import { useIndicatorSettings } from "./chart/indicators/useIndicatorSettings";
 import { DelayedTooltip } from "./chart/ui/DelayedTooltip";
 import { OutsideDragSelectionGuard } from "./chart/ui/OutsideDragSelectionGuard";
@@ -97,6 +101,14 @@ const tickFormatters = new Map<string, Intl.DateTimeFormat>();
 const DRAWING_HISTORY_VERSION = 1;
 const MAX_DRAWING_HISTORY_STATES = 100;
 const COMPARE_COLORS = ["#F57C00", "#2962ff", "#ab47bc", "#26a69a", "#ef5350"];
+
+function safePriceScaleWidth(chart: IChartApi, side: "left" | "right", paneIndex: number) {
+  try {
+    return chart.priceScale(side, paneIndex).width();
+  } catch {
+    return 0;
+  }
+}
 
 function setVisiblePriceRange(scale: IPriceScaleApi, range: { from: number; to: number }) {
   if (!Number.isFinite(range.from) || !Number.isFinite(range.to) || range.from >= range.to) return;
@@ -261,6 +273,7 @@ export default function Chart() {
     y: number;
     plotLeft: number;
     plotRight: number;
+    plotTop: number;
     plotHeight: number;
   } | null>(null);
   const zoomHistoryRef = useRef<{
@@ -349,6 +362,10 @@ export default function Chart() {
     downColor: "#eb4d5c",
     maColor: "#2196f3",
     smoothedColor: "#2196f3",
+    maPlotStyle: "line" as VolumeSettings["maPlotStyle"],
+    smoothedPlotStyle: "line" as VolumeSettings["smoothedPlotStyle"],
+    maPriceLineVisible: false,
+    smoothedPriceLineVisible: false,
     scaleLabelVisible: true,
     statusValueVisible: true,
     visibleIntervals: [true, true, true, true, true],
@@ -358,7 +375,9 @@ export default function Chart() {
   const volumeColorForBar = useCallback((bar: Bar, previousClose?: number) => {
     const settings = volumeVisualSettingsRef.current;
     const growing = bar.close >= (settings.colorByPreviousClose && previousClose !== undefined ? previousClose : bar.open);
-    return `${growing ? settings.upColor : settings.downColor}66`;
+    const color = growing ? settings.upColor : settings.downColor;
+    const alpha = /^#[\da-f]{8}$/i.test(color) ? parseInt(color.slice(7), 16) : 255;
+    return `${color.slice(0, 7)}${Math.round(alpha * 0.4).toString(16).padStart(2, "0")}`;
   }, []);
   const [chartAppearance, setChartAppearance] = useState<ChartAppearance>(DEFAULT_CHART_APPEARANCE);
   const [mainScaleInverted, setMainScaleInverted] = useState(false);
@@ -549,6 +568,7 @@ export default function Chart() {
     smoothingLength,
     setSmoothingLength,
   } = useIndicatorSettings();
+  const referenceStudies = useReferenceStudies(chartRef, barsByTimeRef, symbol, resolution, symbolInfo);
   const secondaryLeftVisible = (activeStudies.includes("macd") && indicatorScaleSides.macd === "left")
     || (activeStudies.includes("rsi") && indicatorScaleSides.rsi === "left");
   const secondaryRightVisible = (activeStudies.includes("macd") && indicatorScaleSides.macd === "right")
@@ -645,6 +665,7 @@ export default function Chart() {
   const [lastPrice, setLastPrice] = useState<string>("N/A");
 
   const updateStudySeries = (bars: Bar[]) => {
+    referenceStudies.update(bars);
     PRICE_INDICATORS.forEach((indicator) => {
       priceIndicatorSeriesRef.current.get(indicator.id)?.setData(
         priceIndicatorData(bars, indicator.length, indicator.type)
@@ -870,17 +891,20 @@ export default function Chart() {
       const element = containerRef.current;
       if (!element) return;
       const rect = element.getBoundingClientRect();
-      const plotLeft = chart.priceScale("left").width();
-      const plotRight = rect.width - chart.priceScale("right").width();
-      const plotHeight = chart.paneSize().height;
+      const plotLeft = safePriceScaleWidth(chart, "left", mainPaneIndexRef.current);
+      const plotRight = rect.width - safePriceScaleWidth(chart, "right", mainPaneIndexRef.current);
+      const paneRect = series.getPane().getHTMLElement()?.getBoundingClientRect();
+      if (!paneRect) return;
+      const plotTop = paneRect.top - rect.top;
+      const plotHeight = chart.paneSize(mainPaneIndexRef.current).height;
       const x = event.clientX - rect.left;
-      const y = event.clientY - rect.top;
+      const y = event.clientY - paneRect.top;
       if (x < plotLeft || x > plotRight || y < 0 || y > plotHeight) return;
       event.preventDefault();
       event.stopPropagation();
-      zoomStartRef.current = { pointerId: event.pointerId, x, y, plotLeft, plotRight, plotHeight };
+      zoomStartRef.current = { pointerId: event.pointerId, x, y, plotLeft, plotRight, plotTop, plotHeight };
       element.setPointerCapture(event.pointerId);
-      setZoomSelection({ left: x, top: y + element.offsetTop, width: 0, height: 0 });
+      setZoomSelection({ left: x, top: y + plotTop + element.offsetTop, width: 0, height: 0 });
     };
 
     const onZoomPointerMove = (event: PointerEvent) => {
@@ -892,10 +916,10 @@ export default function Chart() {
       event.stopPropagation();
       const rect = element.getBoundingClientRect();
       const x = Math.max(start.plotLeft, Math.min(start.plotRight, event.clientX - rect.left));
-      const y = Math.max(0, Math.min(start.plotHeight, event.clientY - rect.top));
+      const y = Math.max(0, Math.min(start.plotHeight, event.clientY - rect.top - start.plotTop));
       setZoomSelection({
         left: Math.min(start.x, x),
-        top: Math.min(start.y, y) + element.offsetTop,
+        top: Math.min(start.y, y) + start.plotTop + element.offsetTop,
         width: Math.abs(x - start.x),
         height: Math.abs(y - start.y),
       });
@@ -918,7 +942,7 @@ export default function Chart() {
 
       const rect = element.getBoundingClientRect();
       const endX = Math.max(start.plotLeft, Math.min(start.plotRight, event.clientX - rect.left));
-      const endY = Math.max(0, Math.min(start.plotHeight, event.clientY - rect.top));
+      const endY = Math.max(0, Math.min(start.plotHeight, event.clientY - rect.top - start.plotTop));
       if (Math.abs(endX - start.x) < 4) return;
       const timeScale = chart.timeScale();
       const first = timeScale.coordinateToLogical(start.x - start.plotLeft);
@@ -940,7 +964,7 @@ export default function Chart() {
       zoomHistoryRef.current.push({
         leftOffset: previousTime.from - targetTime.from,
         rightOffset: previousTime.to - targetTime.to,
-        barSpacing: chart.paneSize().width / (previousTime.to - previousTime.from),
+        barSpacing: chart.paneSize(mainPaneIndexRef.current).width / (previousTime.to - previousTime.from),
         priceRange: previousPrice,
         autoScale: priceScale.options().autoScale,
         followLatest: followLatestRef.current,
@@ -992,10 +1016,12 @@ export default function Chart() {
       if (!element) return;
       const rect = element.getBoundingClientRect();
       const x = event.clientX - rect.left;
-      const y = event.clientY - rect.top;
-      const leftScaleWidth = chart.priceScale("left").width();
-      const rightScaleWidth = chart.priceScale("right").width();
-      if (x <= leftScaleWidth || x >= rect.width - rightScaleWidth || y >= chart.paneSize().height) return;
+      const paneRect = series.getPane().getHTMLElement()?.getBoundingClientRect();
+      if (!paneRect) return;
+      const y = event.clientY - paneRect.top;
+      const leftScaleWidth = safePriceScaleWidth(chart, "left", mainPaneIndexRef.current);
+      const rightScaleWidth = safePriceScaleWidth(chart, "right", mainPaneIndexRef.current);
+      if (x <= leftScaleWidth || x >= rect.width - rightScaleWidth || y < 0 || y >= chart.paneSize(mainPaneIndexRef.current).height) return;
 
       const priceRange = chart.priceScale(mainScaleSideRef.current, mainPaneIndexRef.current).getVisibleRange();
       if (!priceRange) return;
@@ -1034,37 +1060,50 @@ export default function Chart() {
     };
 
     let plotWheelState: WheelState = { totalX: 0, totalY: 0, lastTime: 0 };
-    let axisWheelState: WheelState = { totalX: 0, totalY: 0, lastTime: 0 };
+    const axisWheelStates = new Map<string, WheelState>();
     const onChartWheel = (event: WheelEvent) => {
       const element = containerRef.current;
       if (!element) return;
 
       const rect = element.getBoundingClientRect();
       const pointerX = event.clientX - rect.left;
-      const leftScale = chart.priceScale("left");
-      const rightScale = chart.priceScale("right");
-      const scale = pointerX <= leftScale.width()
+      const hoveredPane = chart.panes().find((pane) => {
+        const paneRect = pane.getHTMLElement()?.getBoundingClientRect();
+        return paneRect && event.clientY >= paneRect.top && event.clientY < paneRect.bottom;
+      });
+      if (!hoveredPane) return;
+      const paneIndex = hoveredPane.paneIndex();
+      const paneRect = hoveredPane.getHTMLElement()?.getBoundingClientRect();
+      if (!paneRect) return;
+      const leftScale = chart.priceScale("left", paneIndex);
+      const rightScale = chart.priceScale("right", paneIndex);
+      const leftWidth = safePriceScaleWidth(chart, "left", paneIndex);
+      const rightWidth = safePriceScaleWidth(chart, "right", paneIndex);
+      const scale = leftWidth > 0 && pointerX <= leftWidth
         ? leftScale
-        : pointerX >= rect.width - rightScale.width()
+        : rightWidth > 0 && pointerX >= rect.width - rightWidth
           ? rightScale
           : null;
       if (scale) {
-        const wheel = bundleWheelDelta(event.deltaX, event.deltaY, event.deltaMode, event.timeStamp, axisWheelState);
-        axisWheelState = wheel.state;
+        const side = scale === leftScale ? "left" : "right";
+        const wheelKey = `${paneIndex}:${side}`;
+        const wheel = bundleWheelDelta(event.deltaX, event.deltaY, event.deltaMode, event.timeStamp, axisWheelStates.get(wheelKey) ?? { totalX: 0, totalY: 0, lastTime: 0 });
+        axisWheelStates.set(wheelKey, wheel.state);
         if (wheel.y === 0) return;
         event.preventDefault();
         event.stopPropagation();
-        if (scale === chart.priceScale(mainScaleSideRef.current, mainPaneIndexRef.current) && scaleLockedRef.current) return;
+        const isMainScale = paneIndex === mainPaneIndexRef.current && side === mainScaleSideRef.current;
+        if (isMainScale && scaleLockedRef.current) return;
         if ([PriceScaleMode.Percentage, PriceScaleMode.IndexedTo100].includes(scale.options().mode)) return;
         const range = scale.getVisibleRange();
         if (!range) return;
-        const nextRange = bundlePriceWheelRange(range, chart.paneSize().height, event.clientY - rect.top, wheel.y);
+        const nextRange = bundlePriceWheelRange(range, paneRect.height, event.clientY - paneRect.top, wheel.y);
         if (!nextRange) return;
         followLatestRef.current = false;
         viewportInteractionRef.current += 1;
         setVisiblePriceRange(scale, nextRange);
         refreshDrawingOverlays();
-        if (scale === chart.priceScale(mainScaleSideRef.current, mainPaneIndexRef.current)) {
+        if (isMainScale) {
           autoScaleRef.current = false;
           setAutoScale(false);
         }
@@ -1077,9 +1116,9 @@ export default function Chart() {
       const timeScale = chart.timeScale();
       const range = timeScale.getVisibleLogicalRange();
       if (!range) return;
-      const plotWidth = rect.width - leftScale.width() - rightScale.width();
+      const plotWidth = rect.width - leftWidth - rightWidth;
       if (plotWidth <= 0) return;
-      const pointerFraction = (pointerX - leftScale.width()) / plotWidth;
+      const pointerFraction = (pointerX - leftWidth) / plotWidth;
       const zoomedRange = wheel.y !== 0
         ? bundleTimeWheelRange(range, wheel.y, event.ctrlKey || event.metaKey ? pointerFraction : undefined)
         : range;
@@ -1472,7 +1511,7 @@ export default function Chart() {
       if (latestVolumeSma) volumeSmaSeriesRef.current?.update(latestVolumeSma);
       const latestVolumeMa = latestVolumeMaPoint(allBars, currentSettings.length, "SMA", 1);
       if (latestVolumeMa) volumeMaSeriesRef.current?.update(latestVolumeMa);
-      if (priceIndicatorSeriesRef.current.size > 0 || macdSeriesRef.current || rsiSeriesRef.current) {
+      if (referenceStudies.instances.current.size > 0 || priceIndicatorSeriesRef.current.size > 0 || macdSeriesRef.current || rsiSeriesRef.current) {
         updateStudySeries(allBars);
       }
 
@@ -1691,15 +1730,79 @@ export default function Chart() {
       value: bar.volume,
       color: volumeColorForBar(bar, bars[index - 1]?.close),
     })));
-    volumeMaSeriesRef.current?.applyOptions({ color: volumeVisualSettings.maColor, lastValueVisible: axisLabelsRef.current.studyValues && volumeVisualSettings.scaleLabelVisible });
-    volumeSmaSeriesRef.current?.applyOptions({ color: volumeVisualSettings.smoothedColor, lastValueVisible: axisLabelsRef.current.studyValues && volumeVisualSettings.scaleLabelVisible });
+    volumeMaSeriesRef.current?.applyOptions({
+      color: volumeVisualSettings.maColor,
+      lineType: volumeVisualSettings.maPlotStyle === "step" ? LineType.WithSteps : volumeVisualSettings.maPlotStyle === "curved" ? LineType.Curved : LineType.Simple,
+      lineStyle: volumeVisualSettings.maPlotStyle === "dashed" ? LineStyle.Dashed : LineStyle.Solid,
+      priceLineVisible: volumeVisualSettings.maPriceLineVisible,
+      lastValueVisible: axisLabelsRef.current.studyValues && volumeVisualSettings.scaleLabelVisible,
+    });
+    volumeSmaSeriesRef.current?.applyOptions({
+      color: volumeVisualSettings.smoothedColor,
+      lineType: volumeVisualSettings.smoothedPlotStyle === "step" ? LineType.WithSteps : volumeVisualSettings.smoothedPlotStyle === "curved" ? LineType.Curved : LineType.Simple,
+      lineStyle: volumeVisualSettings.smoothedPlotStyle === "dashed" ? LineStyle.Dashed : LineStyle.Solid,
+      priceLineVisible: volumeVisualSettings.smoothedPriceLineVisible,
+      lastValueVisible: axisLabelsRef.current.studyValues && volumeVisualSettings.scaleLabelVisible,
+    });
     volumeSeriesRef.current?.applyOptions({ lastValueVisible: axisLabelsRef.current.studyValues && volumeVisualSettings.scaleLabelVisible });
   }, [volumeVisualSettings, volumeColorForBar]);
+
+  type MovableSeries = ISeriesApi<"Candlestick"> | ISeriesApi<"Histogram"> | ISeriesApi<"Line"> | ReferenceSeries;
+
+  const transferSeriesGroup = useCallback((group: MovableSeries[], targetPane: ReturnType<MovableSeries["getPane"]>) => {
+    const markerRefs = [mainSelectionMarkersRef, volumeSelectionMarkersRef];
+    const markedSeries = [seriesRef.current, volumeSeriesRef.current];
+    const suspended = markerRefs.flatMap((ref, index) => {
+      const series = markedSeries[index];
+      if (!series || !group.includes(series) || !ref.current) return [];
+      const markers = [...ref.current.markers()];
+      ref.current.detach();
+      ref.current = null;
+      return [{ ref, series, markers }];
+    });
+    const sourcePane = group[0].getPane();
+    const preserveSource = sourcePane.preserveEmptyPane();
+    // Giữ chỉ số cửa sổ ổn định và tạm ngắt dấu chọn khi chuỗi chưa có cửa sổ.
+    sourcePane.setPreserveEmptyPane(true);
+    try {
+      group.forEach((item) => item.moveToPane(targetPane.paneIndex()));
+    } finally {
+      sourcePane.setPreserveEmptyPane(preserveSource);
+      if (!preserveSource && sourcePane.getSeries().length === 0) {
+        chartRef.current?.removePane(sourcePane.paneIndex());
+      }
+      suspended.forEach(({ ref, series, markers }) => {
+        ref.current = createSeriesMarkers(series, markers, { zOrder: "top" });
+      });
+    }
+  }, []);
+
+  const syncPaneLayout = useCallback(() => {
+    const chart = chartRef.current;
+    const main = seriesRef.current;
+    const volume = volumeSeriesRef.current;
+    if (!chart || !main || !volume) return;
+    const mainPane = main.getPane();
+
+    const nextMainIndex = mainPane.paneIndex();
+    mainPaneIndexRef.current = nextMainIndex;
+    setMainPaneIndex(nextMainIndex);
+    setVolumePaneIndex(volume.getPane().paneIndex());
+    setPaneRevision((value) => value + 1);
+  }, []);
+
+  const volumeAddedRef = useRef(false);
 
   useEffect(() => {
     const chart = chartRef.current;
     if (!chart) return;
     const active = new Set(activeStudies);
+    if (active.has("volume") && !volumeAddedRef.current) {
+      const group = [volumeSeriesRef.current, volumeMaSeriesRef.current, volumeSmaSeriesRef.current]
+        .filter((item): item is NonNullable<typeof item> => item !== null);
+      if (group.length) transferSeriesGroup(group, chart.addPane());
+    }
+    volumeAddedRef.current = active.has("volume");
     PRICE_INDICATORS.forEach((indicator) => {
       let series = priceIndicatorSeriesRef.current.get(indicator.id);
       if (active.has(indicator.study) && !series) {
@@ -1712,7 +1815,7 @@ export default function Chart() {
           priceLineVisible: false,
           crosshairMarkerVisible: false,
           autoscaleInfoProvider: seriesOnlyRef.current ? () => null : undefined,
-        }, mainPaneIndexRef.current);
+        }, chart.panes().length);
         priceIndicatorSeriesRef.current.set(indicator.id, series);
       } else if (!active.has(indicator.study) && series) {
         chart.removeSeries(series);
@@ -1726,6 +1829,7 @@ export default function Chart() {
       { id: "BOLL_MIDDLE", color: "#ff6d00" },
       { id: "BOLL_LOWER", color: "#2962ff" },
     ];
+    let bollingerPane = priceIndicatorSeriesRef.current.get("BOLL_MIDDLE")?.getPane();
     bollingerLines.forEach((indicator) => {
       let series = priceIndicatorSeriesRef.current.get(indicator.id);
       if (active.has("boll") && !series) {
@@ -1738,7 +1842,8 @@ export default function Chart() {
           priceLineVisible: false,
           crosshairMarkerVisible: false,
           autoscaleInfoProvider: seriesOnlyRef.current ? () => null : undefined,
-        }, mainPaneIndexRef.current);
+        }, bollingerPane?.paneIndex() ?? chart.panes().length);
+        bollingerPane = series.getPane();
         priceIndicatorSeriesRef.current.set(indicator.id, series);
       } else if (!active.has("boll") && series) {
         chart.removeSeries(series);
@@ -1746,20 +1851,20 @@ export default function Chart() {
       }
     });
 
-    if (macdSeriesRef.current) {
+    if (!active.has("macd") && macdSeriesRef.current) {
       chart.removeSeries(macdSeriesRef.current.histogram);
       chart.removeSeries(macdSeriesRef.current.macd);
       chart.removeSeries(macdSeriesRef.current.signal);
       macdSeriesRef.current = null;
     }
-    if (rsiSeriesRef.current) {
+    if (!active.has("rsi") && rsiSeriesRef.current) {
       chart.removeSeries(rsiSeriesRef.current.rsi);
       chart.removeSeries(rsiSeriesRef.current.upper);
       chart.removeSeries(rsiSeriesRef.current.lower);
       rsiSeriesRef.current = null;
     }
     let paneIndex = chart.panes().length;
-    if (active.has("macd")) {
+    if (active.has("macd") && !macdSeriesRef.current) {
       const histogram = chart.addSeries(HistogramSeries, { title: axisLabelsRef.current.studyNames ? "Histogram" : "", priceScaleId: indicatorScaleSidesRef.current.macd, priceLineVisible: false, lastValueVisible: axisLabelsRef.current.studyValues }, paneIndex);
       const macd = chart.addSeries(LineSeries, { title: axisLabelsRef.current.studyNames ? "MACD" : "", priceScaleId: indicatorScaleSidesRef.current.macd, color: "#2962ff", lineWidth: 2, priceLineVisible: false, lastValueVisible: axisLabelsRef.current.studyValues }, paneIndex);
       const signal = chart.addSeries(LineSeries, { title: axisLabelsRef.current.studyNames ? "Signal" : "", priceScaleId: indicatorScaleSidesRef.current.macd, color: "#ff6d00", lineWidth: 2, priceLineVisible: false, lastValueVisible: axisLabelsRef.current.studyValues }, paneIndex);
@@ -1768,7 +1873,7 @@ export default function Chart() {
       chart.priceScale(indicatorScaleSidesRef.current.macd, paneIndex).applyOptions({ mode: PriceScaleMode.Normal });
       paneIndex++;
     }
-    if (active.has("rsi")) {
+    if (active.has("rsi") && !rsiSeriesRef.current) {
       const rsi = chart.addSeries(LineSeries, { title: axisLabelsRef.current.studyNames ? "RSI" : "", priceScaleId: indicatorScaleSidesRef.current.rsi, color: "#7e57c2", lineWidth: 2, priceLineVisible: false, lastValueVisible: axisLabelsRef.current.studyValues }, paneIndex);
       const upper = chart.addSeries(LineSeries, { priceScaleId: indicatorScaleSidesRef.current.rsi, color: "#596273", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false }, paneIndex);
       const lower = chart.addSeries(LineSeries, { priceScaleId: indicatorScaleSidesRef.current.rsi, color: "#596273", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false }, paneIndex);
@@ -1790,7 +1895,8 @@ export default function Chart() {
       ))
       .sort((a, b) => Number(a.time) - Number(b.time));
     updateStudySeries(bars);
-  }, [activeStudies, compareSymbols.length, resolution, symbolInfo?.session, symbolInfo?.timezone, volumeMaVisible, volumeSmoothedMaVisible, volumeAllowed, volumeVisualSettings.histogramVisible, volumeHidden]);
+    syncPaneLayout();
+  }, [syncPaneLayout, transferSeriesGroup, activeStudies, compareSymbols.length, resolution, symbolInfo?.session, symbolInfo?.timezone, volumeMaVisible, volumeSmoothedMaVisible, volumeAllowed, volumeVisualSettings.histogramVisible, volumeHidden]);
 
   useEffect(() => {
     const onFullscreenChange = () => setIsFullscreen(document.fullscreenElement !== null);
@@ -1875,9 +1981,6 @@ export default function Chart() {
       priceScaleId: volumeScaleId,
       visible: activeStudies.includes("volume") && !volumeHidden && volumeAllowed && volumeSmoothedMaVisible,
     });
-    if (volumeScaleId === "volume") chart.priceScale("volume", volumePaneIndex).applyOptions({ scaleMargins: { top: 0.8, bottom: 0 }, visible: false });
-    else if (volumePaneIndex !== mainPaneIndex) chart.priceScale(volumeScaleId, volumePaneIndex).applyOptions({ scaleMargins: { top: 0.08, bottom: 0.05 }, visible: true });
-
     const visibleOtherSourceOn = (side: "left" | "right") =>
       [...compareSeriesRef.current.values(), ...priceIndicatorSeriesRef.current.values()]
         .some((item) => item.options().visible !== false && item.options().priceScaleId === side);
@@ -1900,6 +2003,9 @@ export default function Chart() {
           : { top: 0.02, bottom: 0 },
       },
     });
+
+    if (volumeScaleId === "volume") chart.priceScale("volume", volumePaneIndex).applyOptions({ scaleMargins: { top: 0.8, bottom: 0 }, visible: false });
+    else if (volumePaneIndex !== mainPaneIndex) chart.priceScale(volumeScaleId, volumePaneIndex).applyOptions({ scaleMargins: { top: 0.08, bottom: 0.05 }, visible: true });
 
     const priceScale = chart.priceScale(priceScaleId, mainPaneIndex);
     priceScale.applyOptions({
@@ -1964,10 +2070,11 @@ export default function Chart() {
           try { return chart.priceScale(side, index).width(); }
           catch { return 0; }
         };
-        const plotTop = (source?: ISeriesApi<"Line"> | ISeriesApi<"Histogram"> | ISeriesApi<"Candlestick"> | null) =>
+        const plotTop = (source?: MovableSeries | null) =>
           source?.getPane().getHTMLElement()?.getBoundingClientRect().top ?? paneElement.getBoundingClientRect().top;
         const rootTop = container.parentElement.getBoundingClientRect().top;
         const sourceTops: Record<string, number> = {};
+        referenceStudies.instances.current.forEach((study) => { if (study.series) sourceTops[study.id] = plotTop(study.series) - rootTop; });
         compareSeriesRef.current.forEach((source, symbol) => { sourceTops[`compare:${symbol}`] = plotTop(source) - rootTop; });
         priceIndicatorSeriesRef.current.forEach((source, id) => { sourceTops[`study:${id}`] = plotTop(source) - rootTop; });
         if (macdSeriesRef.current) sourceTops["study:macd"] = plotTop(macdSeriesRef.current.macd) - rootTop;
@@ -1996,7 +2103,7 @@ export default function Chart() {
       observer.disconnect();
       chart.timeScale().unsubscribeSizeChange(update);
     };
-  }, [mainPaneIndex, mainScaleSide, comparisonActive, volumePaneIndex, paneRevision, activeStudies, compareSymbols]);
+  }, [mainPaneIndex, mainScaleSide, comparisonActive, volumePaneIndex, paneRevision, activeStudies, compareSymbols, referenceStudies.revision]);
 
   useEffect(() => {
     const series = seriesRef.current;
@@ -2171,8 +2278,8 @@ export default function Chart() {
       return paneRect && clientY >= paneRect.top && clientY < paneRect.bottom;
     });
     if (paneIndex < 0) return null;
-    const leftWidth = chart.priceScale("left", paneIndex).width();
-    const rightWidth = chart.priceScale("right", paneIndex).width();
+    const leftWidth = safePriceScaleWidth(chart, "left", paneIndex);
+    const rightWidth = safePriceScaleWidth(chart, "right", paneIndex);
     const x = clientX - rect.left;
     const side: "left" | "right" | null = leftWidth > 0 && x <= leftWidth
       ? "left"
@@ -2478,7 +2585,7 @@ export default function Chart() {
     if (drawingKeyRef.current) localStorage.removeItem(drawingKeyRef.current);
   };
 
-  const clearIndicators = () => setActiveStudies([]);
+  const clearIndicators = () => { setActiveStudies([]); referenceStudies.clear(); };
 
   const clearChartObjects = () => {
     clearDrawings();
@@ -2531,10 +2638,14 @@ export default function Chart() {
     const series = seriesRef.current;
     const chartElement = containerRef.current;
     if (!selectedDrawing || !chart || !series || !chartElement) return null;
+    const pane = series.getPane();
+    const chartRect = chartElement.getBoundingClientRect();
+    const paneTop = (pane.getHTMLElement()?.getBoundingClientRect().top ?? chartRect.top) - chartRect.top;
+    const leftInset = safePriceScaleWidth(chart, "left", pane.paneIndex());
     const coordinates = selectedDrawing.points.flatMap((point) => {
       const x = chart.timeScale().timeToCoordinate(point.timestamp as Time);
       const y = series.priceToCoordinate(point.price);
-      return x === null || y === null ? [] : [{ x, y: chartElement.offsetTop + y }];
+      return x === null || y === null ? [] : [{ x: x + leftInset, y: chartElement.offsetTop + paneTop + y }];
     });
     if (!coordinates.length) return null;
     const xValues = coordinates.map((point) => point.x);
@@ -2553,7 +2664,7 @@ export default function Chart() {
       const targetX = chart.timeScale().timeToCoordinate(targetPoint.timestamp as Time);
       const targetY = series.priceToCoordinate(targetPoint.price);
       if (targetX !== null && targetY !== null) {
-        textAnchor = { x: targetX, y: chartElement.offsetTop + targetY };
+        textAnchor = { x: targetX + leftInset, y: chartElement.offsetTop + paneTop + targetY };
       }
     }
 
@@ -2638,40 +2749,28 @@ export default function Chart() {
     });
   };
 
-  type MovableSeries = ISeriesApi<"Candlestick"> | ISeriesApi<"Histogram"> | ISeriesApi<"Line">;
-
-  const syncPaneLayout = useCallback(() => {
-    const chart = chartRef.current;
-    const main = seriesRef.current;
-    const volume = volumeSeriesRef.current;
-    if (!chart || !main || !volume) return;
-    const mainPane = main.getPane();
-    chart.panes().forEach((pane) => pane.setStretchFactor(pane === mainPane ? 2 : 1));
-    const nextMainIndex = mainPane.paneIndex();
-    mainPaneIndexRef.current = nextMainIndex;
-    setMainPaneIndex(nextMainIndex);
-    setVolumePaneIndex(volume.getPane().paneIndex());
-    setPaneRevision((value) => value + 1);
-  }, []);
-
   const sourceSharesPane = (group: MovableSeries[]) => group.length > 0 && group[0].getPane().getSeries()
-    .some((item) => item !== timelineSeriesRef.current && !group.includes(item as MovableSeries) && item.options().visible !== false);
+    .some((item) => {
+      const inactiveVolume = !activeStudies.includes("volume") && [volumeSeriesRef.current, volumeMaSeriesRef.current, volumeSmaSeriesRef.current].some((volume) => volume === item);
+      return item !== timelineSeriesRef.current && !inactiveVolume && !group.includes(item as MovableSeries);
+    });
 
-  const moveSeriesGroup = (group: MovableSeries[], direction: "above" | "below") => {
+  const moveSeriesGroup = (group: MovableSeries[], direction: "above" | "below" | "new-above" | "new-below") => {
     const chart = chartRef.current;
     if (!chart || group.length === 0) return;
     const sourceIndex = group[0].getPane().paneIndex();
-    const shared = sourceSharesPane(group);
-    const adjacentIndex = sourceIndex + (direction === "above" ? -1 : 1);
-    const existingPane = shared ? null : chart.panes()[adjacentIndex];
-    if (!shared && !existingPane) return;
-    const targetPane = existingPane ?? chart.addPane(false);
-    group.forEach((item) => item.moveToPane(targetPane.paneIndex()));
-    if (shared && direction === "above") targetPane.moveTo(Math.min(sourceIndex, chart.panes().length - 1));
+    const createNew = direction.startsWith("new-");
+    const above = direction.endsWith("above");
+    if (createNew && !sourceSharesPane(group)) return;
+    const adjacent = chart.panes()[sourceIndex + (above ? -1 : 1)];
+    if (!createNew && !adjacent) return;
+    const targetPane = createNew ? chart.addPane(true) : adjacent;
+    if (createNew) targetPane.moveTo(sourceIndex + (above ? 0 : 1));
+    transferSeriesGroup(group, targetPane);
+    if (createNew) targetPane.setPreserveEmptyPane(false);
     syncPaneLayout();
   };
-
-  const moveMainSeriesToPane = (direction: "above" | "below") => {
+  const moveMainSeriesToPane = (direction: "above" | "below" | "new-above" | "new-below") => {
     const series = seriesRef.current;
     if (series) moveSeriesGroup(timelineSeriesRef.current ? [series, timelineSeriesRef.current] : [series], direction);
   };
@@ -2683,10 +2782,19 @@ export default function Chart() {
     series.setSeriesOrder(direction === "front" ? lastOrder : 0);
   };
 
-  const moveVolumeToPane = (direction: "above" | "below") => {
+  const moveVolumeToPane = (direction: "above" | "below" | "new-above" | "new-below") => {
     const group = [volumeSeriesRef.current, volumeMaSeriesRef.current, volumeSmaSeriesRef.current]
       .filter((item): item is NonNullable<typeof item> => item !== null);
     moveSeriesGroup(group, direction);
+    const chart = chartRef.current;
+    const volume = volumeSeriesRef.current;
+    if (chart && volume) {
+      const paneIndex = volume.getPane().paneIndex();
+      const scaleId = volume.options().priceScaleId ?? "right";
+      const scale = chart.priceScale(scaleId, paneIndex);
+      scale.applyOptions({ visible: true, scaleMargins: { top: 0.08, bottom: 0.05 } });
+      scale.setAutoScale(true);
+    }
   };
 
   useEffect(() => {
@@ -2694,10 +2802,11 @@ export default function Chart() {
     const main = seriesRef.current;
     const volume = volumeSeriesRef.current;
     if (!main || !volume || main.getPane() === volume.getPane()) return;
-    const targetIndex = main.getPane().paneIndex();
-    [volume, volumeMaSeriesRef.current, volumeSmaSeriesRef.current].forEach((item) => item?.moveToPane(targetIndex));
+    const group = [volume, volumeMaSeriesRef.current, volumeSmaSeriesRef.current]
+      .filter((item): item is NonNullable<typeof item> => item !== null);
+    transferSeriesGroup(group, main.getPane());
     syncPaneLayout();
-  }, [activeStudies, syncPaneLayout]);
+  }, [activeStudies, syncPaneLayout, transferSeriesGroup]);
 
   const moveVolumeSeriesOrder = (direction: "front" | "back") => {
     const series = [volumeSeriesRef.current, volumeMaSeriesRef.current, volumeSmaSeriesRef.current].filter((item): item is NonNullable<typeof item> => item !== null);
@@ -2706,6 +2815,10 @@ export default function Chart() {
   };
 
   const sourceGroupForId = (id: string): MovableSeries[] => {
+    if (id.startsWith("reference:")) {
+      const series = referenceStudies.instances.current.get(id)?.series;
+      return series ? [series] : [];
+    }
     if (id.startsWith("compare:")) {
       const source = compareSeriesRef.current.get(id.slice(8));
       return source ? [source] : [];
@@ -2722,7 +2835,7 @@ export default function Chart() {
     return source ? [source] : [];
   };
 
-  const moveSourceToPane = (id: string, direction: "above" | "below") => moveSeriesGroup(sourceGroupForId(id), direction);
+  const moveSourceToPane = (id: string, direction: "above" | "below" | "new-above" | "new-below") => moveSeriesGroup(sourceGroupForId(id), direction);
   const moveSourceOrder = (id: string, direction: "front" | "back") => {
     const group = sourceGroupForId(id);
     (direction === "front" ? group : [...group].reverse()).forEach((item) => item.setSeriesOrder(direction === "front" ? item.getPane().getSeries().length - 1 : 0));
@@ -2730,12 +2843,15 @@ export default function Chart() {
   const toggleSourceVisibility = (id: string) => {
     const group = sourceGroupForId(id);
     const visible = group.some((item) => item.options().visible !== false);
+    const reference = referenceStudies.instances.current.get(id);
+    if (reference) reference.visible = !visible;
     group.forEach((item) => item.applyOptions({ visible: !visible }));
     if (visible) setSelectedLegend((current) => current === id ? null : current);
     setPaneRevision((value) => value + 1);
   };
   const removeSource = (id: string) => {
-    if (id.startsWith("compare:")) setCompareSymbols((current) => current.filter((symbol) => symbol !== id.slice(8)));
+    if (id.startsWith("reference:")) { referenceStudies.remove(id); syncPaneLayout(); }
+    else if (id.startsWith("compare:")) setCompareSymbols((current) => current.filter((symbol) => symbol !== id.slice(8)));
     else {
       const name = id.slice(6);
       const study = name === "macd" || name === "rsi" ? name : name.startsWith("EMA") ? "ema" : name.startsWith("BOLL") ? "boll" : "ma";
@@ -2799,10 +2915,32 @@ export default function Chart() {
   });
   if (macdSeriesRef.current) addSourceLegend("study:macd", "MACD 12 26 9", "#2962ff");
   if (rsiSeriesRef.current) addSourceLegend("study:rsi", "RSI 14", "#7e57c2");
+  referenceStudies.instances.current.forEach((study) => {
+    const point = study.points.find((item) => Number(item.time) === Number(quoteBar?.time)) ?? study.points.at(-1);
+    const plot = study.definition?.metainfo.plots.find((item) => item.type === "line");
+    const color = (plot && point?.colors[plot.id]) || (plot && study.settings?.styles[plot.id]?.color) || "#2196f3";
+    const values = study.definition?.metainfo.plots.filter((item) => item.type === "line" && study.settings?.styles[item.id]?.visible !== false && study.settings?.styles[item.id]?.display !== 0).map((item) => {
+      const value = point?.values[item.id];
+      return value === undefined ? "N/A" : study.definition?.metainfo.format?.type === "volume" ? formatVolume(value) : value.toFixed(study.settings?.precision ?? 2);
+    }).join("  ");
+    const value = study.error ? `Lỗi: ${study.error}` : study.loading ? "Đang tải…" : study.settings?.statusValues ? values : undefined;
+    if (study.series) addSourceLegend(study.id, study.definition?.metainfo.shortDescription ?? study.name, color, value);
+    else sourceLegends.push({ id: study.id, label: study.name, color: study.error ? "#f23645" : color, value, top: legendBounds.top + (paneRows.get(mainPaneIndex) ?? 1) * 24, paneIndex: mainPaneIndex, shared: false, visible: true, scaleSide: "right" });
+    const legend = sourceLegends.at(-1)!;
+    legend.parameters = study.definition?.metainfo.inputs.filter((input) => !input.isHidden && input.type !== "bool").map((input) => study.settings?.inputs[input.id]).filter((value) => value !== "").join(" ");
+    legend.hasSettings = Boolean(study.settings);
+    if (study.error) legend.color = "#f23645";
+    if (study.view && study.view.selected !== (selectedLegend === study.id)) {
+      study.view.selected = selectedLegend === study.id;
+      study.series?.applyOptions({});
+    }
+  });
+  const referenceSettings = referenceStudies.settingsId ? referenceStudies.instances.current.get(referenceStudies.settingsId) : undefined;
   return (
     <div id="app">
       <DelayedTooltip />
       <OutsideDragSelectionGuard />
+      {referenceSettings?.definition && referenceSettings.settings && <ReferenceStudySettingsDialog key={referenceSettings.id} definition={referenceSettings.definition} settings={referenceSettings.settings} onApply={(settings) => referenceStudies.apply(referenceSettings.id, settings)} onClose={() => referenceStudies.setSettingsId(null)}/> }
       <ChartHeader
         symbol={symbol}
         compareSymbols={compareSymbols}
@@ -2855,6 +2993,11 @@ export default function Chart() {
         onIndicatorMenuToggle={setIndicatorMenuOpen}
         onIndicatorSearchChange={setIndicatorSearch}
         onStudyToggle={toggleStudy}
+        onAddReferenceStudy={(name) => {
+          if (name === "Compare" || name === "Overlay") setIsCompareModalOpen(true);
+          else if (name === "Volume" && !activeStudies.includes("volume")) setActiveStudies((current) => [...current, "volume"]);
+          else void referenceStudies.add(name);
+        }}
         onDownloadSnapshot={downloadSnapshot}
         onToggleFullscreen={toggleFullscreen}
         onUndo={handleUndo}
@@ -2885,6 +3028,7 @@ export default function Chart() {
           onClearAll={clearChartObjects}
         />
         <div className="chart-stage" onMouseMoveCapture={onAxisHover} onMouseLeave={() => setHoverAxis(null)}>
+          <PaneControls chart={chartRef.current} revision={paneRevision + referenceStudies.revision} onLayoutChange={syncPaneLayout}/>
           <MarketDataPanel
             symbol={symbol}
             exchange={symbolInfo?.exchange ?? ""}
@@ -2899,6 +3043,7 @@ export default function Chart() {
             onMoveSourceOrder={moveSourceOrder}
             onToggleSourceVisibility={toggleSourceVisibility}
             onRemoveSource={removeSource}
+            onOpenSourceSettings={referenceStudies.setSettingsId}
             onPinSourceToScale={pinSourceToScale}
             seriesVisible={mainSeriesVisible}
             scaleSide={mainScaleSide}
@@ -2972,6 +3117,10 @@ export default function Chart() {
                 downColor: settings.downColor,
                 maColor: settings.maColor,
                 smoothedColor: settings.smoothedColor,
+                maPlotStyle: settings.maPlotStyle,
+                smoothedPlotStyle: settings.smoothedPlotStyle,
+                maPriceLineVisible: settings.maPriceLineVisible,
+                smoothedPriceLineVisible: settings.smoothedPriceLineVisible,
                 scaleLabelVisible: settings.scaleLabelVisible,
                 statusValueVisible: settings.statusValueVisible,
                 visibleIntervals: settings.visibleIntervals,

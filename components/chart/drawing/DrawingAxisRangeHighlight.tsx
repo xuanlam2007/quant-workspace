@@ -27,10 +27,18 @@ export function DrawingAxisRangeHighlight({
 
   const xValues = coordinates.map(({ x }) => x);
   const yValues = coordinates.map(({ y }) => y);
-  const priceScaleWidth = chart.priceScale("left").width();
+  let priceScaleWidth = 0;
+  try {
+    priceScaleWidth = chart.priceScale("left", series.getPane().paneIndex()).width();
+  } catch {
+    // Chờ trục giá của pane mới khởi tạo trước khi vẽ vùng chọn.
+  }
   const timeScaleWidth = chart.timeScale().width();
   const timeScaleHeight = chart.timeScale().height();
-  const paneHeight = chart.paneSize().height;
+  const pane = series.getPane();
+  const paneHeight = chart.paneSize(pane.paneIndex()).height;
+  const chartRect = chart.chartElement().getBoundingClientRect();
+  const paneTop = (pane.getHTMLElement()?.getBoundingClientRect().top ?? chartRect.top) - chartRect.top;
   const xStart = Math.max(0, Math.min(timeScaleWidth, Math.min(...xValues)));
   const xEnd = Math.max(0, Math.min(timeScaleWidth, Math.max(...xValues)));
   const yStart = Math.max(0, Math.min(paneHeight, Math.min(...yValues)));
@@ -42,7 +50,7 @@ export function DrawingAxisRangeHighlight({
         <div
           className="drawing-axis-range drawing-axis-range--price"
           style={{
-            top: chartTop + yStart,
+            top: chartTop + paneTop + yStart,
             width: priceScaleWidth,
             height: yEnd - yStart,
           }}
@@ -54,7 +62,7 @@ export function DrawingAxisRangeHighlight({
           className="drawing-axis-range drawing-axis-range--time"
           style={{
             left: priceScaleWidth + xStart,
-            top: chartTop + paneHeight,
+            top: chartTop + chartRect.height - timeScaleHeight,
             width: xEnd - xStart,
             height: timeScaleHeight,
           }}

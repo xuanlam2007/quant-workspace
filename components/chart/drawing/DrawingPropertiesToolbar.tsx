@@ -9,6 +9,7 @@ import { LineStyle } from "lightweight-charts";
 import type { LineToolExport, LineToolType } from "lightweight-charts-line-tools-core";
 import type { DrawingIcon } from "../config/chart-config";
 import { VNDIRECT_TOOLBAR_ICONS } from "./vndirect-icons";
+import { ChartColorPicker } from "../layout/ChartColorPicker";
 
 const TOOL_ICONS: Partial<Record<LineToolType, DrawingIcon>> = {
   TrendLine: "trend",
@@ -289,10 +290,10 @@ export function DrawingPropertiesToolbar({
                     <span style={{ background: value }} />
                   </button>
                 ))}
-                <label className="drawing-properties__custom-color">
+                <div className="drawing-properties__custom-color">
                   <span>Màu tùy chỉnh</span>
-                  <input type="color" value={color.startsWith("#") ? color : "#2962ff"} onChange={(event) => updateLine({ color: event.target.value })} />
-                </label>
+                  <ChartColorPicker label="Màu tùy chỉnh" value={color.startsWith("#") ? color : "#2962ff"} onChange={(value) => updateLine({ color: value })}/>
+                </div>
               </div>
             )}
           </div>
@@ -338,7 +339,7 @@ export function DrawingPropertiesToolbar({
             <strong>Cài đặt bản vẽ</strong>
             {line ? (
               <>
-                <label>Màu đường <input type="color" value={color.startsWith("#") ? color : "#2962ff"} onChange={(event) => updateLine({ color: event.target.value })} /></label>
+                <div className="drawing-properties__settings-color"><span>Màu đường</span><ChartColorPicker label="Màu đường" value={color.startsWith("#") ? color : "#2962ff"} onChange={(value) => updateLine({ color: value })}/></div>
                 <label>Độ dày <input type="range" min="1" max="4" value={width} onChange={(event) => updateLine({ width: Number(event.target.value) })} /></label>
               </>
             ) : <span>Thuộc tính được chỉnh trực tiếp trên thanh công cụ.</span>}

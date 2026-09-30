@@ -64,9 +64,15 @@ export function isTradingSessionTime(
 }
 
 export function formatVolume(value: number) {
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(2)}M`;
-  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
-  return value.toFixed(0);
+  if (!Number.isFinite(value)) return "N/A";
+  const sign = value < 0 ? "−" : "";
+  const absolute = Math.round(Math.abs(value));
+  if (absolute < 995) return `${sign}${absolute}`;
+  const [divisor, suffix] = absolute < 999_995 ? [1_000, "K"] as const
+    : absolute < 999_999_995 ? [1_000_000, "M"] as const
+      : absolute < 999_999_999_995 ? [1_000_000_000, "B"] as const
+        : [1_000_000_000_000, "T"] as const;
+  return `${sign}${Number((absolute / divisor).toFixed(3))}${suffix}`;
 }
 
 export function formatChartTime(time: unknown, timezone = "Asia/Bangkok") {
