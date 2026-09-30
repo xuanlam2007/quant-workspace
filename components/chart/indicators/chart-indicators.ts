@@ -38,9 +38,9 @@ export function volumeMa(
   smoothingLength = 1,
 ) {
   const volumePoints = bars.map((bar) => ({ time: bar.time, value: bar.volume }));
-  const average = calculateMa(volumePoints, length, type);
+  const average = calculateMa(volumePoints, length, "SMA");
   return smoothingLength > 1
-    ? calculateMa(average, smoothingLength, "SMA")
+    ? calculateMa(average, smoothingLength, type)
     : average;
 }
 

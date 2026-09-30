@@ -11,7 +11,7 @@ import {
 import { SymbolSearchModal } from "./SymbolSearchModal";
 import { CompareSymbolModal } from "./CompareSymbolModal";
 
-const HEADER_SVGS = {
+export const HEADER_SVGS = {
   search: (
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18" width="18" height="18" aria-hidden="true">
       <path fill="currentColor" d="M3.5 8a4.5 4.5 0 1 1 9 0 4.5 4.5 0 0 1-9 0ZM8 2a6 6 0 1 0 3.65 10.76l3.58 3.58 1.06-1.06-3.57-3.57A6 6 0 0 0 8 2Z" />

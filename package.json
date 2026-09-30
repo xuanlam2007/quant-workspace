@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "scripts": {
     "dev": "node scripts/next-dev.mjs",
-    "build": "next build",
+    "build": "next build --webpack",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "eslint ."
   },
   "dependencies": {
     "lightweight-charts": "^5.2.1",
@@ -17,7 +17,7 @@
     "lightweight-charts-line-tools-price-range": "github:difurious/lightweight-charts-line-tools-price-range",
     "lightweight-charts-line-tools-rectangle": "github:difurious/lightweight-charts-line-tools-rectangle",
     "lightweight-charts-line-tools-text": "github:difurious/lightweight-charts-line-tools-text",
-    "next": "^15.0.0",
+    "next": "^16.3.7",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "socket.io-client": "^2.5.0"
@@ -27,7 +27,11 @@
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",
     "eslint": "^9.39.5",
-    "eslint-config-next": "^15.5.25",
+    "eslint-config-next": "^16.3.7",
     "typescript": "^5.6.0"
+  },
+  "overrides": {
+    "postcss": "^8.5.23",
+    "parseuri": "file:vendor/parseuri"
   }
 }

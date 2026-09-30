@@ -3,8 +3,9 @@
 // Chỉ khai báo phần API cần dùng để tránh lệch phiên bản
 declare module "socket.io-client" {
   export interface Socket {
-    on(event: string, cb: (...args: any[]) => void): this;
-    emit(event: string, ...args: any[]): this;
+    connected: boolean;
+    on(event: string, cb: (...args: unknown[]) => void): this;
+    emit(event: string, ...args: unknown[]): this;
     close(): void;
   }
   export interface SocketOptions {

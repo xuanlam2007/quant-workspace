@@ -48,7 +48,7 @@ async function run() {
   const require = createRequire(import.meta.url);
   const nextBin = require.resolve("next/dist/bin/next");
 
-  const child = spawn(process.execPath, [nextBin, "dev", ...nextArgs], {
+  const child = spawn(process.execPath, [nextBin, "dev", "--webpack", ...nextArgs], {
     env: { ...process.env, NEXT_DIST_DIR: devDistDir(port) },
     stdio: "inherit",
   });
