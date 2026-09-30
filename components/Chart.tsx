@@ -274,6 +274,12 @@ export default function Chart() {
   const followLatestRef = useRef(true);
   const viewportInteractionRef = useRef(0);
   const historyLoadGenerationRef = useRef(0);
+  const preloadedHistoryRef = useRef<{
+    symbol: string;
+    resolution: string;
+    rangeDays: number | undefined;
+    promise: Promise<Bar[]>;
+  } | null>(null);
 
   const [symbol, setSymbol] = useState(DEFAULT_SYMBOL);
   const [compareSymbols, setCompareSymbols] = useState<string[]>([]);
@@ -327,6 +333,7 @@ export default function Chart() {
   const [isCompareModalOpen, setIsCompareModalOpen] = useState(false);
   const [symbolSearchInitialQuery, setSymbolSearchInitialQuery] = useState("");
   const [dataError, setDataError] = useState<string>();
+  const [historyLoading, setHistoryLoading] = useState(true);
   const [chartTimezone, setChartTimezone] = useState("Asia/Bangkok");
   const [chartSettingsOpen, setChartSettingsOpen] = useState(false);
   const [volumeMaVisible, setVolumeMaVisible] = useState(false);
@@ -590,6 +597,25 @@ export default function Chart() {
   textDialogOpenRef.current = textDialogOpen;
 
   useEffect(() => {
+    if (!symbolRestored || !resolutionRestored) return;
+    const controller = new AbortController();
+    const { from, to } = rangeForResolution(resolution, rangeDays);
+    const request = {
+      symbol,
+      resolution,
+      rangeDays,
+      promise: fetchHistory(symbol, resolution, from, to, controller.signal),
+    };
+    preloadedHistoryRef.current = request;
+    void request.promise.catch(() => undefined);
+    setHistoryLoading(true);
+    return () => {
+      controller.abort();
+      if (preloadedHistoryRef.current === request) preloadedHistoryRef.current = null;
+    };
+  }, [rangeDays, resolution, resolutionRestored, symbol, symbolRestored]);
+  useEffect(() => {
+    if (!symbolRestored) return;
     const controller = new AbortController();
     setDataError(undefined);
     setVisibleBar(undefined);
@@ -606,9 +632,10 @@ export default function Chart() {
       .catch((error: unknown) => {
         if (controller.signal.aborted) return;
         setDataError(error instanceof Error ? error.message : "symbol metadata failed");
+        setHistoryLoading(false);
       });
     return () => controller.abort();
-  }, [symbol]);
+  }, [symbol, symbolRestored]);
 
   const openTextDialog = useCallback((drawing: LineToolExport<LineToolType>) => {
     setEditingTextDrawing(drawing);
@@ -650,7 +677,7 @@ export default function Chart() {
         background: { type: ColorType.Solid, color: "#131722" },
         textColor: "#8b92a5",
         attributionLogo: false,
-        panes: { enableResize: true, separatorColor: "#434651", separatorHoverColor: "rgba(178, 181, 189, 0.2)" },
+        panes: { enableResize: true, separatorColor: "rgb(125, 125, 125)", separatorHoverColor: "rgba(178, 181, 189, 0.2)" },
       },
       localization: {
         timeFormatter: (time: Time) => formatChartTime(time, symbolTimezoneRef.current),
@@ -1139,7 +1166,7 @@ export default function Chart() {
   useEffect(() => {
     const series = seriesRef.current;
     const chart = chartRef.current;
-    if (!series || !chart || !symbolInfo) return;
+    if (!series || !chart || !symbolInfo || !resolutionRestored) return;
     const activeSession = symbolInfo.session;
     const activeTimezone = symbolInfo.timezone;
     const activePriceFormat = symbolPriceFormat(symbolInfo);
@@ -1157,6 +1184,7 @@ export default function Chart() {
     const historyAbortController = new AbortController();
     loadOlderHistoryRef.current = () => undefined;
     setDataError(undefined);
+    setHistoryLoading(true);
     series.applyOptions({ title: symbol, priceFormat: activePriceFormat });
     const realtimeTickBuffer = createRealtimeTickBuffer<PriceTick>(
       (tick) => Number(bucketStart(tick.time, resolution)),
@@ -1180,13 +1208,13 @@ export default function Chart() {
       const { from, to } = rangeForResolution(resolution, rangeDays);
       let bars: Bar[] = [];
       try {
-        bars = await fetchHistory(
-          symbol,
-          resolution,
-          from,
-          to,
-          historyAbortController.signal,
-        );
+        const preload = preloadedHistoryRef.current;
+        bars = await (preload
+          && preload.symbol === symbol
+          && preload.resolution === resolution
+          && preload.rangeDays === rangeDays
+          ? preload.promise
+          : fetchHistory(symbol, resolution, from, to, historyAbortController.signal));
       } catch (error: unknown) {
         if (cancelled || historyAbortController.signal.aborted) return;
         realtimeTickBuffer.dispose();
@@ -1200,6 +1228,7 @@ export default function Chart() {
         currentBarRef.current = undefined;
         setVisibleBar(undefined);
         setDataError(error instanceof Error ? error.message : "history fetch failed");
+        setHistoryLoading(false);
         return;
       }
       if (cancelled) return;
@@ -1381,6 +1410,7 @@ export default function Chart() {
         setLastPrice(currentBarRef.current.close.toFixed(activePriceFormat.precision));
         setVisibleBar(currentBarRef.current);
       }
+      setHistoryLoading(false);
       realtimeTickBuffer.release(
         currentBarRef.current ? Number(currentBarRef.current.time) : undefined,
         processRealtimeTick,
@@ -1515,7 +1545,7 @@ export default function Chart() {
       realtimeTickHandlerRef.current = () => undefined;
       flushRealtimeRef.current = () => undefined;
     };
-  }, [persistDrawingHistory, rangeDays, resolution, symbol, symbolInfo, syncCompareSeries, syncDrawingHistoryAvailability]);
+  }, [persistDrawingHistory, rangeDays, resolution, resolutionRestored, symbol, symbolInfo, syncCompareSeries, syncDrawingHistoryAvailability]);
 
   useEffect(() => {
     const chart = chartRef.current;
@@ -2701,6 +2731,7 @@ export default function Chart() {
     const group = sourceGroupForId(id);
     const visible = group.some((item) => item.options().visible !== false);
     group.forEach((item) => item.applyOptions({ visible: !visible }));
+    if (visible) setSelectedLegend((current) => current === id ? null : current);
     setPaneRevision((value) => value + 1);
   };
   const removeSource = (id: string) => {
@@ -2759,7 +2790,8 @@ export default function Chart() {
     const quote = comparisonQuotes.find((item) => item.symbol === compareSymbol);
     addSourceLegend(`compare:${compareSymbol}`, quote ? `${quote.description || compareSymbol}, ${quote.exchange}` : compareSymbol, quote?.color ?? "#2962ff", quote ? `${quote.price.toFixed(currentPriceFormat.precision)} ${quote.change >= 0 ? "+" : ""}${quote.change.toFixed(currentPriceFormat.precision)} (${quote.changePercent >= 0 ? "+" : ""}${quote.changePercent.toFixed(2)}%)` : undefined);
   });
-  const volumeRowTop = legendBounds.volumeTop + (paneRows.get(volumePaneIndex) ?? 0) * 24;
+  const volumeRowTop = (volumePaneIndex === mainPaneIndex ? legendBounds.top : legendBounds.volumeTop)
+    + (paneRows.get(volumePaneIndex) ?? 0) * 24;
   if (activeStudies.includes("volume")) paneRows.set(volumePaneIndex, (paneRows.get(volumePaneIndex) ?? 0) + 1);
   priceIndicatorSeriesRef.current.forEach((series, id) => {
     const label = id.startsWith("MA") ? `Moving Average ${id.slice(2)}` : id.startsWith("EMA") ? `Moving Average Exponential ${id.slice(3)}` : "Bollinger Bands";
@@ -2873,6 +2905,7 @@ export default function Chart() {
             leftAxisWidth={legendBounds.left}
             rightAxisWidth={legendBounds.right}
             paneTop={legendBounds.top}
+            loading={historyLoading}
             volumeEnabled={activeStudies.includes("volume")}
             mainPaneIndex={mainPaneIndex}
             mainPaneShared={mainPaneShared}
@@ -2899,7 +2932,10 @@ export default function Chart() {
             priceLineVisible={axisLines.price}
             appearance={chartAppearance}
             onOpenChartSettings={() => setChartSettingsOpen(true)}
-            onToggleSeriesVisibility={() => setMainSeriesVisible((visible) => !visible)}
+            onToggleSeriesVisibility={() => {
+              if (mainSeriesVisible) setSelectedLegend((current) => current === "instrument" ? null : current);
+              setMainSeriesVisible((visible) => !visible);
+            }}
             onCopyPrice={(price) => void copyMainPrice(price)}
             onPastePrice={() => void pasteMainPrice()}
             onMoveToPane={moveMainSeriesToPane}
@@ -2913,7 +2949,10 @@ export default function Chart() {
               setSelectedLegend((current) => current === "volume" ? null : current);
               setVolumeHidden(false);
             }}
-            onToggleVolumeVisibility={() => setVolumeHidden((hidden) => !hidden)}
+            onToggleVolumeVisibility={() => {
+              if (!volumeHidden) setSelectedLegend((current) => current === "volume" ? null : current);
+              setVolumeHidden((hidden) => !hidden);
+            }}
             onMoveVolumeToPane={moveVolumeToPane}
             onMoveVolumeSeriesOrder={moveVolumeSeriesOrder}
             onPinVolumeToScale={setVolumeScaleSideOverride}

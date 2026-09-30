@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { createPortal } from "react-dom";
 import type { Bar, SymbolInfo } from "@/lib/dchart-api";
 import { RESOLUTIONS, type MaType } from "../config/chart-config";
@@ -11,6 +11,7 @@ import { VolumeSettingsDialog, type VolumeSettings } from "./VolumeSettingsDialo
 
 const legendIcons = {
   eye: <svg viewBox="0 0 24 22" width="24" height="22" fill="none" aria-hidden="true"><path fill="currentColor" fillRule="evenodd" d="M17.9948 7.91366C16.6965 6.48549 14.6975 5 11.9999 5C9.30225 5 7.30322 6.48549 6.00488 7.91366C6.00488 7.91366 4 10 4 11C4 12 6.00488 14.0863 6.00488 14.0863C7.30322 15.5145 9.30225 17 11.9999 17C14.6975 17 16.6965 15.5145 17.9948 14.0863C17.9948 14.0863 20 12 20 11C20 10 17.9948 7.91366 17.9948 7.91366ZM6.74482 13.4137C7.94648 14.7355 9.69746 16 11.9999 16C14.3022 16 16.0532 14.7355 17.2549 13.4137C17.2549 13.4137 19 11.5 19 11C19 10.5 17.2549 8.58634 17.2549 8.58634C16.0532 7.26451 14.3022 6 11.9999 6C9.69746 6 7.94648 7.26451 6.74482 8.58634C6.74482 8.58634 5 10.5 5 11C5 11.5 6.74482 13.4137 6.74482 13.4137Z"/><path fill="currentColor" fillRule="evenodd" d="M12 13C13.1046 13 14 12.1046 14 11C14 9.89543 13.1046 9 12 9C10.8954 9 10 9.89543 10 11C10 12.1046 10.8954 13 12 13ZM12 14C13.6569 14 15 12.6569 15 11C15 9.34315 13.6569 8 12 8C10.3431 8 9 9.34315 9 11C9 12.6569 10.3431 14 12 14Z"/></svg>,
+  crossedEye: <svg viewBox="0 0 24 22" width="24" height="22" fill="none" aria-hidden="true"><path fill="currentColor" fillRule="evenodd" d="M8.8503 16.2712C9.76531 16.7135 10.8152 17 11.9999 17C14.6975 17 16.6965 15.5145 17.9948 14.0863C17.9948 14.0863 20 12 20 11C20 10 17.9948 7.91366 17.9948 7.91366C17.8729 7.77954 17.7448 7.64491 17.6105 7.51105L16.9035 8.2181C17.0254 8.33968 17.1425 8.46276 17.2549 8.58634C17.2549 8.58634 19 10.5 19 11C19 11.5 17.2549 13.4137 17.2549 13.4137C16.0532 14.7355 14.3022 16 11.9999 16C11.1218 16 10.324 15.8161 9.60627 15.5153L8.8503 16.2712ZM7.09663 13.7823C6.97455 13.6606 6.85728 13.5374 6.74482 13.4137C6.74482 13.4137 5 11.5 5 11C5 10.5 6.74482 8.58634 6.74482 8.58634C7.94648 7.26451 9.69746 6 11.9999 6C12.8781 6 13.6761 6.18398 14.394 6.48495L15.1499 5.729C14.2348 5.28657 13.1847 5 11.9999 5C9.30225 5 7.30322 6.48549 6.00488 7.91366C6.00488 7.91366 4 10 4 11C4 12 6.00488 14.0863 6.00488 14.0863C6.12693 14.2206 6.25516 14.3553 6.38959 14.4893L7.09663 13.7823Z"/><path fill="currentColor" fillRule="evenodd" d="M11.2231 13.8984C11.4709 13.9647 11.7313 14 12 14C13.6569 14 15 12.6569 15 11C15 10.7313 14.9647 10.4709 14.8984 10.2231L13.9961 11.1254C13.934 12.1301 13.1301 12.934 12.1254 12.9961L11.2231 13.8984ZM11.8751 9.00384C10.87 9.06578 10.0658 9.87001 10.0038 10.8751L9.10166 11.7772C9.03535 11.5294 9 11.2688 9 11C9 9.34315 10.3431 8 12 8C12.2688 8 12.5294 8.03535 12.7772 8.10166L11.8751 9.00384Z"/><path fill="currentColor" fillRule="evenodd" d="M5.64648 16.6465L17.6465 4.64648L18.3536 5.35359L6.35359 17.3536L5.64648 16.6465Z"/></svg>,
   more: <svg viewBox="0 0 16 4" width="16" height="4" fill="none" aria-hidden="true"><circle stroke="currentColor" cx="2" cy="2" r="1.5"/><circle stroke="currentColor" cx="8" cy="2" r="1.5"/><circle stroke="currentColor" cx="14" cy="2" r="1.5"/></svg>,
   remove: <svg viewBox="0 0 24 22" width="24" height="22" fill="none" aria-hidden="true"><path fill="currentColor" fillRule="evenodd" d="M17.35 6.35l-10 10-.7-.7 10-10 .7.7z"/><path fill="currentColor" fillRule="evenodd" d="M6.65 6.35l10 10 .7-.7-10-10-.7.7z"/></svg>,
   closed: <svg viewBox="0 0 18 18" width="18" height="18" aria-hidden="true"><rect width="10" height="4" fill="currentColor" rx="2" x="4" y="7"/></svg>,
@@ -69,6 +70,7 @@ interface MarketDataPanelProps {
   leftAxisWidth: number;
   rightAxisWidth: number;
   paneTop: number;
+  loading: boolean;
   volumeEnabled: boolean;
   volumeHidden: boolean;
   volumeScaleSide: "left" | "right";
@@ -130,6 +132,7 @@ export function MarketDataPanel({
   leftAxisWidth,
   rightAxisWidth,
   paneTop,
+  loading,
   volumeEnabled,
   volumeHidden,
   volumeScaleSide,
@@ -179,6 +182,7 @@ export function MarketDataPanel({
   const [volumeMenuPosition, setVolumeMenuPosition] = useState({ left: 0, top: 0 });
   const [now, setNow] = useState(() => Date.now());
   const [sessionOpen, setSessionOpen] = useState(false);
+  const [visibilityTooltip, setVisibilityTooltip] = useState<{ text: string; left: number; top: number } | null>(null);
   const sessionRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const volumeMenuRef = useRef<HTMLDivElement>(null);
@@ -244,6 +248,10 @@ export function MarketDataPanel({
   }, [sessionOpen]);
 
   useEffect(() => {
+    if (!seriesVisible) setSessionOpen(false);
+  }, [seriesVisible]);
+
+  useEffect(() => {
     if (!menuOpen && !volumeMenuOpen && !sourceMenuId && !infoOpen) return;
     const closeOnPointer = (event: PointerEvent) => {
       if (!(event.target instanceof Node)) return;
@@ -298,6 +306,11 @@ export function MarketDataPanel({
     </button>
   );
 
+  const showVisibilityTooltip = (event: MouseEvent<HTMLButtonElement>, text: string) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    setVisibilityTooltip({ text, left: rect.left + rect.width / 2, top: rect.top - 5 });
+  };
+
   const activeSource = sourceLegends.find((source) => source.id === sourceMenuId);
 
   return (
@@ -309,24 +322,24 @@ export function MarketDataPanel({
           openMenuAt(event.clientX, event.clientY);
         }}
       >
-        {appearance.titleVisible && <div className={`market-data__title${selectedLegend === "instrument" ? " market-data__title--selected" : ""}`} onClick={(event) => { if (event.target === event.currentTarget || (event.target as HTMLElement).closest("span")) onSelectLegend("instrument"); }}>
+        {appearance.titleVisible && <div className={`market-data__title${selectedLegend === "instrument" ? " market-data__title--selected" : ""}${!seriesVisible ? " market-data__title--hidden" : ""}`} onClick={(event) => { if (event.target === event.currentTarget || (event.target as HTMLElement).closest("span")) onSelectLegend("instrument"); }}>
           <span className="market-data__instrument">{instrumentTitle}</span>
           <span className="market-data__separator">·</span>
           <span>{RESOLUTIONS.find((item) => item.value === resolution)?.label ?? resolution}</span>
           <span className="market-data__separator">·</span>
           <span>{exchange || "N/A"}</span>
           <div className="market-data__actions">
-            <button type="button" tabIndex={-1} aria-label={seriesVisible ? "Ẩn" : "Hiện"} aria-pressed={seriesVisible} onClick={onToggleSeriesVisibility}>
-              {legendIcons.eye}
+            <button type="button" tabIndex={-1} aria-label={seriesVisible ? "Ẩn" : "Hiển thị"} aria-pressed={seriesVisible} onMouseEnter={(event) => showVisibilityTooltip(event, seriesVisible ? "Ẩn" : "Hiển thị")} onMouseLeave={() => setVisibilityTooltip(null)} onClick={() => { setVisibilityTooltip(null); onToggleSeriesVisibility(); }}>
+              {seriesVisible ? legendIcons.eye : legendIcons.crossedEye}
             </button>
             <button type="button" tabIndex={-1} aria-label="Thêm nữa" onClick={(event) => openMenu(event.currentTarget)}>{legendIcons.more}</button>
           </div>
         </div>}
-        <div className={`market-data__session market-data__session--${marketOpen ? "open" : "closed"}${sessionOpen ? " market-data__session--active" : ""}`} ref={sessionRef}>
-          <button type="button" tabIndex={-1} aria-label={marketOpen ? "Thị trường đang mở" : "Thị trường đóng cửa"} aria-expanded={sessionOpen} onClick={() => setSessionOpen((open) => !open)}>{marketOpen ? legendIcons.open : legendIcons.closed}</button>
+        {seriesVisible && <div className={`market-data__session market-data__session--${marketOpen ? "open" : "closed"}${sessionOpen ? " market-data__session--active" : ""}`} ref={sessionRef}>
+          <button type="button" tabIndex={-1} aria-label={marketOpen ? "Thị trường Mở" : "Thị trường đóng cửa"} aria-expanded={sessionOpen} onClick={() => setSessionOpen((open) => !open)}>{marketOpen ? legendIcons.open : legendIcons.closed}</button>
           {sessionOpen && <div className="market-data__session-popover" role="dialog" aria-label="Trạng thái thị trường">
-            <div className="market-data__session-heading">{marketOpen ? legendIcons.open : legendIcons.closed}<strong>{marketOpen ? "Thị trường đang mở" : "Thị trường đóng cửa"}</strong></div>
-            <p>{marketOpen ? <>Thị trường hiện đang trong giờ giao dịch. <strong>Thị trường đóng cửa trong {nextOpenText}.</strong></> : <>Đã đến lúc đi dạo một vòng - thị trường này đã đóng cửa. <strong>Thị trường mở trong {nextOpenText}.</strong></>}</p>
+            <div className="market-data__session-heading">{marketOpen ? legendIcons.open : legendIcons.closed}<strong>{marketOpen ? "Thị trường Mở" : "Thị trường đóng cửa"}</strong></div>
+            <p>{marketOpen ? <>Tất cả đều tốt - Thị trường mở cửa. <strong>Thị trường đóng trong {nextOpenText}.</strong></> : <>Đã đến lúc đi dạo một vòng - thị trường này đã đóng cửa. <strong>Thị trường mở trong {nextOpenText}.</strong></>}</p>
             <div className="market-data__session-timeline">
               <span className="market-data__session-weekday">{localDay === 0 ? "CHỦ" : "THỨ"}<br/>{localDay === 0 ? "NHẬT" : localDay + 1}</span>
               <div className="market-data__session-rail">
@@ -339,8 +352,8 @@ export function MarketDataPanel({
             </div>
             <small>Múi giờ giao dịch: {timezone === "Asia/Bangkok" ? "Bangkok (UTC+7)" : timezone}</small>
           </div>}
-        </div>
-        <div className="ohlcv-strip" aria-label="Giá mở cửa, cao nhất, thấp nhất, đóng cửa và khối lượng">
+        </div>}
+        {seriesVisible && (loading ? <span className="market-data__loader" role="status" aria-label="Đang tải dữ liệu biểu đồ"><i/><i/><i/></span> : <div className="ohlcv-strip" aria-label="Giá mở cửa, cao nhất, thấp nhất, đóng cửa và khối lượng">
           {appearance.ohlcVisible && <>
           <span>O <b className={quoteClass}>{formatPrice(quoteBar?.open)}</b></span>
           <span>H <b className={quoteClass}>{formatPrice(quoteBar?.high)}</b></span>
@@ -349,15 +362,15 @@ export function MarketDataPanel({
           </>}
           {appearance.changeVisible && previousClose !== undefined && <span className={quoteClass}>{change >= 0 ? "+" : ""}{change.toFixed(pricePrecision)} ({changePercent.toFixed(2)}%)</span>}
           {appearance.volumeVisible && <span className="ohlcv-strip__volume">Khối lượng <b>{quoteBar ? formatVolume(quoteBar.volume) : "N/A"}</b></span>}
-        </div>
+        </div>)}
       </div>
 
       {sourceLegends.map((source) => (
-        <div className="indicator-data-row source-legend-row" key={source.id} style={{ position: "absolute", top: source.top - paneTop }} onContextMenu={(event) => { event.preventDefault(); setSourceMenuId(source.id); setSourceMenuPosition({ left: Math.min(event.clientX, window.innerWidth - 456), top: Math.min(event.clientY, window.innerHeight - 460) }); }}>
-          <div className={`indicator-data__title${selectedLegend === source.id ? " indicator-data__title--selected" : ""}`} onClick={() => onSelectLegend(source.id)}>
-            <span className="indicator-data__name" style={{ color: source.visible ? undefined : "#868993" }}>{source.label}</span>
+        <div className={`indicator-data-row source-legend-row${!source.visible ? " indicator-data-row--hidden" : ""}`} key={source.id} style={{ position: "absolute", top: source.top - paneTop }} onContextMenu={(event) => { event.preventDefault(); setSourceMenuId(source.id); setSourceMenuPosition({ left: Math.min(event.clientX, window.innerWidth - 456), top: Math.min(event.clientY, window.innerHeight - 460) }); }}>
+          <div className={`indicator-data__title${selectedLegend === source.id ? " indicator-data__title--selected" : ""}${!source.visible ? " indicator-data__title--hidden" : ""}`} onClick={() => onSelectLegend(source.id)}>
+            <span className="indicator-data__name">{source.label}</span>
             <div className="indicator-data__actions">
-              <button type="button" tabIndex={-1} aria-label={source.visible ? "Ẩn" : "Hiện"} onClick={() => onToggleSourceVisibility(source.id)}>{legendIcons.eye}</button>
+              <button type="button" tabIndex={-1} aria-label={source.visible ? "Ẩn" : "Hiển thị"} onMouseEnter={(event) => showVisibilityTooltip(event, source.visible ? "Ẩn" : "Hiển thị")} onMouseLeave={() => setVisibilityTooltip(null)} onClick={() => { setVisibilityTooltip(null); onToggleSourceVisibility(source.id); }}>{source.visible ? legendIcons.eye : legendIcons.crossedEye}</button>
               <button type="button" tabIndex={-1} aria-label="Loại bỏ" onClick={() => onRemoveSource(source.id)}>{legendIcons.remove}</button>
               <button type="button" tabIndex={-1} aria-label="Thêm nữa" onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); setSubmenu(null); setSourceMenuId(source.id); setSourceMenuPosition({ left: Math.min(rect.left, window.innerWidth - 456), top: Math.min(rect.bottom + 5, window.innerHeight - 460) }); }}>{legendIcons.more}</button>
             </div>
@@ -366,14 +379,14 @@ export function MarketDataPanel({
         </div>
       ))}
 
-      {volumeEnabled && <div className="indicator-data-row" style={{ position: "absolute", top: volumeRowTop - paneTop }}>
-        {appearance.studyTitleVisible && <div className={`indicator-data__title${selectedLegend === "volume" ? " indicator-data__title--selected" : ""}`} onClick={(event) => { if (event.target === event.currentTarget || (event.target as HTMLElement).closest("span")) onSelectLegend("volume"); }}><span className="indicator-data__name">Khối lượng {maType} {smoothingLength}</span><div className="indicator-data__actions">
-          <button type="button" tabIndex={-1} aria-label={volumeHidden ? "Hiện" : "Ẩn"} aria-pressed={!volumeHidden} onClick={onToggleVolumeVisibility}>{legendIcons.eye}</button>
+      {volumeEnabled && <div className={`indicator-data-row${volumeHidden ? " indicator-data-row--hidden" : ""}`} style={{ position: "absolute", top: volumeRowTop - paneTop }}>
+        {appearance.studyTitleVisible && <div className={`indicator-data__title${selectedLegend === "volume" ? " indicator-data__title--selected" : ""}${volumeHidden ? " indicator-data__title--hidden" : ""}`} onClick={(event) => { if (event.target === event.currentTarget || (event.target as HTMLElement).closest("span")) onSelectLegend("volume"); }}><span className="indicator-data__name">Khối lượng {maType} {smoothingLength}</span><div className="indicator-data__actions">
+          <button type="button" tabIndex={-1} aria-label={volumeHidden ? "Hiển thị" : "Ẩn"} aria-pressed={!volumeHidden} onMouseEnter={(event) => showVisibilityTooltip(event, volumeHidden ? "Hiển thị" : "Ẩn")} onMouseLeave={() => setVisibilityTooltip(null)} onClick={() => { setVisibilityTooltip(null); onToggleVolumeVisibility(); }}>{volumeHidden ? legendIcons.crossedEye : legendIcons.eye}</button>
           <button type="button" tabIndex={-1} aria-label="Cài đặt" aria-pressed={volumeSettingsOpen} onClick={() => setVolumeSettingsOpen((open) => !open)}>{HEADER_SVGS.settings}</button>
           <button type="button" tabIndex={-1} aria-label="Loại bỏ" onClick={onRemoveVolume}>{legendIcons.remove}</button>
           <button type="button" tabIndex={-1} aria-label="Thêm nữa" onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); setVolumeMenuPosition({ left: Math.min(rect.left, window.innerWidth - 456), top: Math.min(rect.bottom + 5, window.innerHeight - 460) }); setVolumeMenuOpen(true); }}>{legendIcons.more}</button>
         </div></div>}
-        {appearance.studyValueVisible && volumeSettings.statusValueVisible && <div className="indicator-data__values"><span className="indicator-data__volume">{quoteBar ? formatVolume(quoteBar.volume) : "N/A"}</span>{volumeSettings.smoothedVisible && <span className="indicator-data__ma">{currentVolumeMa !== undefined ? formatVolume(currentVolumeMa) : "N/A"}</span>}</div>}
+        {!loading && appearance.studyValueVisible && volumeSettings.statusValueVisible && <div className="indicator-data__values"><span className="indicator-data__volume">{quoteBar ? formatVolume(quoteBar.volume) : "N/A"}</span>{volumeSettings.smoothedVisible && <span className="indicator-data__ma">{currentVolumeMa !== undefined ? formatVolume(currentVolumeMa) : "N/A"}</span>}</div>}
       </div>}
 
       {activeSource && createPortal(<div ref={sourceMenuRef} className="series-menu source-series-menu" role="menu" aria-label={`Tùy chọn ${activeSource.label}`} style={{ left: sourceMenuPosition.left, top: sourceMenuPosition.top }}>
@@ -459,6 +472,8 @@ export function MarketDataPanel({
         </div>,
         document.body,
       )}
+
+      {visibilityTooltip && createPortal(<div className="series-visibility-tooltip" style={{ left: visibilityTooltip.left, top: visibilityTooltip.top }}>{visibilityTooltip.text}</div>, document.body)}
 
       {infoOpen && (
         <div className="series-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setInfoOpen(false); }}>
