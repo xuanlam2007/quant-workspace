@@ -75,7 +75,7 @@ export type RangePreset = (typeof RANGE_PRESETS)[number];
 
 export type DrawingIcon =
   | "trend" | "arrow" | "ray" | "extended" | "horizontal" | "horizontalRay"
-  | "vertical" | "cross" | "fib" | "rectangle" | "text" | "callout"
+  | "vertical" | "cross" | "fib" | "rectangle" | "text" | "callout" | "priceLabel" | "priceNote"
   | "priceRange" | "position" | "positionShort" | "prediction" | "dateRange"
   | "datePriceRange" | "barsPattern" | "ghostFeed" | "projection" | "volumeProfile";
 
@@ -133,6 +133,8 @@ export const DRAWING_TOOL_GROUPS: DrawingToolGroup[] = [
     tools: [
       { id: "text", type: "Text", icon: "text", title: "Văn bản" },
       { id: "callout", type: "Callout", icon: "callout", title: "Chú thích có đường dẫn" },
+      { id: "price-label", type: "PriceLabel", icon: "priceLabel", title: "Nhãn Giá" },
+      { id: "price-note", type: "PriceNote", icon: "priceNote", title: "Ghi chú Giá" },
     ],
   },
   {

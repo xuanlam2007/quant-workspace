@@ -9,11 +9,12 @@ export class ReferenceStudyView implements ICustomSeriesPaneView<Time, Reference
   constructor(readonly definition: ReferenceDefinition, public settings: ReferenceSettings) {}
 
   renderer() { return this; }
-  defaultOptions(): CustomSeriesOptions { return { ...customSeriesDefaultOptions, color: "#2196f3", priceLineVisible: false }; }
+  defaultOptions(): CustomSeriesOptions { return { ...customSeriesDefaultOptions, color: "#2196f3", priceLineVisible: false, baseLineVisible: false }; }
   update(data: PaneRendererCustomData<Time, ReferencePoint>) { this.data = data; }
   isWhitespace(data: ReferencePoint | CustomSeriesWhitespaceData<Time>): data is CustomSeriesWhitespaceData<Time> { return !("values" in data) || !this.priceValueBuilder(data).some(Number.isFinite); }
   priceValueBuilder(point: ReferencePoint): number[] {
-    const values = this.definition.metainfo.plots.filter((plot) => plot.type === "line" && this.settings.styles[plot.id]?.visible !== false && this.settings.styles[plot.id]?.display !== 0).map((plot) => point.values[plot.id]).filter(Number.isFinite);
+    const fillPlots = new Set((this.definition.metainfo.filledAreas ?? []).filter((fill) => this.settings.fills[fill.id]?.visible !== false).flatMap((fill) => [fill.objAId, fill.objBId]));
+    const values = this.definition.metainfo.plots.filter((plot) => plot.type === "line" && (fillPlots.has(plot.id) || this.settings.styles[plot.id]?.visible !== false && this.settings.styles[plot.id]?.display !== 0)).map((plot) => point.values[plot.id]).filter(Number.isFinite);
     this.definition.metainfo.plots.forEach((plot) => {
       const style = this.settings.styles[plot.id];
       if (style?.visible !== false && style?.display !== 0 && [1, 5].includes(Number(style?.plottype)) && Number.isFinite(point.values[plot.id])) {
@@ -21,6 +22,12 @@ export class ReferenceStudyView implements ICustomSeriesPaneView<Time, Reference
       }
     });
     this.settings.bands.forEach((band) => { if (band.visible !== false && Number.isFinite(band.value)) values.push(band.value); });
+    for (const graphic of this.graphics) {
+      for (const group of graphic.graphicsCmds?.create?.horizlines ?? []) {
+        if (this.definition.metainfo.defaults.graphics?.horizlines?.[group.styleId]?.visible === false) continue;
+        for (const item of group.data) if (Number.isFinite(Number(item.level))) values.push(Number(item.level));
+      }
+    }
     if (!values.length && this.definition.metainfo.is_price_study) values.push(point.high, point.low);
     if (!values.length) return [NaN, NaN, NaN];
     return [Math.min(...values), Math.max(...values), values[0]];
@@ -42,9 +49,12 @@ export class ReferenceStudyView implements ICustomSeriesPaneView<Time, Reference
       for (const fill of filledAreas ?? []) {
         const style = fills[fill.id];
         if (!style || style.visible === false) continue;
-        ctx.fillStyle = referenceColor(style.color, style.transparency ?? 90);
+        const colored = plots.some((plot) => plot.type === "colorer" && plot.target === fill.id);
         for (let i = 1; i < visible.length; i++) {
           const previous = visible[i - 1], current = visible[i];
+          const segmentColor = previous.originalData.colors[fill.id];
+          if (colored && !segmentColor) continue;
+          ctx.fillStyle = segmentColor ?? referenceColor(style.color, style.transparency ?? 90);
           const a = y(fillValue(fill.objAId, previous.originalData)), b = y(fillValue(fill.objBId, previous.originalData));
           const c = y(fillValue(fill.objAId, current.originalData)), d = y(fillValue(fill.objBId, current.originalData));
           if (a === null || b === null || c === null || d === null) continue;
@@ -112,7 +122,7 @@ export class ReferenceStudyView implements ICustomSeriesPaneView<Time, Reference
           for (const group of groups) {
             const style = this.definition.metainfo.defaults.graphics?.[kind]?.[group.styleId];
             if (style?.visible === false) continue;
-            ctx.strokeStyle = referenceColor(style?.color ?? "#787b86", style?.transparency); ctx.fillStyle = ctx.strokeStyle; ctx.lineWidth = style?.linewidth ?? 1; dash(style?.linestyle);
+            ctx.strokeStyle = referenceColor(style?.color ?? "#787b86", style?.transparency); ctx.fillStyle = ctx.strokeStyle; ctx.lineWidth = style?.linewidth ?? style?.width ?? 1; dash(style?.linestyle ?? style?.style);
             for (const item of group.data) {
               if (kind === "horizlines") {
                 const position = y(Number(item.level)); if (position === null) continue;

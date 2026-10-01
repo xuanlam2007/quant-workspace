@@ -117,7 +117,7 @@ export async function fetchSymbolInfo(symbol: string, signal?: AbortSignal): Pro
 export function symbolPriceFormat(info: SymbolInfo) {
   const minMove = info.minMove / info.priceScale;
   let precision = 0;
-  let scaledMove = minMove;
+  let scaledMove = 1 / info.priceScale;
   while (precision < 10 && Math.abs(scaledMove - Math.round(scaledMove)) > 1e-10) {
     scaledMove *= 10;
     precision += 1;

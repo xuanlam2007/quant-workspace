@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
-import type { IChartApi, ISeriesApi, Time, WhitespaceData } from "lightweight-charts";
+import { LineStyle, type IChartApi, type IPriceLine, type ISeriesApi, type Time, type WhitespaceData } from "lightweight-charts";
 import type { Bar, SymbolInfo } from "@/lib/dchart-api";
 import { calculateReferenceStudy, loadReferenceStudies, referenceDefaults, type ReferenceDefinition, type ReferencePoint, type ReferenceSettings } from "@/lib/reference-studies";
 import { ReferenceStudyView } from "./ReferenceStudyView";
@@ -16,6 +16,7 @@ export interface ReferenceStudyInstance {
   loading: boolean;
   error?: string;
   visible: boolean;
+  priceLines?: IPriceLine[];
   request?: AbortController;
 }
 
@@ -35,7 +36,7 @@ export function useReferenceStudies(chartRef: RefObject<IChartApi | null>, barsR
     const group = /M$/.test(current.resolution) ? 4 : /W$/.test(current.resolution) ? 3 : /D$/.test(current.resolution) ? 2 : Number(current.resolution) >= 60 ? 1 : 0;
     const multiple = group === 1 ? Number(current.resolution) / 60 : Number(current.resolution.replace(/[DWM]$/, "")) || 1;
     const interval = instance.settings.intervals[group];
-    instance.series.applyOptions({ visible: instance.visible && interval.enabled && multiple >= interval.from && multiple <= interval.to, lastValueVisible: instance.settings.scaleLabels });
+    instance.series.applyOptions({ visible: instance.visible && interval.enabled && multiple >= interval.from && multiple <= interval.to, lastValueVisible: false, baseLineVisible: false });
     try {
       const result = await calculateReferenceStudy(instance.definition, instance.settings, bars ?? [...(barsRef.current?.values() ?? [])].sort((a, b) => Number(a.time) - Number(b.time)), current.symbol, current.resolution, current.symbolInfo, request.signal);
       if (request.signal.aborted || !instances.current.has(instance.id)) return;
@@ -43,10 +44,29 @@ export function useReferenceStudies(chartRef: RefObject<IChartApi | null>, barsR
       instance.view.settings = instance.settings;
       instance.view.graphics = result.graphics;
       instance.series.setData(result.points);
+      instance.priceLines?.forEach((line) => instance.series!.removePriceLine(line));
+      instance.priceLines = [];
+      const latestPoints = [...result.points].reverse();
+      for (const plot of instance.definition.metainfo.plots) {
+        const style = instance.settings.styles[plot.id];
+        const last = latestPoints.find((point) => Number.isFinite(point.values[plot.id]));
+        const value = last?.values[plot.id];
+        if (plot.type !== "line" || !style || style.visible === false || style.display === 0 || value === undefined || !Number.isFinite(value)) continue;
+        if (!style.trackPrice && !instance.settings.scaleLabels) continue;
+        instance.priceLines.push(instance.series.createPriceLine({
+          price: value, color: last?.colors[plot.id] ?? style.color ?? "#2196f3",
+          lineVisible: Boolean(style.trackPrice), axisLabelVisible: instance.settings.scaleLabels,
+          lineStyle: LineStyle.Dashed, lineWidth: 1, title: "",
+        }));
+      }
       instance.error = undefined;
     } catch (error) {
       if (request.signal.aborted) return;
       instance.error = error instanceof Error ? error.message : String(error);
+      instance.points = [];
+      instance.series.setData([]);
+      instance.priceLines?.forEach((line) => instance.series!.removePriceLine(line));
+      instance.priceLines = [];
     } finally {
       if (!request.signal.aborted) { instance.loading = false; refresh(); }
     }

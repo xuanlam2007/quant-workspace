@@ -17,6 +17,9 @@ export interface ReferencePlotStyle {
   display?: number;
   linewidth?: number;
   linestyle?: number;
+  width?: number;
+  style?: number;
+  showPrice?: boolean;
   plottype?: number | string;
   transparency?: number;
   trackPrice?: boolean;
@@ -68,6 +71,7 @@ export interface ReferenceSettings {
 }
 export interface ReferencePoint {
   time: Bar["time"];
+  isProjection?: boolean;
   values: Record<string, number>;
   colors: Record<string, string>;
   high: number;
@@ -112,7 +116,7 @@ const normalizePeriod = (period: string) => period.replace(/^1([DWM])$/, "$1");
 
 export async function calculateReferenceStudy(definition: ReferenceDefinition, settings: ReferenceSettings, bars: Bar[], symbol: string, resolution: string, info?: SymbolInfo, signal?: AbortSignal): Promise<ReferenceResult> {
   if (!bars.length) return { points: [], graphics: [] };
-  const { studyRuntime } = await loadReferenceStudies();
+  const { studyRuntime, projectStudyTimes } = await loadReferenceStudies();
   const datasets = new Map<string, Bar[]>([[`${symbol}:${normalizePeriod(resolution)}`, bars]]);
   let rows = new Map<number, unknown[]>();
   let graphics: ReferenceGraphics[] = [];
@@ -121,15 +125,21 @@ export async function calculateReferenceStudy(definition: ReferenceDefinition, s
     signal?.throwIfAborted();
     rows = new Map();
     graphics = [];
-    const missing = new Map<string, { symbol: string; resolution: string }>();
+    const missing = new Map<string, { symbol: string; resolution: string; from: number }>();
     let failure: string | undefined;
     studyRuntime.setupFeed({
-      subscribe: (ticker, _currency, _unit, period, _range, _error, _info, _session, callback) => {
+      subscribe: (ticker, _currency, _unit, period, onData, _error, _info, _session, _range) => {
         const normalized = normalizePeriod(period), key = `${ticker}:${normalized}`;
         const source = datasets.get(key);
-        if (!source) missing.set(key, { symbol: ticker, resolution: normalized });
+        if (!source) {
+          const range = _range(symbolInfo(ticker));
+          const anchor = Number.isFinite(range.to) ? range.to / 1000 : Number(bars[0].time);
+          const count = Math.max(1, Math.ceil(range.countBack || 1));
+          const historyStart = projectStudyTimes(symbolInfo(ticker), normalized, anchor, -count).at(-1) ?? anchor;
+          missing.set(key, { symbol: ticker, resolution: normalized, from: Math.min(Number(bars[0].time), historyStart) });
+        }
         const data = new studyRuntime.BarSet(symbolInfo(ticker), (source ?? []).map((bar) => ({ ...bar, time: Number(bar.time) * 1000, updatetime: Number(bar.time) * 1000 })));
-        callback(data);
+        onData(data);
         return key;
       },
       unsubscribe: () => {},
@@ -139,7 +149,11 @@ export async function calculateReferenceStudy(definition: ReferenceDefinition, s
       symbolInfo: symbolInfo(symbol), dataRange: { countBack: bars.length, from: Number(bars[0].time) * 1000, to: Number(bars.at(-1)!.time) * 1000 },
       input: (index) => settings.inputs[definition.metainfo.inputs[index]?.id],
       out: (source, row) => { const time = Number((source as { time?: number })?.time); if (Number.isFinite(time)) rows.set(time / 1000, [...row]); },
-      nonseriesOut: (_source, data) => { if (data.data) graphics.push(data.data); },
+      nonseriesOut: (_source, data) => {
+        if (!data.data) return;
+        if (data.data.graphicsCmds?.erase?.some((command) => command.action === "all")) graphics = [];
+        graphics.push(data.data);
+      },
       onErrorCallback: (message) => { failure = message; },
       recalc: () => {}, setNoMoreData: () => {},
     });
@@ -150,7 +164,7 @@ export async function calculateReferenceStudy(definition: ReferenceDefinition, s
     }
     if (pass === 3) throw new Error("Không thể tải dữ liệu bổ sung cho chỉ báo");
     await Promise.all([...missing].map(async ([key, request]) => {
-      const extra = await fetchHistory(request.symbol, request.resolution, Number(bars[0].time), Number(bars.at(-1)!.time) + 86400, signal);
+      const extra = await fetchHistory(request.symbol, request.resolution, request.from, Number(bars.at(-1)!.time) + 86400, signal);
       if (!extra.length) throw new Error(`Không có dữ liệu cho ${request.symbol}`);
       datasets.set(key, extra);
     }));
@@ -158,17 +172,36 @@ export async function calculateReferenceStudy(definition: ReferenceDefinition, s
   const points = bars.map((bar): ReferencePoint => ({ time: bar.time, values: {}, colors: {}, high: bar.high, low: bar.low }));
   const indices = new Map(points.map((point, index) => [Number(point.time), index]));
   const { plots, palettes } = definition.metainfo;
+  const offsetColumns = plots.map((plot) => plots.findIndex((item) => item.type === "dataoffset" && item.target === plot.id));
+  const plotValue = (row: unknown[], plotIndex: number) => {
+    const raw = row[plotIndex];
+    const object = raw && typeof raw === "object" ? raw as { value?: number; offset?: number } : undefined;
+    const offsetColumn = offsetColumns[plotIndex];
+    const offset = object?.offset ?? (offsetColumn >= 0 ? Number(row[offsetColumn]) : 0);
+    return { value: object ? object.value : raw, offset: Number.isFinite(offset) ? Math.trunc(offset) : 0 };
+  };
+  let futureCount = 0;
   for (const [time, row] of rows) {
     const index = indices.get(time);
     if (index === undefined) continue;
     plots.forEach((plot, plotIndex) => {
       if (["colorer", "dataoffset", "bg_colorer", "bar_colorer"].includes(plot.type)) return;
-      const raw = row[plotIndex];
-      const object = raw && typeof raw === "object" ? raw as { value?: number; offset?: number } : undefined;
-      const value = object ? object.value : raw;
+      const { value, offset } = plotValue(row, plotIndex);
+      if (typeof value === "number" && Number.isFinite(value)) futureCount = Math.max(futureCount, index + offset - bars.length + 1);
+    });
+  }
+  if (futureCount > 0) {
+    const times = projectStudyTimes(symbolInfo(symbol), resolution, Number(bars.at(-1)!.time), futureCount);
+    for (const time of times) points.push({ time: time as Bar["time"], isProjection: true, values: {}, colors: {}, high: NaN, low: NaN });
+  }
+  let previousIndex: number | undefined;
+  for (const [time, row] of rows) {
+    const index = indices.get(time);
+    if (index === undefined) continue;
+    plots.forEach((plot, plotIndex) => {
+      if (["colorer", "dataoffset", "bg_colorer", "bar_colorer"].includes(plot.type)) return;
+      const { value, offset } = plotValue(row, plotIndex);
       if (typeof value !== "number" || !Number.isFinite(value)) return;
-      const offsetIndex = plots.findIndex((item) => item.type === "dataoffset" && item.target === plot.id);
-      const offset = object?.offset ?? (offsetIndex >= 0 && Number.isFinite(Number(row[offsetIndex])) ? Number(row[offsetIndex]) : 0);
       const destination = points[index + offset];
       if (!destination) return;
       destination.values[plot.id] = value;
@@ -181,6 +214,24 @@ export async function calculateReferenceStudy(definition: ReferenceDefinition, s
         if (style?.color) destination.colors[plot.id] = referenceColor(style.color, settings.styles[plot.id]?.transparency ?? style.transparency);
       }
     });
+    if (previousIndex !== undefined) {
+      for (const fill of definition.metainfo.filledAreas ?? []) {
+        const colorIndex = plots.findIndex((plot) => plot.type === "colorer" && plot.target === fill.id);
+        if (colorIndex < 0) continue;
+        const a = plots.findIndex((plot) => plot.id === fill.objAId);
+        const b = plots.findIndex((plot) => plot.id === fill.objBId);
+        const offset = Math.min(a >= 0 ? plotValue(row, a).offset : 0, b >= 0 ? plotValue(row, b).offset : 0);
+        // Bundle gán màu của hàng kế tiếp cho đoạn bắt đầu tại hàng trước.
+        const destination = points[previousIndex + offset];
+        const paletteId = plots[colorIndex].palette;
+        if (!destination || !paletteId || row[colorIndex] == null) continue;
+        const key = String(row[colorIndex]);
+        const paletteKey = palettes?.[paletteId]?.valToIndex?.[key] ?? key;
+        const style = settings.palettes[paletteId]?.colors[String(paletteKey)];
+        if (style?.color) destination.colors[fill.id] = referenceColor(style.color, settings.fills[fill.id]?.transparency ?? 90);
+      }
+    }
+    previousIndex = index;
   }
   return { points, graphics };
 }

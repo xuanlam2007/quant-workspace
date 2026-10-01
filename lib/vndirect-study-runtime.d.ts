@@ -4,10 +4,11 @@ interface RuntimeBar { time: number; open: number; high: number; low: number; cl
 interface RuntimeBarSet { count(): number }
 export const bundledStudies: ReferenceDefinition[];
 export const bundledColors: Record<string, string>;
+export function projectStudyTimes(info: { timezone: string; session: string }, resolution: string, lastTime: number, count: number): number[];
 export const studyRuntime: {
   BarSet: new (info: object, bars: RuntimeBar[]) => RuntimeBarSet;
   setupFeed(feed: {
-    subscribe(ticker: string, currency: unknown, unit: unknown, period: string, range: unknown, onError: unknown, info: unknown, session: unknown, callback: (bars: RuntimeBarSet) => void): string;
+    subscribe(ticker: string, currency: unknown, unit: unknown, period: string, onData: (bars: RuntimeBarSet) => void, onError: unknown, info: unknown, session: unknown, getRange: (info: object) => { countBack: number; from?: number; to: number }): string;
     unsubscribe(id: string): void;
   }): void;
   StudyEngine: new (host: {
