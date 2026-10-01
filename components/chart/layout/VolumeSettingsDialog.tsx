@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { MaType } from "../config/chart-config";
+import { useDraggablePanel } from "../ui/useDraggablePanel";
 import { ChartColorPicker } from "./ChartColorPicker";
 
 export type VolumePlotStyle = "line" | "dashed" | "step" | "curved";
@@ -82,6 +83,7 @@ function PlotStylePicker({ value, onChange, priceLineVisible, onPriceLineChange 
 }
 
 export function VolumeSettingsDialog({ settings, onApply, onClose }: Props) {
+  const drag = useDraggablePanel(true);
   const [tab, setTab] = useState<"inputs" | "style" | "visibility">("inputs");
   const [draft, setDraft] = useState(settings);
   useEffect(() => {
@@ -93,8 +95,8 @@ export function VolumeSettingsDialog({ settings, onApply, onClose }: Props) {
     setDraft((current) => ({ ...current, [key]: value }));
 
   return <div className="volume-dialog-backdrop" onPointerDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-    <section className="volume-dialog" role="dialog" aria-modal="true" aria-label="Volume">
-      <header><h2>Volume</h2><button type="button" tabIndex={-1} aria-label="Close" onClick={onClose}><svg viewBox="0 0 24 24" width="24" height="24" fill="none" aria-hidden="true"><path d="M3 3 21 21M21 3 3 21" stroke="currentColor" strokeWidth="1.5"/></svg></button></header>
+    <section className="volume-dialog" style={drag.style} role="dialog" aria-modal="true" aria-label="Volume">
+      <header {...drag.handle}><h2>Volume</h2><button type="button" tabIndex={-1} aria-label="Close" onClick={onClose}><svg viewBox="0 0 24 24" width="24" height="24" fill="none" aria-hidden="true"><path d="M3 3 21 21M21 3 3 21" stroke="currentColor" strokeWidth="1.5"/></svg></button></header>
       <nav aria-label="Volume settings tabs">
         {([ ["inputs", "Các đầu vào"], ["style", "Định dạng"], ["visibility", "Hiển thị"] ] as const).map(([id, label]) =>
           <button type="button" tabIndex={-1} key={id} className={tab === id ? "active" : ""} onClick={() => setTab(id)}>{label}</button>)}

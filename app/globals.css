@@ -1958,17 +1958,6 @@ main#chart.chart--zoom {
   pointer-events: none;
 }
 
-.drawing-axis-range {
-  position: absolute;
-  z-index: 15;
-  background: rgba(41, 98, 255, .24);
-  pointer-events: none;
-}
-
-.drawing-axis-range--price {
-  left: 0;
-}
-
 .drawing-properties {
   position: absolute;
   z-index: 50;
@@ -2074,6 +2063,40 @@ main#chart.chart--zoom {
   border: 1px solid rgba(255, 255, 255, .2);
   border-radius: 1px;
   box-shadow: 0 0 0 1px rgba(0, 0, 0, .24);
+}
+
+.drawing-properties .chart-color-picker__trigger--toolbar {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  box-shadow: none;
+}
+
+.chart-color-picker__toolbar-icon,
+.chart-color-picker__toolbar-icon .drawing-properties__icon {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+}
+
+.chart-color-picker__toolbar-icon svg {
+  width: auto;
+  height: auto;
+  max-width: 20px;
+  max-height: 20px;
+}
+
+.chart-color-picker__toolbar-color {
+  width: 22px;
+  height: 4px;
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px rgba(209, 212, 220, .16);
 }
 
 .drawing-properties__control {
@@ -2543,34 +2566,6 @@ main#chart.chart--zoom {
   user-select: none;
 }
 
-.text-tool-checkbox {
-  appearance: none;
-  width: 18px;
-  height: 18px;
-  border: 1px solid #434651;
-  border-radius: 3px;
-  background: transparent;
-  margin: 0;
-  display: grid;
-  place-items: center;
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-
-.text-tool-checkbox:checked {
-  background: #2962ff;
-  border-color: #2962ff;
-}
-
-.text-tool-checkbox:checked::after {
-  content: "";
-  width: 4px;
-  height: 8px;
-  border: solid #fff;
-  border-width: 0 2px 2px 0;
-  transform: rotate(45deg) translate(-1px, -1px);
-}
-
 .text-tool-option-label {
   flex: 1;
 }
@@ -3007,7 +3002,6 @@ main#chart.chart--zoom {
   box-sizing: border-box;
   margin-left: 0;
   padding: 0 3px;
-  background: #131722;
 }
 
 .indicator-data-row {
@@ -3333,7 +3327,7 @@ main#chart.chart--zoom {
   color: #d1d4dc;
   font: 16px Arial, sans-serif;
 }
-.volume-dialog__check input[type="checkbox"], .volume-dialog__check input[type="radio"], .volume-dialog__interval input[type="checkbox"] {
+.volume-dialog__check input[type="radio"] {
   width: 22px;
   height: 22px;
   margin: 0;
@@ -3895,13 +3889,7 @@ main#chart.chart--zoom {
   gap: 12px;
   cursor: default;
 }
-.chart-settings__check input[type="checkbox"] {
-  width: 22px;
-  height: 22px;
-  margin: 0;
-  accent-color: #2962ff;
-  cursor: pointer;
-}
+
 .chart-settings__row > span {
   min-width: 145px;
 }
@@ -4415,8 +4403,434 @@ main#chart.chart--zoom {
   font: inherit;
 }
 
-.chart-pane-controls { position: absolute; inset: 0; z-index: 12; pointer-events: none; }
-.chart-pane-controls__row { position: absolute; display: flex; gap: 4px; opacity: 0; pointer-events: none; }
-.chart-pane-controls__row.is-visible { opacity: 1; pointer-events: auto; }
-.chart-pane-controls__row button { display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 1px solid #363a45; border-radius: 4px; background: #131722; color: #b2b5be; cursor: pointer; }
-.chart-pane-controls__row button:hover { background: #2a2e39; color: #d1d4dc; }
+.chart-pane-controls {
+  position: absolute;
+  inset: 0;
+  z-index: 12;
+  pointer-events: none;
+}
+
+.chart-pane-controls__row {
+  position: absolute;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.chart-pane-controls__row.is-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.chart-pane-controls__row button {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid #363a45;
+  border-radius: 4px;
+  background: #131722;
+  color: #b2b5be;
+  cursor: pointer;
+}
+
+.chart-pane-controls__row button:hover {
+  background: #2a2e39;
+  color: #d1d4dc;
+}
+
+.reference-study-dialog {
+  width: min(440px, calc(100vw - 24px));
+}
+
+.reference-study-style {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 42px 120px 44px;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.reference-study-style > label:last-child {
+  grid-column: 1 / -1;
+}
+
+.reference-study-style label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.reference-study-style select,
+.reference-study-style input[type="number"] {
+  min-width: 0;
+  width: 100%;
+  height: 28px;
+  border: 1px solid #363a45;
+  border-radius: 4px;
+  background: #1e222d;
+  color: #d1d4dc;
+}
+
+/* Checkbox và thanh cuộn theo bundle VNDIRECT, mô-đun 65890 và GZajBGIm. */
+html input[type="checkbox"] {
+  appearance: none;
+  position: relative;
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
+  flex: none;
+  margin: 0;
+  padding: 0;
+  vertical-align: middle;
+  border: 1px solid #50535e;
+  border-radius: 3px;
+  background: transparent;
+  cursor: pointer;
+  transition: background-color .35s ease;
+}
+html input[type="checkbox"]::after {
+  position: absolute;
+  inset: 0;
+  display: none;
+  background: center / 11px 9px no-repeat url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 11 9' fill='none'%3E%3Cpath stroke='%23d1d4dc' stroke-width='2' d='M0.999878 4L3.99988 7L9.99988 1'/%3E%3C/svg%3E");
+  content: "";
+}
+html input[type="checkbox"]:hover:not(:disabled) {
+  border-color: #5d606b;
+}
+html input[type="checkbox"]:checked {
+  border-color: #2962ff;
+  background-color: #2962ff;
+}
+html input[type="checkbox"]:checked::after {
+  display: block;
+}
+html input[type="checkbox"]:checked:hover:not(:disabled) {
+  border-color: #1e53e5;
+  background-color: #1e53e5;
+}
+html input[type="checkbox"]:active:not(:disabled) {
+  border-color: #1848cc;
+}
+html input[type="checkbox"]:checked:active:not(:disabled) {
+  background-color: #1848cc;
+}
+html input[type="checkbox"]:disabled {
+  border-color: #50535e;
+  background-color: #2a2e39;
+  cursor: default;
+}
+html input[type="checkbox"]:disabled::after {
+  opacity: .35;
+}
+html input[type="checkbox"]:focus-visible {
+  outline: 2px solid #2962ffcc;
+  outline-offset: 3px;
+}
+.indicator-menu__list,
+.chart-settings__content,
+.volume-dialog__content,
+.price-note-dialog__body {
+  scrollbar-color: #363a45 transparent;
+  scrollbar-width: thin;
+  color-scheme: dark;
+}
+@supports selector(::-webkit-scrollbar) {
+  .indicator-menu__list,
+  .chart-settings__content,
+  .volume-dialog__content,
+  .price-note-dialog__body {
+    scrollbar-width: auto;
+    scrollbar-color: auto;
+  }
+}
+:is(.indicator-menu__list, .chart-settings__content, .volume-dialog__content, .price-note-dialog__body)::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+:is(.indicator-menu__list, .chart-settings__content, .volume-dialog__content, .price-note-dialog__body)::-webkit-scrollbar-thumb {
+  border: 1px solid #1e222d;
+  border-radius: 3px;
+  background: #363a45;
+}
+:is(.indicator-menu__list, .chart-settings__content, .volume-dialog__content, .price-note-dialog__body)::-webkit-scrollbar-track {
+  border-radius: 3px;
+  background: transparent;
+}
+:is(.indicator-menu__list, .chart-settings__content, .volume-dialog__content, .price-note-dialog__body)::-webkit-scrollbar-button,
+:is(.indicator-menu__list, .chart-settings__content, .volume-dialog__content, .price-note-dialog__body)::-webkit-scrollbar-corner {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.price-note-dialog {
+  width: 400px;
+  max-height: calc(100dvh - 24px);
+  background: #1e222d;
+  color: #d1d4dc;
+  font-family: -apple-system, BlinkMacSystemFont, "Trebuchet MS", Roboto, Ubuntu, sans-serif;
+}
+.price-note-dialog--visibility {
+  width: 464px;
+}
+.price-note-dialog .text-tool-header {
+  padding: 20px 20px 18px;
+}
+.price-note-dialog .text-tool-title {
+  color: #d1d4dc;
+  font-size: 20px;
+  font-weight: 600;
+}
+.price-note-dialog .text-tool-close-btn {
+  color: #d1d4dc;
+}
+.price-note-dialog .text-tool-close-btn svg {
+  width: 24px;
+  height: 24px;
+}
+.price-note-rename {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  color: #d1d4dc;
+  background: transparent;
+  cursor: pointer;
+}
+.price-note-rename:hover {
+  color: #fff;
+}
+.price-note-dialog .text-tool-tabs {
+  gap: 24px;
+  flex: none;
+  border-bottom: 4px solid #434651;
+  border-radius: 2px;
+}
+.price-note-dialog .text-tool-tab {
+  padding: 6px 0 9px;
+  color: #d1d4dc;
+  line-height: 20px;
+  font-family: inherit;
+  font-size: 16px;
+  font-weight: 600;
+}
+.price-note-dialog .text-tool-tab.is-active::after {
+  bottom: -4px;
+  height: 4px;
+  border-radius: 2px;
+  background: #d1d4dc;
+}
+.price-note-dialog__body {
+  display: flex;
+  min-height: 144px;
+  min-width: 0;
+  flex-direction: column;
+  gap: 16px;
+  overflow-y: auto;
+  padding: 24px 20px 28px;
+}
+.price-note-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+}
+.price-note-row > span {
+  width: 132px;
+  flex: none;
+}
+.price-note-row--text > span,
+.price-note-row--text > label {
+  width: 104px;
+  flex: none;
+}
+.price-note-row label,
+.price-note-interval label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.price-note-font,
+.price-note-alignment {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+}
+.price-note-dialog select,
+.price-note-dialog input:not([type="checkbox"]):not([type="range"]) {
+  width: 100px;
+  min-width: 0;
+  height: 34px;
+  padding: 0 8px;
+  border: 1px solid #50535e;
+  border-radius: 6px;
+  color: #d1d4dc;
+  background: transparent;
+  font: inherit;
+  color-scheme: dark;
+  outline: none;
+}
+.price-note-dialog .text-tool-title input {
+  width: 200px;
+}
+.price-note-font select {
+  width: 100px;
+  flex: 1;
+}
+.price-note-font > button {
+  width: 34px;
+  height: 34px;
+  flex: none;
+  padding: 0;
+  border: 1px solid #50535e;
+  border-radius: 6px;
+  color: #d1d4dc;
+  background: transparent;
+  font-size: 18px;
+  cursor: pointer;
+}
+.price-note-font > button.is-active {
+  border-color: #2962ff;
+  background: #2a2e39;
+  color: #2962ff;
+}
+.price-note-dialog :is(button, select, input, textarea):disabled {
+  color: #50535e;
+  cursor: default;
+}
+.price-note-font > button:disabled,
+.price-note-dialog textarea:disabled {
+  background: #2a2e39;
+}
+.price-note-dialog select:disabled {
+  background: #2a2e39;
+  border-color: #434651;
+}
+.price-note-dialog textarea {
+  flex: none;
+  min-height: 114px;
+  height: 114px;
+  border: 1px solid #50535e;
+  background: #1e222d;
+  border-radius: 8px;
+}
+.price-note-dialog :is(input:not([type="checkbox"]):not([type="range"]), select, textarea):focus {
+  border-color: #2962ff;
+  box-shadow: 0 0 0 1px #2962ff;
+}
+.price-note-alignment select {
+  flex: 1;
+}
+.price-note-coordinates > span {
+  width: 104px;
+}
+.price-note-interval {
+  display: grid;
+  grid-template-columns: 98px 100px minmax(60px, 1fr) 100px;
+  align-items: center;
+  gap: 8px;
+}
+.price-note-range {
+  position: relative;
+  height: 12px;
+  border-radius: 6px;
+  background: linear-gradient(to right, #434651 var(--range-from), #2962ff var(--range-from), #2962ff var(--range-to), #434651 var(--range-to));
+}
+.price-note-range input[type="range"] {
+  appearance: none;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 12px;
+  margin: 0;
+  background: transparent;
+  pointer-events: none;
+}
+.price-note-range input::-webkit-slider-thumb {
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border: 0;
+  border-radius: 50%;
+  background: #fff;
+  pointer-events: auto;
+  cursor: pointer;
+}
+.price-note-range input::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border: 0;
+  border-radius: 50%;
+  background: #fff;
+  pointer-events: auto;
+  cursor: pointer;
+}
+.price-note-range:has(input:disabled) {
+  opacity: .4;
+}
+.price-note-range input:disabled::-webkit-slider-thumb {
+  pointer-events: none;
+}
+.price-note-range input:disabled::-moz-range-thumb {
+  pointer-events: none;
+}
+.price-note-dialog .text-tool-footer {
+  flex: none;
+  padding: 16px 20px;
+  border-top: 1px solid #363a45;
+}
+.price-note-dialog .dialog-btn {
+  min-width: 42px;
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 8px;
+  font-size: 14px;
+}
+.price-note-template {
+  position: relative;
+}
+.price-note-template__save {
+  position: absolute;
+  bottom: 42px;
+  left: 0;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: 260px;
+  padding: 12px;
+  border: 1px solid #434651;
+  border-radius: 6px;
+  background: #1e222d;
+  box-shadow: 0 4px 16px #0006;
+}
+.price-note-template__save button {
+  border: 1px solid #50535e;
+  border-radius: 4px;
+  background: #2a2e39;
+  color: #d1d4dc;
+  cursor: pointer;
+}
+@media (max-width: 480px) {
+  .price-note-dialog .text-tool-tabs {
+    gap: 16px;
+  }
+  .price-note-dialog .text-tool-tab {
+    font-size: 14px;
+  }
+  .price-note-interval {
+    grid-template-columns: 80px 60px minmax(40px, 1fr) 60px;
+  }
+  .price-note-interval input[type="number"] {
+    width: 60px;
+  }
+}

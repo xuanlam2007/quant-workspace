@@ -10,6 +10,8 @@ import {
 } from "../config/chart-config";
 import { SymbolSearchModal } from "./SymbolSearchModal";
 import { CompareSymbolModal } from "./CompareSymbolModal";
+import { useDraggablePanel } from "../ui/useDraggablePanel";
+import { PANE_CONTROL_ICONS } from "./pane-control-icons";
 
 export const HEADER_SVGS = {
   search: (
@@ -147,6 +149,7 @@ export function ChartHeader({
   onOpenSettings,
 }: ChartHeaderProps) {
   const [internalSymbolModalOpen, setInternalSymbolModalOpen] = useState(false);
+  const indicatorDrag = useDraggablePanel(indicatorMenuOpen);
   const isSymbolModalOpen =
     controlledSymbolModalOpen !== undefined
       ? controlledSymbolModalOpen
@@ -366,15 +369,16 @@ export function ChartHeader({
               <span className="header-btn__icon">{HEADER_SVGS.indicators}</span>
               <span className="header-btn__text">Các chỉ báo</span>
             </summary>
-            <div className="header-dropdown__panel indicator-menu__panel" data-selection-boundary>
-              <div className="indicator-menu__title">
+            <div className="header-dropdown__panel indicator-menu__panel" data-selection-boundary style={indicatorDrag.style}>
+              <div className="indicator-menu__title" {...indicatorDrag.handle}>
                 <strong>Các chỉ báo</strong>
                 <button
                   type="button"
                   aria-label="Đóng danh sách chỉ báo"
+                  tabIndex={-1}
                   onClick={() => onIndicatorMenuToggle(false)}
                 >
-                  ×
+                  <span dangerouslySetInnerHTML={{ __html: PANE_CONTROL_ICONS.close }}/>
                 </button>
               </div>
               <label className="indicator-menu__search">

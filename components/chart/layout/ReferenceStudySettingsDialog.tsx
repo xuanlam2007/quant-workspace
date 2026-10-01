@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState, type PointerEvent } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ReferenceDefinition, ReferencePlotStyle, ReferenceSettings } from "@/lib/reference-studies";
+import { useDraggablePanel } from "../ui/useDraggablePanel";
 import { ChartColorPicker } from "./ChartColorPicker";
+import { PANE_CONTROL_ICONS } from "./pane-control-icons";
 
 interface Props {
   definition: ReferenceDefinition;
@@ -17,8 +19,7 @@ export function ReferenceStudySettingsDialog({ definition, settings, onApply, on
   const initial = useRef(structuredClone(settings));
   const [draft, setDraft] = useState(settings);
   const [tab, setTab] = useState("inputs");
-  const [position, setPosition] = useState<{ left: number; top: number } | null>(null);
-  const drag = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
+  const drag = useDraggablePanel(true);
   const cancel = () => { onApply(initial.current); onClose(); };
   useEffect(() => {
     const escape = (event: KeyboardEvent) => { if (event.key === "Escape") { onApply(initial.current); onClose(); } };
@@ -27,16 +28,10 @@ export function ReferenceStudySettingsDialog({ definition, settings, onApply, on
   }, [onApply, onClose]);
   const change = (next: ReferenceSettings) => { setDraft(next); onApply(next); };
   const style = (id: string, patch: Partial<ReferencePlotStyle>) => change({ ...draft, styles: { ...draft.styles, [id]: { ...draft.styles[id], ...patch } } });
-  const startDrag = (event: PointerEvent<HTMLElement>) => {
-    if ((event.target as HTMLElement).closest("button")) return;
-    const rect = event.currentTarget.parentElement!.getBoundingClientRect();
-    drag.current = { x: event.clientX, y: event.clientY, left: rect.left, top: rect.top };
-    event.currentTarget.setPointerCapture(event.pointerId);
-  };
   return <div className="volume-dialog-backdrop" onPointerDown={(event) => { if (event.target === event.currentTarget) cancel(); }}>
-    <section className="volume-dialog reference-study-dialog" role="dialog" aria-modal="true" aria-label={definition.name} style={position ? { position: "fixed", ...position, margin: 0 } : undefined}>
-      <header onPointerDown={startDrag} onPointerMove={(event) => { const current = drag.current; if (current) setPosition({ left: Math.max(0, Math.min(window.innerWidth - 80, current.left + event.clientX - current.x)), top: Math.max(0, Math.min(window.innerHeight - 40, current.top + event.clientY - current.y)) }); }} onPointerUp={() => { drag.current = null; }} onPointerCancel={() => { drag.current = null; }}>
-        <h2>{definition.name}</h2><button type="button" tabIndex={-1} aria-label="Đóng" onClick={cancel}><svg width="17" height="17" viewBox="0 0 17 17" fill="currentColor"><path d="m3.5 2.5-1 1 5 5-5 5 1 1 5-5 5 5 1-1-5-5 5-5-1-1-5 5-5-5Z"/></svg></button>
+    <section className="volume-dialog reference-study-dialog" role="dialog" aria-modal="true" aria-label={definition.name} style={drag.style}>
+      <header {...drag.handle}>
+        <h2>{definition.name}</h2><button type="button" tabIndex={-1} aria-label="Đóng" onClick={cancel} dangerouslySetInnerHTML={{ __html: PANE_CONTROL_ICONS.close }}/>
       </header>
       <nav>{[["inputs", "Các đầu vào"], ["style", "Định dạng"], ["visibility", "Hiển thị"]].map(([id, label]) => <button key={id} type="button" tabIndex={-1} className={tab === id ? "active" : ""} onClick={() => setTab(id)}>{label}</button>)}</nav>
       <div className="volume-dialog__content">

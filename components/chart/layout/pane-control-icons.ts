@@ -1,0 +1,9 @@
+// SVG gốc từ mô-đun điều khiển cửa sổ VNDIRECT.
+export const PANE_CONTROL_ICONS = {
+  "up": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 15 15\" width=\"15\" height=\"15\"><path fill=\"currentColor\" d=\"M11.83 6.12l-.66.76L8 4.1V12H7V4.1L3.83 6.88l-.66-.76L7.5 2.34l4.33 3.78z\"/></svg>",
+  "down": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 15 15\" width=\"15\" height=\"15\"><path fill=\"currentColor\" d=\"M11.83 8.88l-.66-.76L8 10.9V3H7v7.9L3.83 8.12l-.66.76 4.33 3.78 4.33-3.78z\"/></svg>",
+  "close": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 15 15\" width=\"15\" height=\"15\"><path fill=\"currentColor\" d=\"M11.65 12.35l-9-9 .7-.7 9 9-.7.7z\"/><path fill=\"currentColor\" d=\"M2.65 11.65l9-9 .7.7-9 9-.7-.7z\"/></svg>",
+  "expand": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 15 15\" width=\"15\" height=\"15\" fill=\"none\"><path fill=\"currentColor\" d=\"M4.5 12A1.5 1.5 0 0 1 3 10.5V9H2v1.5A2.5 2.5 0 0 0 4.5 13h6a2.5 2.5 0 0 0 2.5-2.5V9h-1v1.5c0 .83-.67 1.5-1.5 1.5h-6z\" class=\"bracket-up\"/><path fill=\"currentColor\" d=\"M4.5 3C3.67 3 3 3.67 3 4.5V6H2V4.5A2.5 2.5 0 0 1 4.5 2h6A2.5 2.5 0 0 1 13 4.5V6h-1V4.5c0-.83-.67-1.5-1.5-1.5h-6z\" class=\"bracket-down\"/></svg>",
+  "collapse": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 15 15\" width=\"15\" height=\"15\" fill=\"none\"><path stroke=\"currentColor\" d=\"M11 2 7.5 5 4 2\" class=\"bracket-up\"/><path stroke=\"currentColor\" d=\"M4 13l3.5-3 3.5 3\" class=\"bracket-down\"/></svg>",
+  "restore": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 15 15\" width=\"15\" height=\"15\" fill=\"none\"><path stroke=\"currentColor\" d=\"m4 5 3.5-3L11 5\" class=\"bracket-up\"/><path stroke=\"currentColor\" d=\"M11 10l-3.5 3L4 10\" class=\"bracket-down\"/></svg>"
+} as const;

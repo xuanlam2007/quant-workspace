@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type PointerEvent as ReactPointerEvent } from "react";
 import { createPortal } from "react-dom";
 
 // Bảng màu và thứ tự lấy từ các mô-đun 6914 và 48891 của bundle.
@@ -26,7 +26,12 @@ export function splitChartColor(value: string) {
   return { color: "#000000", opacity: value === "transparent" ? 0 : 100 };
 }
 
-export const withChartOpacity = (color: string, opacity: number) => splitChartColor(color).color + (opacity >= 100 ? "" : Math.round(Math.max(0, opacity) / 100 * 255).toString(16).padStart(2, "0"));
+export const withChartOpacity = (color: string, opacity: number) => {
+  const hex = splitChartColor(color).color;
+  if (opacity >= 100) return hex;
+  const rgb = [1, 3, 5].map((start) => parseInt(hex.slice(start, start + 2), 16));
+  return `rgba(${rgb.join(", ")}, ${Math.max(0, opacity) / 100})`;
+};
 
 function toHsv(color: string) {
   const [r, g, b] = [1, 3, 5].map((start) => parseInt(color.slice(start, start + 2), 16) / 255);
@@ -46,11 +51,12 @@ interface Props {
   value: string;
   onChange: (value: string) => void;
   label: string;
-  preview?: "swatch" | "line";
+  preview?: "swatch" | "line" | "toolbar";
+  icon?: ReactNode;
   disabled?: boolean;
 }
 
-export function ChartColorPicker({ value, onChange, label, preview = "swatch", disabled = false }: Props) {
+export function ChartColorPicker({ value, onChange, label, preview = "swatch", icon, disabled = false }: Props) {
   const [open, setOpen] = useState(false);
   const [customOpen, setCustomOpen] = useState(false);
   const [customColors, setCustomColors] = useState<string[]>([]);
@@ -114,7 +120,7 @@ export function ChartColorPicker({ value, onChange, label, preview = "swatch", d
 
   return <>
     <button ref={buttonRef} type="button" tabIndex={-1} disabled={disabled} className={"chart-color-picker__trigger chart-color-picker__trigger--" + preview} aria-label={label} aria-expanded={open} onClick={() => { setCustomOpen(false); setRemoveColor(null); setHsv(toHsv(color)); setOpen(!open); }}>
-      <span className="chart-color-picker__checker"><i style={{ backgroundColor: value }}/></span>
+      {preview === "toolbar" ? <><span className="chart-color-picker__toolbar-icon">{icon}</span><span className="chart-color-picker__toolbar-color" style={{ backgroundColor: value }} /></> : <span className="chart-color-picker__checker"><i style={{ backgroundColor: value }}/></span>}
       {preview === "line" && <span className="chart-color-picker__line" style={{ backgroundColor: value }}/>}
     </button>
     {open && createPortal(<div ref={panelRef} className="chart-color-picker__panel" role="dialog" aria-label={label} style={position}>

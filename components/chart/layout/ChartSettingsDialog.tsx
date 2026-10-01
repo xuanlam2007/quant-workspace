@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import type { ScaleMode } from "../config/chart-config";
 import { ChartColorPicker } from "./ChartColorPicker";
+import { useDraggablePanel } from "../ui/useDraggablePanel";
+import { PANE_CONTROL_ICONS } from "./pane-control-icons";
 
 export interface ChartAppearance {
   upColor: string;
@@ -75,6 +77,7 @@ export function ChartSettingsDialog({ open, appearance, scaleMode, autoScale, in
   const [tab, setTab] = useState<Tab>("symbol");
   const [draft, setDraft] = useState(appearance);
   const [initial, setInitial] = useState(appearance);
+  const drag = useDraggablePanel(open);
 
   useEffect(() => {
     if (!open) return;
@@ -97,8 +100,8 @@ export function ChartSettingsDialog({ open, appearance, scaleMode, autoScale, in
   const axisCheck = (key: keyof ChartSettingsDialogProps["axisLabels"], label: string) => <label className="chart-settings__check"><input tabIndex={-1} type="checkbox" checked={axisLabels[key]} onChange={(event) => onAxisLabelChange(key, event.target.checked)}/><span>{label}</span></label>;
 
   return <div className="chart-settings-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-    <section className="chart-settings" role="dialog" aria-modal="true" aria-labelledby="chart-settings-title">
-      <header><h2 id="chart-settings-title">Cài đặt biểu đồ</h2><button type="button" tabIndex={-1} aria-label="Đóng" onClick={onClose}>×</button></header>
+    <section className="chart-settings" role="dialog" aria-modal="true" aria-labelledby="chart-settings-title" style={drag.style}>
+      <header {...drag.handle}><h2 id="chart-settings-title">Cài đặt biểu đồ</h2><button type="button" tabIndex={-1} aria-label="Đóng" onClick={onClose} dangerouslySetInnerHTML={{ __html: PANE_CONTROL_ICONS.close }}/></header>
       <div className="chart-settings__body">
         <nav aria-label="Nhóm cài đặt">{tabs.map((item) => <button type="button" tabIndex={-1} key={item.id} className={tab === item.id ? "active" : ""} onClick={() => setTab(item.id)}><TabIcon name={item.icon}/>{item.label}</button>)}</nav>
         <div className="chart-settings__content" key={tab}>

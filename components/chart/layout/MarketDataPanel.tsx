@@ -36,6 +36,7 @@ export interface SourceLegend {
   hasSettings?: boolean;
   color: string;
   value?: string;
+  values?: { text: string; color: string }[];
   top: number;
   paneIndex: number;
   shared: boolean;
@@ -380,7 +381,7 @@ export function MarketDataPanel({
               <button type="button" tabIndex={-1} aria-label="Thêm nữa" onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); setSubmenu(null); setSourceMenuId(source.id); setSourceMenuPosition({ left: Math.min(rect.left, window.innerWidth - 456), top: Math.min(rect.bottom + 5, window.innerHeight - 460) }); }}>{legendIcons.more}</button>
             </div>
           </div>
-          {source.value && <span className="source-legend-value" style={{ color: source.color }}>{source.value}</span>}
+          {appearance.studyValueVisible && (source.values ? <span className="indicator-data__values">{source.values.map((value, index) => <span key={index} style={{ color: value.color }}>{value.text}</span>)}</span> : source.value && <span className="source-legend-value" style={{ color: source.color }}>{source.value}</span>)}
         </div>
       ))}
 
