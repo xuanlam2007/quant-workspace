@@ -4,7 +4,6 @@ import {
   type ILineToolsPlugin,
 } from "lightweight-charts-line-tools-core";
 import {
-  LineToolCallout,
   LineToolCrossLine,
   LineToolExtendedLine,
   LineToolHorizontalLine,
@@ -14,12 +13,15 @@ import {
   LineToolVerticalLine,
 } from "lightweight-charts-line-tools-lines";
 import { installAnchorHoverEnhancement } from "./custom-anchor";
+import { installDrawingAxisLabels } from "./drawing-axis-labels";
 import { LineToolSharpArrow } from "./custom-arrow";
+import { LineToolReferenceCallout } from "./custom-callout";
 import { LineToolRectangle } from "lightweight-charts-line-tools-rectangle";
 import { LineToolFibRetracement } from "lightweight-charts-line-tools-fib-retracement";
 import { LineToolPriceRange } from "lightweight-charts-line-tools-price-range";
 import { LineToolLongShortPosition } from "lightweight-charts-line-tools-long-short-position";
 import { LineToolText } from "lightweight-charts-line-tools-text";
+import { LineToolPriceLabel, LineToolPriceNote, registerPriceNoteResolution } from "./price-annotations";
 
 function createPaneCoordinateChart(chart: IChartApi, series: ISeriesApi<"Candlestick", Time>): IChartApi {
   const chartElement = chart.chartElement();
@@ -60,10 +62,14 @@ function createPaneCoordinateChart(chart: IChartApi, series: ISeriesApi<"Candles
 
 export function createDrawingTools(
   chart: IChartApi,
-  series: ISeriesApi<"Candlestick", Time>
+  series: ISeriesApi<"Candlestick", Time>,
+  resolution: () => string = () => "D"
 ): ILineToolsPlugin {
   installAnchorHoverEnhancement();
-  const lineTools = createLineToolsPlugin(createPaneCoordinateChart(chart, series), series);
+  installDrawingAxisLabels();
+  const drawingChart = createPaneCoordinateChart(chart, series);
+  registerPriceNoteResolution(drawingChart, resolution);
+  const lineTools = createLineToolsPlugin(drawingChart, series);
   lineTools.registerLineTool("TrendLine", LineToolTrendLine);
   lineTools.registerLineTool("Arrow", LineToolSharpArrow);
   lineTools.registerLineTool("Ray", LineToolRay);
@@ -72,11 +78,13 @@ export function createDrawingTools(
   lineTools.registerLineTool("HorizontalRay", LineToolHorizontalRay);
   lineTools.registerLineTool("VerticalLine", LineToolVerticalLine);
   lineTools.registerLineTool("CrossLine", LineToolCrossLine);
-  lineTools.registerLineTool("Callout", LineToolCallout);
+  lineTools.registerLineTool("Callout", LineToolReferenceCallout);
   lineTools.registerLineTool("Rectangle", LineToolRectangle);
   lineTools.registerLineTool("FibRetracement", LineToolFibRetracement);
   lineTools.registerLineTool("PriceRange", LineToolPriceRange);
   lineTools.registerLineTool("LongShortPosition", LineToolLongShortPosition);
   lineTools.registerLineTool("Text", LineToolText);
+  lineTools.registerLineTool("PriceLabel", LineToolPriceLabel);
+  lineTools.registerLineTool("PriceNote", LineToolPriceNote);
   return lineTools;
 }

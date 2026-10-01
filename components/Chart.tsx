@@ -21,6 +21,8 @@ import {
   type SeriesMarker,
 } from "lightweight-charts";
 import {
+  interpolateLogicalIndexFromTime,
+  logicalIndexToCoordinate,
   type ILineToolsPlugin,
   type LineToolExport,
   type LineToolType,
@@ -54,6 +56,8 @@ import { DrawingToolbar } from "./chart/drawing/DrawingToolbar";
 import { DrawingPropertiesToolbar } from "./chart/drawing/DrawingPropertiesToolbar";
 import { DrawingAxisRangeHighlight } from "./chart/drawing/DrawingAxisRangeHighlight";
 import { PriceRangeStats } from "./chart/drawing/PriceRangeStats";
+import { priceNoteSettings, priceNoteVisible, type PriceNoteOptions } from "./chart/drawing/price-note-options";
+import { PriceNoteDialog } from "./chart/drawing/PriceNoteDialog";
 import { TextToolDialog } from "./chart/drawing/TextToolDialog";
 import { createDrawingTools } from "./chart/drawing/chart-drawing";
 import {
@@ -658,7 +662,12 @@ export default function Chart() {
   }, [symbol, symbolRestored]);
 
   const openTextDialog = useCallback((drawing: LineToolExport<LineToolType>) => {
-    setEditingTextDrawing(drawing);
+    const snapshot = structuredClone(drawing);
+    if (snapshot.toolType === "PriceNote") {
+      const options = snapshot.options as PriceNoteOptions;
+      snapshot.options = { ...options, priceNote: priceNoteSettings(options) };
+    }
+    setEditingTextDrawing(snapshot);
     setTextDialogOpen(true);
   }, []);
 
@@ -826,7 +835,7 @@ export default function Chart() {
       setVisibleBar(time ? barsByTimeRef.current.get(time) : currentBarRef.current);
     });
 
-    const lineTools = createDrawingTools(chart, series);
+    const lineTools = createDrawingTools(chart, series, () => resolutionRef.current);
     lineTools.setMagnetThreshold(0);
     const persistDrawingState = () => {
       recordDrawingState(lineTools.exportLineTools());
@@ -836,13 +845,13 @@ export default function Chart() {
       const appearance = priceRangeAppearance(selectedLineTool);
       if (appearance) {
         selectedLineTool = { ...selectedLineTool, options: appearance as typeof selectedLineTool.options };
-        lineTools.applyLineToolOptions(selectedLineTool);
+        lineTools.createOrUpdateLineTool(selectedLineTool.toolType, selectedLineTool.points, selectedLineTool.options, selectedLineTool.id);
       }
       setSelectedDrawing(selectedLineTool);
       persistDrawingState();
       if (event.stage !== "lineToolFinished") return;
 
-      if (selectedLineTool.toolType === "Text") {
+      if (selectedLineTool.toolType === "Text" || selectedLineTool.toolType === "Callout") {
         openTextDialog(selectedLineTool);
       }
 
@@ -877,7 +886,7 @@ export default function Chart() {
     });
     lineTools.subscribeLineToolsDoubleClick((event) => {
       setSelectedDrawing(event.selectedLineTool);
-      if (event.selectedLineTool.toolType === "Text") openTextDialog(event.selectedLineTool);
+      if (event.selectedLineTool.toolType === "Text" || event.selectedLineTool.toolType === "Callout" || event.selectedLineTool.toolType === "PriceNote") openTextDialog(event.selectedLineTool);
     });
     const refreshDrawingOverlays = (range?: { from: number; to: number } | null) => {
       setDrawingViewportVersion((current) => current + 1);
@@ -1959,16 +1968,17 @@ export default function Chart() {
       baseLineColor: "#596273",
     });
     compareSeriesRef.current.forEach((series, symbol) => series.applyOptions({ priceScaleId: sourceScaleOverridesRef.current.get(`compare:${symbol}`) ?? priceScaleId }));
-    priceIndicatorSeriesRef.current.forEach((series, id) => series.applyOptions({ priceScaleId: sourceScaleOverridesRef.current.get(`study:${id}`) ?? priceScaleId }));
+    priceIndicatorSeriesRef.current.forEach((series, id) => series.applyOptions({ priceScaleId: sourceScaleOverridesRef.current.get(`study:${id}`) ?? priceScaleId, baseLineVisible: false }));
     if (macdSeriesRef.current) {
       const { histogram, macd, signal } = macdSeriesRef.current;
-      [histogram, macd, signal].forEach((item) => item.applyOptions({ priceScaleId: indicatorScaleSides.macd }));
+      [histogram, macd, signal].forEach((item) => item.applyOptions({ priceScaleId: indicatorScaleSides.macd, baseLineVisible: false }));
     }
     if (rsiSeriesRef.current) {
       const { rsi, upper, lower } = rsiSeriesRef.current;
-      [rsi, upper, lower].forEach((item) => item.applyOptions({ priceScaleId: indicatorScaleSides.rsi }));
+      [rsi, upper, lower].forEach((item) => item.applyOptions({ priceScaleId: indicatorScaleSides.rsi, baseLineVisible: false }));
     }
     const volumeScaleId = volumeScaleSideOverride ?? (volumePaneIndex !== mainPaneIndex ? mainScaleSide : comparisonActive ? "volume" : mainScaleSide === "right" ? "left" : "right");
+    [volumeSeriesRef.current, volumeMaSeriesRef.current, volumeSmaSeriesRef.current].forEach((series) => series?.applyOptions({ baseLineVisible: false }));
     volumeSeriesRef.current?.applyOptions({
       priceScaleId: volumeScaleId,
       visible: activeStudies.includes("volume") && !volumeHidden && volumeAllowed && volumeVisualSettings.histogramVisible,
@@ -2599,7 +2609,9 @@ export default function Chart() {
   };
 
   const updateSelectedDrawing = (drawing: LineToolExport<LineToolType>) => {
-    if (!lineToolsRef.current?.applyLineToolOptions(drawing)) return;
+    const lineTools = lineToolsRef.current;
+    if (!lineTools || lineTools.getLineToolByID(drawing.id) === "[]") return;
+    lineTools.createOrUpdateLineTool(drawing.toolType, drawing.points, drawing.options, drawing.id);
     setSelectedDrawing(drawing);
     persistCurrentDrawings();
   };
@@ -2643,7 +2655,8 @@ export default function Chart() {
     const paneTop = (pane.getHTMLElement()?.getBoundingClientRect().top ?? chartRect.top) - chartRect.top;
     const leftInset = safePriceScaleWidth(chart, "left", pane.paneIndex());
     const coordinates = selectedDrawing.points.flatMap((point) => {
-      const x = chart.timeScale().timeToCoordinate(point.timestamp as Time);
+      const logical = interpolateLogicalIndexFromTime(chart, series, point.timestamp as Time);
+      const x = logical === null ? null : logicalIndexToCoordinate(chart.timeScale(), logical);
       const y = series.priceToCoordinate(point.price);
       return x === null || y === null ? [] : [{ x: x + leftInset, y: chartElement.offsetTop + paneTop + y }];
     });
@@ -2654,6 +2667,18 @@ export default function Chart() {
     const maxX = Math.max(...xValues);
     const minY = Math.min(...yValues);
     const maxY = Math.max(...yValues);
+    let drawingTop = minY;
+    let drawingBottom = maxY;
+    if (selectedDrawing.toolType === "PriceLabel") {
+      drawingTop -= selectedDrawing.options.text.font.size + 25;
+    } else if (selectedDrawing.toolType === "PriceNote" && coordinates.length > 1) {
+      const [origin, label] = coordinates;
+      const angle = Math.round(180 * Math.atan2(label.y - origin.y, label.x - origin.x) / Math.PI);
+      const height = selectedDrawing.options.text.font.size + 12;
+      const labelTop = angle >= -135 && angle <= -45 ? label.y - height : angle >= 45 && angle <= 135 ? label.y : label.y - height / 2;
+      drawingTop = Math.min(drawingTop, labelTop);
+      drawingBottom = Math.max(drawingBottom, labelTop + height);
+    }
 
     const isTextBearingTool = selectedDrawing.toolType === "Text" || selectedDrawing.toolType === "Callout";
     let textAnchor: { x: number; y: number } | undefined;
@@ -2661,7 +2686,8 @@ export default function Chart() {
       const targetPoint = selectedDrawing.toolType === "Callout" && selectedDrawing.points.length > 1
         ? selectedDrawing.points[1]
         : selectedDrawing.points[0];
-      const targetX = chart.timeScale().timeToCoordinate(targetPoint.timestamp as Time);
+      const targetLogical = interpolateLogicalIndexFromTime(chart, series, targetPoint.timestamp as Time);
+      const targetX = targetLogical === null ? null : logicalIndexToCoordinate(chart.timeScale(), targetLogical);
       const targetY = series.priceToCoordinate(targetPoint.price);
       if (targetX !== null && targetY !== null) {
         textAnchor = { x: targetX + leftInset, y: chartElement.offsetTop + paneTop + targetY };
@@ -2670,8 +2696,8 @@ export default function Chart() {
 
     return {
       centerX: (minX + maxX) / 2,
-      top: minY,
-      bottom: maxY,
+      top: drawingTop,
+      bottom: drawingBottom,
       left: minX,
       right: maxX,
       textAnchor,
@@ -2916,7 +2942,7 @@ export default function Chart() {
   if (macdSeriesRef.current) addSourceLegend("study:macd", "MACD 12 26 9", "#2962ff");
   if (rsiSeriesRef.current) addSourceLegend("study:rsi", "RSI 14", "#7e57c2");
   referenceStudies.instances.current.forEach((study) => {
-    const point = study.points.find((item) => Number(item.time) === Number(quoteBar?.time)) ?? study.points.at(-1);
+    const point = study.points.find((item) => Number(item.time) === Number(quoteBar?.time)) ?? [...study.points].reverse().find((item) => !item.isProjection);
     const plot = study.definition?.metainfo.plots.find((item) => item.type === "line");
     const color = (plot && point?.colors[plot.id]) || (plot && study.settings?.styles[plot.id]?.color) || "#2196f3";
     const values = study.definition?.metainfo.plots.filter((item) => item.type === "line" && study.settings?.styles[item.id]?.visible !== false && study.settings?.styles[item.id]?.display !== 0).map((item) => {
@@ -2924,10 +2950,23 @@ export default function Chart() {
       return value === undefined ? "N/A" : study.definition?.metainfo.format?.type === "volume" ? formatVolume(value) : value.toFixed(study.settings?.precision ?? 2);
     }).join("  ");
     const value = study.error ? `Lỗi: ${study.error}` : study.loading ? "Đang tải…" : study.settings?.statusValues ? values : undefined;
-    if (study.series) addSourceLegend(study.id, study.definition?.metainfo.shortDescription ?? study.name, color, value);
+    if (study.series) addSourceLegend(study.id, study.name === "Volume" ? "Khối lượng" : study.definition?.metainfo.shortDescription ?? study.name, color, value);
     else sourceLegends.push({ id: study.id, label: study.name, color: study.error ? "#f23645" : color, value, top: legendBounds.top + (paneRows.get(mainPaneIndex) ?? 1) * 24, paneIndex: mainPaneIndex, shared: false, visible: true, scaleSide: "right" });
     const legend = sourceLegends.at(-1)!;
     legend.parameters = study.definition?.metainfo.inputs.filter((input) => !input.isHidden && input.type !== "bool").map((input) => study.settings?.inputs[input.id]).filter((value) => value !== "").join(" ");
+    if (study.name === "Volume" && study.settings) {
+      const { inputs, styles } = study.settings;
+      legend.parameters = `${styles.vol_ma?.visible ? `${inputs.length} ` : ""}${inputs.smoothingLine} ${inputs.smoothingLength}`;
+    }
+    if (!study.error && !study.loading && study.settings?.statusValues) {
+      legend.values = study.definition?.metainfo.plots.filter((item) => item.type === "line" && study.settings?.styles[item.id]?.visible !== false && study.settings?.styles[item.id]?.display !== 0).map((item) => {
+        const value = point?.values[item.id];
+        return {
+          text: value === undefined ? "N/A" : study.definition?.metainfo.format?.type === "volume" ? formatVolume(value) : value.toFixed(study.settings?.precision ?? 2),
+          color: point?.colors[item.id]?.replace(/#[\da-f]{8}/i, (color) => color.slice(0, 7)) ?? study.settings?.styles[item.id]?.color ?? color,
+        };
+      });
+    }
     legend.hasSettings = Boolean(study.settings);
     if (study.error) legend.color = "#f23645";
     if (study.view && study.view.selected !== (selectedLegend === study.id)) {
@@ -2995,7 +3034,6 @@ export default function Chart() {
         onStudyToggle={toggleStudy}
         onAddReferenceStudy={(name) => {
           if (name === "Compare" || name === "Overlay") setIsCompareModalOpen(true);
-          else if (name === "Volume" && !activeStudies.includes("volume")) setActiveStudies((current) => [...current, "volume"]);
           else void referenceStudies.add(name);
         }}
         onDownloadSnapshot={downloadSnapshot}
@@ -3028,7 +3066,13 @@ export default function Chart() {
           onClearAll={clearChartObjects}
         />
         <div className="chart-stage" onMouseMoveCapture={onAxisHover} onMouseLeave={() => setHoverAxis(null)}>
-          <PaneControls chart={chartRef.current} revision={paneRevision + referenceStudies.revision} onLayoutChange={syncPaneLayout}/>
+          <PaneControls chart={chartRef.current} revision={paneRevision + referenceStudies.revision} onLayoutChange={syncPaneLayout} mainPane={seriesRef.current?.getPane() ?? null} allowDoubleClick={!selectedDrawing} onRemovePane={(pane) => {
+            const ids = sourceLegends.filter((source) => source.paneIndex === pane.paneIndex()).map((source) => source.id);
+            const containsVolume = volumeSeriesRef.current?.getPane() === pane;
+            ids.forEach(removeSource);
+            if (containsVolume) setActiveStudies((current) => current.filter((study) => study !== "volume"));
+            syncPaneLayout();
+          }}/>
           <MarketDataPanel
             symbol={symbol}
             exchange={symbolInfo?.exchange ?? ""}
@@ -3167,13 +3211,12 @@ export default function Chart() {
             </div>
           )}
           {dataError && <div className="chart-data-error" role="alert">{dataError}</div>}
-          {selectedDrawing && chartRef.current && seriesRef.current && (
+          {selectedDrawing && chartRef.current && seriesRef.current && lineToolsRef.current && (selectedDrawing.toolType !== "PriceNote" || priceNoteVisible(selectedDrawing.options as PriceNoteOptions, resolution)) && (
             <DrawingAxisRangeHighlight
               drawing={selectedDrawing}
               chart={chartRef.current}
               series={seriesRef.current}
-              chartTop={containerRef.current?.offsetTop ?? 40}
-
+              lineTools={lineToolsRef.current}
               viewportVersion={drawingViewportVersion}
             />
           )}
@@ -3183,7 +3226,7 @@ export default function Chart() {
               anchor={drawingToolbarAnchor}
               onChange={updateSelectedDrawing}
               onOpenSettings={() => {
-                if (selectedDrawing.toolType === "Text") openTextDialog(selectedDrawing);
+                if (selectedDrawing.toolType === "Text" || selectedDrawing.toolType === "Callout" || selectedDrawing.toolType === "PriceNote") openTextDialog(selectedDrawing);
               }}
               onToggleLock={toggleSelectedDrawingLock}
               onDelete={deleteSelectedDrawingById}
@@ -3267,8 +3310,31 @@ export default function Chart() {
         onCountdownChange={setCountdownVisible}
         onClose={() => setChartSettingsOpen(false)}
       />
-      {editingTextDrawing?.toolType === "Text" && textDialogOpen && (
+      {editingTextDrawing?.toolType === "PriceNote" && textDialogOpen && chartRef.current && seriesRef.current && (
+        <PriceNoteDialog
+          drawing={editingTextDrawing as LineToolExport<"PriceNote">}
+          chart={chartRef.current}
+          series={seriesRef.current}
+          onPreview={(drawing) => {
+            lineToolsRef.current?.createOrUpdateLineTool(drawing.toolType, drawing.points, drawing.options, drawing.id);
+            setSelectedDrawing(drawing);
+          }}
+          onCancel={() => {
+            lineToolsRef.current?.createOrUpdateLineTool(editingTextDrawing.toolType, editingTextDrawing.points, editingTextDrawing.options, editingTextDrawing.id);
+            setSelectedDrawing(editingTextDrawing);
+            setTextDialogOpen(false);
+            setEditingTextDrawing(null);
+          }}
+          onConfirm={(drawing) => {
+            updateSelectedDrawing(drawing);
+            setTextDialogOpen(false);
+            setEditingTextDrawing(null);
+          }}
+        />
+      )}
+      {editingTextDrawing && (editingTextDrawing.toolType === "Text" || editingTextDrawing.toolType === "Callout") && textDialogOpen && (
         <TextToolDialog
+          title={editingTextDrawing.toolType === "Callout" ? "Chú thích" : "Văn bản"}
           text={editingTextDrawing.options.text}
           onCancel={() => {
             setTextDialogOpen(false);

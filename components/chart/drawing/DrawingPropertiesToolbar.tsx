@@ -6,7 +6,7 @@ import {
   type PointerEvent,
 } from "react";
 import { LineStyle } from "lightweight-charts";
-import type { LineToolExport, LineToolType } from "lightweight-charts-line-tools-core";
+import type { LineToolExport, LineToolType, TextOptions } from "lightweight-charts-line-tools-core";
 import type { DrawingIcon } from "../config/chart-config";
 import { VNDIRECT_TOOLBAR_ICONS } from "./vndirect-icons";
 import { ChartColorPicker } from "../layout/ChartColorPicker";
@@ -24,6 +24,8 @@ const TOOL_ICONS: Partial<Record<LineToolType, DrawingIcon>> = {
   Rectangle: "rectangle",
   Text: "text",
   Callout: "callout",
+  PriceLabel: "priceLabel",
+  PriceNote: "priceNote",
   PriceRange: "priceRange",
   LongShortPosition: "position",
 };
@@ -48,7 +50,7 @@ const LINE_STYLES = [
   { value: LineStyle.LargeDashed, label: "Đứt dài" },
 ];
 
-type PropertyMenu = "color" | "width" | "style" | "settings" | "more";
+type PropertyMenu = "color" | "width" | "style" | "settings" | "more" | "fontSize";
 
 export interface DrawingToolbarAnchor {
   centerX: number;
@@ -152,6 +154,8 @@ export function DrawingPropertiesToolbar({
   const width = Number(line?.value.width ?? 2);
   const style = Number(line?.value.style ?? LineStyle.Solid);
   const locked = drawing.options.editable === false;
+  const isPriceAnnotation = drawing.toolType === "PriceLabel" || drawing.toolType === "PriceNote";
+  const annotationText = (drawing.options as { text?: TextOptions }).text;
   const icon = TOOL_ICONS[drawing.toolType] ?? "trend";
 
   useLayoutEffect(() => {
@@ -255,6 +259,10 @@ export function DrawingPropertiesToolbar({
     setOpenMenu((current) => current === menu ? null : menu);
   };
 
+  const updateAnnotationText = (text: TextOptions) => {
+    onChange({ ...drawing, options: { ...drawing.options, text } as typeof drawing.options });
+  };
+
   const startDrag = (event: PointerEvent<HTMLButtonElement>) => {
     dragRef.current = { x: event.clientX, y: event.clientY, ...position };
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -277,7 +285,22 @@ export function DrawingPropertiesToolbar({
         <VndIcon name="drag" />
       </button>
 
-      {line && (
+      {isPriceAnnotation && annotationText && (
+        <>
+          {drawing.toolType === "PriceNote" ? <ChartColorPicker label="Màu đường" preview="toolbar" icon={<VndIcon name="propertyLineColor" />} value={color} onChange={(color) => updateLine({ color })} /> : <ChartColorPicker label="Màu chữ" preview="toolbar" icon={<VndIcon name="propertyTextColor" />} value={annotationText.font.color} onChange={(color) => updateAnnotationText({ ...annotationText, font: { ...annotationText.font, color } })} />}
+          <ChartColorPicker label="Màu nền nhãn" preview="toolbar" icon={<VndIcon name="propertyBackgroundColor" />} value={annotationText.box.background?.color ?? "#2962ff"} onChange={(color) => updateAnnotationText({ ...annotationText, box: { ...annotationText.box, background: { ...annotationText.box.background, color, inflation: annotationText.box.background?.inflation ?? { x: 0, y: 0 } } } })} />
+          {drawing.toolType === "PriceNote" ? <ChartColorPicker label="Màu chữ" preview="toolbar" icon={<VndIcon name="propertyTextColor" />} value={annotationText.font.color} onChange={(color) => updateAnnotationText({ ...annotationText, font: { ...annotationText.font, color } })} /> : (
+            <div className="drawing-properties__menu-wrap">
+              <button className="drawing-properties__control" tabIndex={-1} aria-label="Cỡ chữ nhãn giá" aria-haspopup="menu" aria-expanded={openMenu === "fontSize"} onClick={() => toggleMenu("fontSize")}>{annotationText.font.size}</button>
+              {openMenu === "fontSize" && <div className="drawing-properties__menu drawing-properties__option-menu" role="menu" aria-label="Cỡ chữ nhãn giá">
+                {[8, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 40].map((size) => <button key={size} tabIndex={-1} role="menuitemradio" aria-checked={annotationText.font.size === size} className={annotationText.font.size === size ? "is-active" : ""} onClick={() => { updateAnnotationText({ ...annotationText, font: { ...annotationText.font, size } }); setOpenMenu(null); }}>{size}</button>)}
+              </div>}
+            </div>
+          )}
+        </>
+      )}
+
+      {line && !isPriceAnnotation && (
         <>
           <div className="drawing-properties__menu-wrap">
             <button className="drawing-properties__color-button" data-tooltip="Màu đường" aria-label="Chọn màu đường" aria-haspopup="menu" aria-expanded={openMenu === "color"} onClick={() => toggleMenu("color")}>
@@ -331,12 +354,19 @@ export function DrawingPropertiesToolbar({
       )}
 
       <div className="drawing-properties__menu-wrap">
-        <button className="drawing-properties__icon-button" data-tooltip="Cài đặt" aria-label="Mở cài đặt bản vẽ" aria-expanded={openMenu === "settings"} onClick={() => { if (drawing.toolType === "Text") onOpenSettings(); else toggleMenu("settings"); }}>
+        <button className="drawing-properties__icon-button" data-tooltip="Cài đặt" aria-label="Mở cài đặt bản vẽ" aria-expanded={openMenu === "settings"} onClick={() => { if (drawing.toolType === "Text" || drawing.toolType === "Callout" || drawing.toolType === "PriceNote") onOpenSettings(); else toggleMenu("settings"); }}>
           <SettingsIcon />
         </button>
         {openMenu === "settings" && (
           <div className="drawing-properties__menu drawing-properties__settings" role="dialog" aria-label="Cài đặt bản vẽ">
             <strong>Cài đặt bản vẽ</strong>
+            {isPriceAnnotation && annotationText && (
+              <>
+                <div className="drawing-properties__settings-color"><span>Màu viền nhãn</span><ChartColorPicker label="Màu viền nhãn" value={annotationText.box.border?.color ?? "#2962ff"} onChange={(color) => updateAnnotationText({ ...annotationText, box: { ...annotationText.box, border: { width: 1, radius: 4, highlight: false, style: LineStyle.Solid, ...annotationText.box.border, color } } })} /></div>
+                <label><input type="checkbox" tabIndex={-1} checked={annotationText.font.bold} onChange={(event) => updateAnnotationText({ ...annotationText, font: { ...annotationText.font, bold: event.target.checked } })} />Chữ đậm</label>
+                <label><input type="checkbox" tabIndex={-1} checked={annotationText.font.italic} onChange={(event) => updateAnnotationText({ ...annotationText, font: { ...annotationText.font, italic: event.target.checked } })} />Chữ nghiêng</label>
+              </>
+            )}
             {line ? (
               <>
                 <div className="drawing-properties__settings-color"><span>Màu đường</span><ChartColorPicker label="Màu đường" value={color.startsWith("#") ? color : "#2962ff"} onChange={(value) => updateLine({ color: value })}/></div>

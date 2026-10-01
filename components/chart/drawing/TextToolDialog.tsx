@@ -2,8 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { LineStyle } from "lightweight-charts";
 import type { TextOptions } from "lightweight-charts-line-tools-core";
 import { ChartColorPicker } from "../layout/ChartColorPicker";
+import { useDraggablePanel } from "../ui/useDraggablePanel";
 
 interface TextToolDialogProps {
+  title?: string;
   text: TextOptions;
   onCancel: () => void;
   onConfirm: (text: TextOptions) => void;
@@ -44,7 +46,8 @@ function ChevronIcon() {
   );
 }
 
-export function TextToolDialog({ text, onCancel, onConfirm }: TextToolDialogProps) {
+export function TextToolDialog({ title = "Văn bản", text, onCancel, onConfirm }: TextToolDialogProps) {
+  const drag = useDraggablePanel(true);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const onCancelRef = useRef(onCancel);
   onCancelRef.current = onCancel;
@@ -206,6 +209,7 @@ export function TextToolDialog({ text, onCancel, onConfirm }: TextToolDialogProp
       <section
         ref={dialogRef}
         className="text-tool-dialog"
+        style={drag.style}
         role="dialog"
         aria-modal="true"
         aria-labelledby="text-tool-title"
@@ -215,9 +219,9 @@ export function TextToolDialog({ text, onCancel, onConfirm }: TextToolDialogProp
           draggedOutsideRef.current = false;
         }}
       >
-        <header className="text-tool-header">
+        <header className="text-tool-header" {...drag.handle}>
           <h2 id="text-tool-title" className="text-tool-title">
-            Văn bản
+            {title}
             <span className="text-tool-pencil-icon" aria-hidden="true"><PencilIcon /></span>
           </h2>
           <button type="button" className="text-tool-close-btn" aria-label="Đóng cài đặt văn bản" onClick={onCancel}>

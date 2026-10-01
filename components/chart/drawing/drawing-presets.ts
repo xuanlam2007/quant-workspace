@@ -6,6 +6,7 @@ import type {
 } from "lightweight-charts-line-tools-core";
 
 const BLUE = "#2962ff";
+export const VNDIRECT_CHART_FONT = "-apple-system, BlinkMacSystemFont, 'Trebuchet MS', Roboto, Ubuntu, sans-serif";
 
 const LINE = {
   color: BLUE,
@@ -31,6 +32,18 @@ const FIB_LEVELS = [
 }));
 
 export function drawingPreset<T extends LineToolType>(type: T): LineToolPartialOptionsMap[T] {
+  if (type === "PriceLabel" || type === "PriceNote") {
+    return {
+      showPriceAxisLabels: true,
+      showTimeAxisLabels: true,
+      line: { ...LINE, width: 1 },
+      text: {
+        value: "",
+        font: { color: "#ffffff", size: type === "PriceLabel" ? 14 : 12, bold: type === "PriceLabel", italic: false, family: "Arial" },
+        box: { background: { color: BLUE }, border: { color: BLUE } },
+      },
+    } as LineToolPartialOptionsMap[T];
+  }
   if (type === "FibRetracement") {
     return {
       line: { width: 1, style: LineStyle.Dashed },
@@ -60,6 +73,23 @@ export function drawingPreset<T extends LineToolType>(type: T): LineToolPartialO
         value: "Văn bản",
         font: { color: BLUE, size: 14, bold: false, italic: false, family: "Helvetica" },
         wordWrapWidth: 0,
+      },
+    } as LineToolPartialOptionsMap[T];
+  }
+
+  if (type === "Callout") {
+    return {
+      showPriceAxisLabels: true,
+      showTimeAxisLabels: true,
+      line: { ...LINE, color: "#0097a7", width: 1 },
+      text: {
+        value: "Văn bản",
+        font: { color: "#ffffff", size: 14, bold: false, italic: false, family: VNDIRECT_CHART_FONT },
+        wordWrapWidth: 0,
+        box: {
+          background: { color: "rgba(0,151,167,0.7)" },
+          border: { color: "#0097a7", width: 1, radius: 8 },
+        },
       },
     } as LineToolPartialOptionsMap[T];
   }
@@ -105,6 +135,9 @@ export function normalizeDrawingState(serialized: string) {
   try {
     const drawings = JSON.parse(serialized) as LineToolExport<LineToolType>[];
     const normalized = drawings.map((tool) => {
+      if (tool.toolType === "PriceNote" || tool.toolType === "PriceLabel" || tool.toolType === "Callout") {
+        return { ...tool, options: { ...tool.options, showPriceAxisLabels: true, showTimeAxisLabels: true } };
+      }
       const appearance = priceRangeAppearance(tool);
       return appearance ? { ...tool, options: appearance } : tool;
     });
