@@ -1399,12 +1399,44 @@ header {
 }
 
 .price-axis-scale-button:hover,
-.price-axis-scale-button[aria-expanded="true"] {
+.price-axis-scale-button:active {
   background: #2a2e39;
 }
 
 .delayed-tooltip__body strong {
   white-space: pre-line;
+}
+
+.delayed-tooltip--axis {
+  width: max-content;
+  max-width: calc(100vw - 8px);
+  animation: delayed-tooltip-fade 150ms linear both;
+}
+
+.delayed-tooltip--axis .delayed-tooltip__body {
+  display: block;
+  max-width: min(320px, calc(100vw - 8px));
+  padding: 3px 8px;
+  border: 0;
+  border-radius: 0;
+  background: #363a45;
+  color: #f0f3fa;
+  box-shadow: none;
+  font: 400 13px/18px var(--font-ui);
+  overflow-wrap: break-word;
+  white-space: pre-wrap;
+}
+
+.delayed-tooltip--axis .delayed-tooltip__body strong {
+  color: inherit;
+  font-weight: 400;
+}
+
+.delayed-tooltip--axis .delayed-tooltip__arrow {
+  border-top: 4px solid #363a45;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  transform: translateX(var(--tooltip-arrow-offset, 0px));
 }
 
 .price-axis-countdown {
