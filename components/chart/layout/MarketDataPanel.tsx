@@ -54,6 +54,7 @@ export interface ComparisonQuote {
 }
 
 interface MarketDataPanelProps {
+  panePresentation: { hidden: number[]; collapsed: number[] };
   symbol: string;
   exchange: string;
   symbolInfo?: SymbolInfo;
@@ -117,6 +118,7 @@ interface MarketDataPanelProps {
 type MenuSubmenu = "order" | "pane" | "scale" | null;
 
 export function MarketDataPanel({
+  panePresentation,
   symbol,
   exchange,
   symbolInfo,
@@ -322,6 +324,7 @@ export function MarketDataPanel({
     <div className="market-data-panel" style={{ left: leftAxisWidth + 4, right: rightAxisWidth + 4, top: paneTop + 4 }}>
       <div
         className="market-data-row"
+        style={{ display: panePresentation.hidden.includes(mainPaneIndex) ? "none" : undefined }}
         onContextMenu={(event) => {
           event.preventDefault();
           openMenuAt(event.clientX, event.clientY);
@@ -370,7 +373,7 @@ export function MarketDataPanel({
         </div>)}
       </div>
 
-      {sourceLegends.map((source) => (
+      {sourceLegends.filter((source) => !panePresentation.hidden.includes(source.paneIndex) && (!panePresentation.collapsed.includes(source.paneIndex) || (source.paneIndex !== mainPaneIndex && source.top === Math.min(...sourceLegends.filter((item) => item.paneIndex === source.paneIndex).map((item) => item.top)) && (source.paneIndex !== volumePaneIndex || !volumeEnabled || source.top < volumeRowTop)))).map((source) => (
         <div className={`indicator-data-row source-legend-row${!source.visible ? " indicator-data-row--hidden" : ""}`} key={source.id} style={{ position: "absolute", top: source.top - paneTop }} onContextMenu={(event) => { event.preventDefault(); setSourceMenuId(source.id); setSourceMenuPosition({ left: Math.min(event.clientX, window.innerWidth - 456), top: Math.min(event.clientY, window.innerHeight - 460) }); }}>
           <div className={`indicator-data__title${selectedLegend === source.id ? " indicator-data__title--selected" : ""}${!source.visible ? " indicator-data__title--hidden" : ""}`} onClick={() => onSelectLegend(source.id)}>
             <span className="indicator-data__name">{source.label}</span>{source.parameters && <span className="indicator-data__parameters">{source.parameters}</span>}
@@ -385,7 +388,7 @@ export function MarketDataPanel({
         </div>
       ))}
 
-      {volumeEnabled && <div className={`indicator-data-row${volumeHidden ? " indicator-data-row--hidden" : ""}`} style={{ position: "absolute", top: volumeRowTop - paneTop }}>
+      {volumeEnabled && !panePresentation.hidden.includes(volumePaneIndex) && (!panePresentation.collapsed.includes(volumePaneIndex) || (volumePaneIndex !== mainPaneIndex && !sourceLegends.some((source) => source.paneIndex === volumePaneIndex && source.top < volumeRowTop))) && <div className={`indicator-data-row${volumeHidden ? " indicator-data-row--hidden" : ""}`} style={{ position: "absolute", top: volumeRowTop - paneTop }}>
         {appearance.studyTitleVisible && <div className={`indicator-data__title${selectedLegend === "volume" ? " indicator-data__title--selected" : ""}${volumeHidden ? " indicator-data__title--hidden" : ""}`} onClick={(event) => { if (event.target === event.currentTarget || (event.target as HTMLElement).closest("span")) onSelectLegend("volume"); }}><span className="indicator-data__name">Khối lượng</span><span className="indicator-data__parameters">{volumeSettings.maVisible ? `${volumeSettings.maLength} ` : ""}{maType} {smoothingLength}</span><div className="indicator-data__actions">
           <button type="button" tabIndex={-1} aria-label={volumeHidden ? "Hiển thị" : "Ẩn"} aria-pressed={!volumeHidden} onMouseEnter={(event) => showVisibilityTooltip(event, volumeHidden ? "Hiển thị" : "Ẩn")} onMouseLeave={() => setVisibilityTooltip(null)} onClick={() => { setVisibilityTooltip(null); onToggleVolumeVisibility(); }}>{volumeHidden ? legendIcons.crossedEye : legendIcons.eye}</button>
           <button type="button" tabIndex={-1} aria-label="Cài đặt" aria-pressed={volumeSettingsOpen} onClick={() => setVolumeSettingsOpen((open) => !open)}>{HEADER_SVGS.settings}</button>
