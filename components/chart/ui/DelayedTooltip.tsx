@@ -69,7 +69,7 @@ function positionTooltip(element: HTMLElement, content: TooltipContent): Tooltip
     return { ...content, placement, x: rect.left - 8, y: rect.top + rect.height / 2 };
   }
   if (placement === "top") {
-    return { ...content, placement, x: rect.left + rect.width / 2, y: rect.top - (content.variant === "axis" ? 0 : 7) };
+    return { ...content, placement, x: rect.left + rect.width / 2, y: rect.top - (content.variant === "axis" ? 0 : content.variant === "navigation" ? 4 : 7) };
   }
   return { ...content, placement, x: rect.left + rect.width / 2, y: rect.bottom + 7 };
 }
@@ -161,7 +161,7 @@ export function DelayedTooltip() {
 
       timerRef.current = setTimeout(() => {
         timerRef.current = null;
-        if (activeTargetRef.current === element && element.isConnected) {
+        if (activeTargetRef.current === element && element.isConnected && element.dataset.tooltipDisabled !== "true") {
           show(element, content);
         }
       }, readDelay(element));
@@ -250,7 +250,7 @@ export function DelayedTooltip() {
 
   useLayoutEffect(() => {
     const element = tooltipRef.current;
-    if (!element || tooltip?.variant !== "axis") return;
+    if (!element || (tooltip?.variant !== "axis" && tooltip?.variant !== "navigation")) return;
     const width = element.getBoundingClientRect().width;
     const viewportWidth = document.documentElement.clientWidth;
     const left = Math.max(4, Math.min(tooltip.x - width / 2, viewportWidth - width - 4));
@@ -265,14 +265,22 @@ export function DelayedTooltip() {
     <div
       ref={tooltipRef}
       id={TOOLTIP_ID}
-      className={`delayed-tooltip delayed-tooltip--${tooltip.placement}${tooltip.variant === "axis" ? " delayed-tooltip--axis" : ""}`}
+      className={`delayed-tooltip delayed-tooltip--${tooltip.placement}${tooltip.variant === "axis" || tooltip.variant === "navigation" ? ` delayed-tooltip--${tooltip.variant}` : ""}`}
       style={{ left: tooltip.x, top: tooltip.y }}
       role="tooltip"
     >
       <span className="delayed-tooltip__arrow" />
       <span className="delayed-tooltip__body">
         <strong>{tooltip.text}</strong>
-        {tooltip.hotkey && (
+        {tooltip.hotkey && tooltip.variant === "navigation" && (
+          <span className="delayed-tooltip__navigation-hotkey">
+            {tooltip.hotkey.split(" + ").map((key, index) => <span className="delayed-tooltip__navigation-key" key={`${key}-${index}`}>
+              {index > 0 && <span aria-hidden="true"> + </span>}
+              <kbd>{key === "→" ? <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 9 7" width="9" height="7" aria-label="Right arrow"><path fill="currentColor" d="M8.5 3.5L5 0v3H0v1h5v3z"/></svg> : key}</kbd>
+            </span>)}
+          </span>
+        )}
+        {tooltip.hotkey && tooltip.variant !== "navigation" && (
           <>
             <span className="delayed-tooltip__divider" />
             <kbd>{tooltip.hotkey}</kbd>
