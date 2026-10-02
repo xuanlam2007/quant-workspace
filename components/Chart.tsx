@@ -3175,7 +3175,7 @@ export default function Chart() {
     if (!pane) return [];
     const paneIndex = pane.paneIndex();
     const titles: string[] = [];
-    if (paneIndex === mainPaneIndex && side === mainScaleSide) titles.push(`${symbol}, ${symbolInfo?.exchange ?? ""}, ${resolution}`);
+    if (paneIndex === mainPaneIndex && side === mainScaleSide) titles.push(`${symbol}, ${symbolInfo?.exchange ?? ""}, ${["D", "W", "M"].includes(resolution) ? `1${resolution}` : resolution}`);
     sourceLegends.filter((source) => source.paneIndex === paneIndex && source.scaleSide === side).forEach((source) => {
       const comparison = source.id.startsWith("compare:") ? comparisonQuotes.find((quote) => quote.symbol === source.id.slice(8)) : undefined;
       titles.push(comparison ? `${comparison.symbol}, ${comparison.exchange}` : source.label);
