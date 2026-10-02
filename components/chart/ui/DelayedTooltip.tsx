@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 const DEFAULT_TOOLTIP_DELAY_MS = 500;
 const TOOLTIP_SESSION_GRACE_MS = 250;
@@ -14,6 +14,7 @@ interface TooltipContent {
   text: string;
   hotkey?: string;
   description?: string;
+  variant?: string;
 }
 
 interface TooltipState extends TooltipContent {
@@ -38,6 +39,7 @@ function readTooltipContent(element: HTMLElement): TooltipContent | null {
     text: normalizedText,
     hotkey: element.dataset.tooltipHotkey,
     description: element.dataset.tooltipDescription,
+    variant: element.dataset.tooltipVariant,
   };
 }
 
@@ -67,13 +69,14 @@ function positionTooltip(element: HTMLElement, content: TooltipContent): Tooltip
     return { ...content, placement, x: rect.left - 8, y: rect.top + rect.height / 2 };
   }
   if (placement === "top") {
-    return { ...content, placement, x: rect.left + rect.width / 2, y: rect.top - 7 };
+    return { ...content, placement, x: rect.left + rect.width / 2, y: rect.top - (content.variant === "axis" ? 0 : 7) };
   }
   return { ...content, placement, x: rect.left + rect.width / 2, y: rect.bottom + 7 };
 }
 
 export function DelayedTooltip() {
   const [tooltip, setTooltip] = useState<TooltipState | null>(null);
+  const tooltipRef = useRef<HTMLDivElement>(null);
   const activeTargetRef = useRef<HTMLElement | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sessionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -245,12 +248,24 @@ export function DelayedTooltip() {
     };
   }, [activate, clearSessionTimer, clearTimer, hide, hideWithGrace, removeDescription]);
 
+  useLayoutEffect(() => {
+    const element = tooltipRef.current;
+    if (!element || tooltip?.variant !== "axis") return;
+    const width = element.getBoundingClientRect().width;
+    const viewportWidth = document.documentElement.clientWidth;
+    const left = Math.max(4, Math.min(tooltip.x - width / 2, viewportWidth - width - 4));
+    element.style.left = `${left + width / 2}px`;
+    const arrowCenter = Math.max(6, Math.min(width - 6, tooltip.x - left));
+    element.style.setProperty("--tooltip-arrow-offset", `${arrowCenter - width / 2}px`);
+  }, [tooltip]);
+
   if (!tooltip) return null;
 
   return (
     <div
+      ref={tooltipRef}
       id={TOOLTIP_ID}
-      className={`delayed-tooltip delayed-tooltip--${tooltip.placement}`}
+      className={`delayed-tooltip delayed-tooltip--${tooltip.placement}${tooltip.variant === "axis" ? " delayed-tooltip--axis" : ""}`}
       style={{ left: tooltip.x, top: tooltip.y }}
       role="tooltip"
     >
