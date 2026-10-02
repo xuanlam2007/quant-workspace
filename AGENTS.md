@@ -9,6 +9,7 @@
 ## Complete reference implementation
 
 - When a user requests a VNDIRECT chart feature or fix, implement the complete observable behavior in the supplied reference, including loading, error, hover, selection, menu, pane, settings, text, typography, color, and bundle SVG states that belong to that feature.
+- Every requested feature includes its complete UI, layout, CSS, typography, colors, exact bundle SVG icons, hover and active states, animations and timing, event handlers, state transitions, keyboard and pointer interactions, menus, settings, loading, empty and error states, and data calculations where applicable. Inspect and implement each applicable part together. Do not report completion while a required handler, visual state, or behavior is missing; document library limitations explicitly.
 - Resolve every issue in the requested batch before reporting completion. If the current chart library prevents an exact port, identify the missing capability and explain the closest supported behavior.
 
 ## Commit message format
