@@ -1,5 +1,6 @@
 // SVG gốc từ mô-đun điều khiển cửa sổ VNDIRECT.
 export const PANE_CONTROL_ICONS = {
+  more: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 15 15" width="15" height="15"><circle fill="currentColor" cx="12.75" cy="7.5" r="1.25"/><circle fill="currentColor" cx="7.5" cy="7.5" r="1.25"/><circle fill="currentColor" cx="2.25" cy="7.5" r="1.25"/></svg>',
   "up": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 15 15\" width=\"15\" height=\"15\"><path fill=\"currentColor\" d=\"M11.83 6.12l-.66.76L8 4.1V12H7V4.1L3.83 6.88l-.66-.76L7.5 2.34l4.33 3.78z\"/></svg>",
   "down": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 15 15\" width=\"15\" height=\"15\"><path fill=\"currentColor\" d=\"M11.83 8.88l-.66-.76L8 10.9V3H7v7.9L3.83 8.12l-.66.76 4.33 3.78 4.33-3.78z\"/></svg>",
   "close": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 15 15\" width=\"15\" height=\"15\"><path fill=\"currentColor\" d=\"M11.65 12.35l-9-9 .7-.7 9 9-.7.7z\"/><path fill=\"currentColor\" d=\"M2.65 11.65l9-9 .7.7-9 9-.7-.7z\"/></svg>",
