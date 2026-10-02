@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { GO_TO_DATE_ICON } from "./GoToDateDialog";
 import { RANGE_PRESETS, type RangePreset, type ScaleMode } from "../config/chart-config";
 import { sortedTimezoneOptions } from "../config/chart-timezones";
 import { formatTimeInTimezone, getTimezoneOffsetString, millisecondsUntilNextSecond } from "../core/chart-utils";
@@ -10,6 +11,7 @@ interface ChartFooterProps {
   timezone?: string;
   exchangeTimezone?: string;
   onRangeChange: (preset?: RangePreset) => void;
+  onGoToDate: () => void;
   onScaleModeChange: (mode: ScaleMode) => void;
   onAutoScaleToggle: () => void;
   onTimezoneChange?: (timezone: string) => void;
@@ -22,6 +24,7 @@ export function ChartFooter({
   timezone = "Asia/Bangkok",
   exchangeTimezone = "Asia/Bangkok",
   onRangeChange,
+  onGoToDate,
   onScaleModeChange,
   onAutoScaleToggle,
   onTimezoneChange,
@@ -82,11 +85,12 @@ export function ChartFooter({
     <footer className="chart-footer">
       <div className="range-presets" aria-label="History range">
         {RANGE_PRESETS.map((preset) => (
-          <button key={preset.label} className={rangeDays === preset.days ? "chart-footer__active" : ""} onClick={() => onRangeChange(preset)}>
+          <button key={preset.label} type="button" tabIndex={-1} aria-pressed={rangeDays === preset.days} className={rangeDays === preset.days ? "chart-footer__active" : ""} onClick={() => onRangeChange(preset)}>
             {preset.label}
           </button>
         ))}
-        <button data-tooltip="Trở về phạm vi mặc định của khung thời gian" aria-label="Trở về phạm vi mặc định" onClick={() => onRangeChange()}>↻</button>
+        <span className="chart-footer__separator" aria-hidden="true" />
+        <button type="button" tabIndex={-1} className="chart-footer__go-to-date" data-tooltip="Đi đến" data-tooltip-hotkey="Alt + G" aria-label="Đi đến ngày" onClick={onGoToDate}>{GO_TO_DATE_ICON}</button>
       </div>
       <div className="chart-footer__settings">
         <div className="chart-footer__timezone-wrapper" ref={wrapperRef}>
