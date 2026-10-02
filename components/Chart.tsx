@@ -52,6 +52,7 @@ import { GoToDateDialog } from "./chart/layout/GoToDateDialog";
 import { ChartFooter } from "./chart/layout/ChartFooter";
 import { PriceAxisContextMenu, type PriceAxisMenuAction, type PriceAxisMenuState } from "./chart/layout/PriceAxisContextMenu";
 import { PriceAxisScaleButton, type ScaleButtonTarget } from "./chart/layout/PriceAxisScaleButton";
+import { ScrollToLatestButton } from "./chart/layout/ScrollToLatestButton";
 import { ChartHeader } from "./chart/layout/ChartHeader";
 import { MarketDataPanel, type ComparisonQuote, type SourceLegend } from "./chart/layout/MarketDataPanel";
 import type { VolumeSettings } from "./chart/layout/VolumeSettingsDialog";
@@ -130,39 +131,35 @@ function logarithmicPriceRange(scale: IPriceScaleApi, range: { from: number; to:
 
 function setVisiblePriceRange(scale: IPriceScaleApi, range: { from: number; to: number }) {
   if (!Number.isFinite(range.from) || !Number.isFinite(range.to) || range.from >= range.to) return;
+  if (scale.options().mode === PriceScaleMode.Percentage || scale.options().mode === PriceScaleMode.IndexedTo100) {
+    scale.setAutoScale(true);
+    return;
+  }
   // API nhận tọa độ logarit dù getVisibleRange trả về giá gốc.
   scale.setVisibleRange(scale.options().mode === PriceScaleMode.Logarithmic ? logarithmicPriceRange(scale, range) : range);
 }
 
-function applyPriceScaleMode(scale: IPriceScaleApi, mode: PriceScaleMode) {
+function refreshPriceScaleData(chart: IChartApi, scale: IPriceScaleApi) {
+  // Nạp lại dữ liệu hiện có để tính lại thang giá và tọa độ qua API công khai.
+  const source = chart.panes().flatMap((pane) => pane.getSeries())
+    .find((series) => series.priceScale().options() === scale.options() && series.data().length > 0);
+  if (source) source.setData([...source.data()]);
+  scale.getVisibleRange();
+}
+
+function applyPriceScaleMode(chart: IChartApi, scale: IPriceScaleApi, mode: PriceScaleMode) {
   const previous = scale.options().mode;
   const wasAutoScale = scale.options().autoScale;
-  const relativeModeChanged = previous !== mode && (
-    previous === PriceScaleMode.Percentage || previous === PriceScaleMode.IndexedTo100
-    || mode === PriceScaleMode.Percentage || mode === PriceScaleMode.IndexedTo100
-  );
   const relativeMode = mode === PriceScaleMode.Percentage || mode === PriceScaleMode.IndexedTo100;
   const preserve = !wasAutoScale
     && (previous === PriceScaleMode.Normal || previous === PriceScaleMode.Logarithmic)
     && (mode === PriceScaleMode.Normal || mode === PriceScaleMode.Logarithmic);
   const range = preserve ? scale.getVisibleRange() : null;
 
-  // Thư viện hợp nhất mode trước khi so sánh, làm mất sự kiện cập nhật thang giá.
-  const internal = scale as IPriceScaleApi & {
-    _private__priceScale?: () => {
-      _internal_setMode: (options: { _internal_mode: PriceScaleMode; _internal_autoScale?: boolean }) => void;
-    };
-  };
-  if (previous !== mode) {
-    internal._private__priceScale?.()._internal_setMode({
-      _internal_mode: mode,
-      ...(relativeModeChanged ? { _internal_autoScale: true } : {}),
-    });
-  }
   scale.applyOptions({ mode });
-  if (relativeModeChanged) {
+  if (previous !== mode) {
     scale.setAutoScale(true);
-    scale.getVisibleRange();
+    refreshPriceScaleData(chart, scale);
     scale.setAutoScale(relativeMode || wasAutoScale);
   }
   if (range) setVisiblePriceRange(scale, range);
@@ -314,6 +311,7 @@ export default function Chart() {
     rightOffset: number;
     barSpacing: number;
     priceRange: { from: number; to: number } | null;
+    priceScaleMode: PriceScaleMode;
     autoScale: boolean;
     followLatest: boolean;
   }[]>([]);
@@ -1068,6 +1066,7 @@ export default function Chart() {
         rightOffset: previousTime.to - targetTime.to,
         barSpacing: chart.paneSize(mainPaneIndexRef.current).width / (previousTime.to - previousTime.from),
         priceRange: previousPrice,
+        priceScaleMode: priceScale.options().mode,
         autoScale: priceScale.options().autoScale,
         followLatest: followLatestRef.current,
       });
@@ -1075,7 +1074,7 @@ export default function Chart() {
       followLatestRef.current = false;
       viewportInteractionRef.current += 1;
       timeScale.setVisibleLogicalRange(targetTime);
-      if (selectedPrice) {
+      if (selectedPrice && priceScale.options().mode !== PriceScaleMode.Percentage && priceScale.options().mode !== PriceScaleMode.IndexedTo100) {
         autoScaleRef.current = false;
         setAutoScale(false);
         setVisiblePriceRange(priceScale, selectedPrice);
@@ -1125,7 +1124,9 @@ export default function Chart() {
       const rightScaleWidth = safePriceScaleWidth(chart, "right", mainPaneIndexRef.current);
       if (x <= leftScaleWidth || x >= rect.width - rightScaleWidth || y < 0 || y >= chart.paneSize(mainPaneIndexRef.current).height) return;
 
-      const priceRange = chart.priceScale(mainScaleSideRef.current, mainPaneIndexRef.current).getVisibleRange();
+      const priceScale = chart.priceScale(mainScaleSideRef.current, mainPaneIndexRef.current);
+      if (priceScale.options().mode === PriceScaleMode.Percentage || priceScale.options().mode === PriceScaleMode.IndexedTo100) return;
+      const priceRange = priceScale.getVisibleRange();
       if (!priceRange) return;
       const captureTarget = event.target instanceof Element ? event.target : element;
       setVisiblePriceRange(chart.priceScale(mainScaleSideRef.current, mainPaneIndexRef.current), priceRange);
@@ -1565,7 +1566,7 @@ export default function Chart() {
         const savedMode: ScaleMode = mode === PriceScaleMode.Logarithmic ? "log" : mode === PriceScaleMode.Percentage ? "percent" : mode === PriceScaleMode.IndexedTo100 ? "indexed" : "normal";
         const automatic = mode === PriceScaleMode.Percentage || mode === PriceScaleMode.IndexedTo100 || (autoScaleRef.current && !scaleLockedRef.current);
         scale.setAutoScale(true);
-        scale.getVisibleRange();
+        refreshPriceScaleData(chart, scale);
         const savedRange = !automatic ? readManualAxisRange(symbol, resolution, savedMode) : null;
         if (savedRange) setVisiblePriceRange(scale, savedRange);
         scale.setAutoScale(automatic);
@@ -2104,6 +2105,7 @@ export default function Chart() {
     const previousMode = previousScale.options().mode;
     const modeChanged = previousMode !== mode;
     const previousPriceRange = scaleSideChanged && !modeChanged && !autoScale
+      && previousMode !== PriceScaleMode.Percentage && previousMode !== PriceScaleMode.IndexedTo100
       ? previousScale.getVisibleRange()
       : null;
 
@@ -2163,14 +2165,14 @@ export default function Chart() {
     else if (volumePaneIndex !== mainPaneIndex) chart.priceScale(volumeScaleId, volumePaneIndex).applyOptions({ scaleMargins: { top: 0.08, bottom: 0.05 }, visible: true });
 
     const priceScale = chart.priceScale(priceScaleId, mainPaneIndex);
-    applyPriceScaleMode(priceScale, mode);
+    applyPriceScaleMode(chart, priceScale, mode);
     priceScale.applyOptions({
       invertScale: mainScaleInverted,
     });
     priceScale.setAutoScale(mode === PriceScaleMode.Percentage || mode === PriceScaleMode.IndexedTo100 || (autoScale && !scaleLocked));
     if (scaleSideChanged) {
       const oldScale = chart.priceScale(previousMainScaleSideRef.current, mainPaneIndex);
-      applyPriceScaleMode(oldScale, PriceScaleMode.Normal);
+      applyPriceScaleMode(chart, oldScale, PriceScaleMode.Normal);
       oldScale.applyOptions({ invertScale: false });
       previousMainScaleSideRef.current = mainScaleSide;
       if (visibleTime) chart.timeScale().setVisibleRange(visibleTime);
@@ -2538,7 +2540,7 @@ export default function Chart() {
       const next: ScaleMode = effectiveScaleMode === "log" ? "normal" : "log";
       setMainScaleMode(next);
     } else {
-      applyPriceScaleMode(scale, scale.options().mode === PriceScaleMode.Logarithmic ? PriceScaleMode.Normal : PriceScaleMode.Logarithmic);
+      applyPriceScaleMode(chart, scale, scale.options().mode === PriceScaleMode.Logarithmic ? PriceScaleMode.Normal : PriceScaleMode.Logarithmic);
     }
     setHoverAxis((current) => current ? { ...current } : current);
   };
@@ -2566,7 +2568,7 @@ export default function Chart() {
         if (isMainAxis) {
           if (!scaleLocked) {
             setMainScaleMode("normal");
-            applyPriceScaleMode(scale, PriceScaleMode.Normal);
+            applyPriceScaleMode(chart, scale, PriceScaleMode.Normal);
             setAutoScale(false);
           }
           setScaleLocked(!scaleLocked);
@@ -2590,7 +2592,7 @@ export default function Chart() {
               : PriceScaleMode.Logarithmic;
         const mode = requestedMode === scale.options().mode ? PriceScaleMode.Normal : requestedMode;
         if (isMainAxis) setMainScaleMode(mode === PriceScaleMode.Normal ? "normal" : action);
-        else applyPriceScaleMode(scale, mode);
+        else applyPriceScaleMode(chart, scale, mode);
         break;
       }
       case "move": {
@@ -2775,7 +2777,8 @@ export default function Chart() {
     }
     const priceScale = chart.priceScale(mainScaleSideRef.current, mainPaneIndexRef.current);
     followLatestRef.current = previous.followLatest;
-    if (previous.autoScale) {
+    if (previous.autoScale || previous.priceScaleMode !== priceScale.options().mode
+      || priceScale.options().mode === PriceScaleMode.Percentage || priceScale.options().mode === PriceScaleMode.IndexedTo100) {
       autoScaleRef.current = true;
       setAutoScale(true);
       priceScale.setAutoScale(true);
@@ -3478,6 +3481,15 @@ export default function Chart() {
             </div>
           )}
           <PriceAxisScaleButton chart={chartRef.current} targets={scaleButtonTargets} active={axisMenu} onOpen={(position) => { setHoverAxis(null); setFooterAxis({ side: position.side, paneIndex: position.paneIndex }); setAxisMenu(position); }} onClose={closeAxisMenu}/>
+          <ScrollToLatestButton chart={chartRef.current} series={seriesRef.current}
+            latestTime={currentBarRef.current?.time} rightOffset={chartAppearance.rightMargin}
+            paneRevision={paneRevision} onNavigate={(phase) => {
+              followLatestRef.current = phase === "complete";
+              if (phase === "start") {
+                viewportInteractionRef.current += 1;
+                dateNavigationControllerRef.current?.abort();
+              }
+            }} />
           {mainPanePlotVisible && countdown && countdownVisible && (
             <div className="price-axis-countdown" style={{ top: countdown.top, ...(mainScaleSide === "right" ? { right: 0 } : { left: 0 }) }}>
               {countdown.text}
@@ -3530,7 +3542,7 @@ export default function Chart() {
                   : mode === "indexed" ? PriceScaleMode.IndexedTo100
                     : mode === "log" ? PriceScaleMode.Logarithmic : PriceScaleMode.Normal;
                 const scale = chartRef.current?.priceScale(footerTarget.side, footerTarget.paneIndex);
-                if (scale) applyPriceScaleMode(scale, priceScaleMode);
+                if (scale && chartRef.current) applyPriceScaleMode(chartRef.current, scale, priceScaleMode);
                 setFooterAxis({ ...footerTarget });
               }
             }}
