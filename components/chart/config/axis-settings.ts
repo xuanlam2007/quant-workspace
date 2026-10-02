@@ -2,7 +2,8 @@ import type { ScaleMode } from "./chart-config";
 
 type Side = "left" | "right";
 const SETTINGS_KEY = "chart.axisSettings.v1";
-const RANGE_KEY = "chart.manualAxisRanges.v1";
+// Phiên bản cũ có thể lưu nhầm biên phần trăm dưới chế độ giá tuyệt đối.
+const RANGE_KEY = "chart.manualAxisRanges.v2";
 
 export interface AxisSettings {
   mode: ScaleMode;
