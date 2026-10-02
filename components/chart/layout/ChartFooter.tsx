@@ -135,7 +135,7 @@ export function ChartFooter({
         <span className="chart-footer__separator" aria-hidden="true" />
         <button className={scaleMode === "percent" ? "chart-footer__active" : ""} onClick={() => onScaleModeChange(scaleMode === "percent" ? "normal" : "percent")}>%</button>
         <button className={scaleMode === "log" ? "chart-footer__active" : ""} onClick={() => onScaleModeChange(scaleMode === "log" ? "normal" : "log")}>log</button>
-        <button className={autoScale ? "chart-footer__active" : ""} onClick={onAutoScaleToggle}>tự động</button>
+        <button className={autoScale ? "chart-footer__active" : ""} disabled={scaleMode === "percent" || scaleMode === "indexed"} onClick={onAutoScaleToggle}>tự động</button>
       </div>
     </footer>
   );
