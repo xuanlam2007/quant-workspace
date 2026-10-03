@@ -5,6 +5,8 @@ import type { ScaleMode } from "../config/chart-config";
 import { ChartColorPicker } from "./ChartColorPicker";
 import { useDraggablePanel } from "../ui/useDraggablePanel";
 import { PANE_CONTROL_ICONS } from "./pane-control-icons";
+import { ChartStyleSettings } from "./ChartStyleSettings";
+import type { ChartStyle, ChartStyleSettings as StyleSettings } from "../config/chart-styles";
 
 export interface ChartAppearance {
   upColor: string;
@@ -41,6 +43,9 @@ export const DEFAULT_CHART_APPEARANCE: ChartAppearance = {
 
 interface ChartSettingsDialogProps {
   open: boolean;
+  chartStyle: ChartStyle;
+  styleSettings: StyleSettings;
+  onStyleSettingsChange: (settings: StyleSettings) => void;
   appearance: ChartAppearance;
   scaleMode: ScaleMode;
   autoScale: boolean;
@@ -73,16 +78,18 @@ function TabIcon({ name }: { name: string }) {
   return <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" aria-hidden="true"><path d="m5 17 12-12 3 3L8 20H5v-3zM14 8l3 3"/></svg>;
 }
 
-export function ChartSettingsDialog({ open, appearance, scaleMode, autoScale, inverted, timezone, axisLabels, countdownVisible, onAppearanceChange, onScaleModeChange, onAutoScaleChange, onInvertChange, onTimezoneChange, onAxisLabelChange, onCountdownChange, onClose }: ChartSettingsDialogProps) {
+export function ChartSettingsDialog({ open, chartStyle, styleSettings, onStyleSettingsChange, appearance, scaleMode, autoScale, inverted, timezone, axisLabels, countdownVisible, onAppearanceChange, onScaleModeChange, onAutoScaleChange, onInvertChange, onTimezoneChange, onAxisLabelChange, onCountdownChange, onClose }: ChartSettingsDialogProps) {
   const [tab, setTab] = useState<Tab>("symbol");
   const [draft, setDraft] = useState(appearance);
   const [initial, setInitial] = useState(appearance);
+  const [styleDraft, setStyleDraft] = useState(styleSettings);
   const drag = useDraggablePanel(open);
 
   useEffect(() => {
     if (!open) return;
     setDraft(appearance);
     setInitial(appearance);
+    setStyleDraft(styleSettings);
     setTab("symbol");
   }, [open]);
   useEffect(() => {
@@ -106,11 +113,7 @@ export function ChartSettingsDialog({ open, appearance, scaleMode, autoScale, in
         <nav aria-label="Nhóm cài đặt">{tabs.map((item) => <button type="button" tabIndex={-1} key={item.id} className={tab === item.id ? "active" : ""} onClick={() => setTab(item.id)}><TabIcon name={item.icon}/>{item.label}</button>)}</nav>
         <div className="chart-settings__content" key={tab}>
           {tab === "symbol" && <>
-            <h3>BIỂU ĐỒ NẾN</h3>
-            {check("wickVisible", "Bóng nến")}
-            {check("borderVisible", "Đường viền")}
-            {color("upColor", "Thân nến tăng")}
-            {color("downColor", "Thân nến giảm")}
+            <ChartStyleSettings style={chartStyle} value={styleDraft} onChange={setStyleDraft}/>
             <h3>ĐƯỜNG GIÁ</h3>
             {check("lastPriceVisible", "Lần cuối")}
             {check("highLowVisible", "Cao và thấp")}
@@ -157,7 +160,7 @@ export function ChartSettingsDialog({ open, appearance, scaleMode, autoScale, in
           </>}
         </div>
       </div>
-      <footer><span/><button type="button" tabIndex={-1} className="chart-settings__cancel" onClick={() => { onAppearanceChange(initial); onClose(); }}>Hủy bỏ</button><button type="button" tabIndex={-1} className="chart-settings__ok" onClick={() => { onAppearanceChange(draft); onClose(); }}>Ok</button></footer>
+      <footer><span/><button type="button" tabIndex={-1} className="chart-settings__cancel" onClick={() => { onAppearanceChange(initial); onClose(); }}>Hủy bỏ</button><button type="button" tabIndex={-1} className="chart-settings__ok" onClick={() => { onAppearanceChange(draft); onStyleSettingsChange(styleDraft); onClose(); }}>Ok</button></footer>
     </section>
   </div>;
 }
