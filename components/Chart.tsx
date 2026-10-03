@@ -54,6 +54,8 @@ import { PriceAxisContextMenu, type PriceAxisMenuAction, type PriceAxisMenuState
 import { PriceAxisScaleButton, type ScaleButtonTarget } from "./chart/layout/PriceAxisScaleButton";
 import { ScrollToLatestButton } from "./chart/layout/ScrollToLatestButton";
 import { ChartHeader } from "./chart/layout/ChartHeader";
+import { ChartStyleRenderer } from "./chart/core/chart-style-renderer";
+import { chartStudyBars, defaultStyleSettings, readChartStylePreferences, saveChartStylePreferences, type ChartStylePreferences } from "./chart/config/chart-styles";
 import { MarketDataPanel, type ComparisonQuote, type SourceLegend } from "./chart/layout/MarketDataPanel";
 import type { VolumeSettings } from "./chart/layout/VolumeSettingsDialog";
 import { ChartSettingsDialog, DEFAULT_CHART_APPEARANCE, type ChartAppearance } from "./chart/layout/ChartSettingsDialog";
@@ -91,7 +93,6 @@ import {
 import { bollingerData, macdData, priceIndicatorData, rsiData, volumeMa } from "./chart/indicators/chart-indicators";
 import {
   barCloseCountdown,
-  candleColor,
   comparisonSeriesPoints,
   drawingStorageKey,
   formatChartTime,
@@ -232,6 +233,7 @@ export default function Chart() {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
+  const chartStyleRendererRef = useRef<ChartStyleRenderer | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const volumeMaSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const volumeSmaSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
@@ -288,7 +290,6 @@ export default function Chart() {
   const flushRealtimeRef = useRef<() => void>(() => undefined);
   const loadOlderHistoryRef = useRef<() => void>(() => undefined);
   const lastRenderedRealtimeBucketRef = useRef<number | undefined>(undefined);
-  const lastCandleColorRef = useRef<string | undefined>(undefined);
   const panGestureRef = useRef<{
     pointerId: number;
     startX: number;
@@ -426,6 +427,19 @@ export default function Chart() {
     return `${color.slice(0, 7)}${Math.round(alpha * 0.4).toString(16).padStart(2, "0")}`;
   }, []);
   const [chartAppearance, setChartAppearance] = useState<ChartAppearance>(DEFAULT_CHART_APPEARANCE);
+  const [chartStylePreferences, setChartStylePreferences] = useState<ChartStylePreferences>({ style: 1, favorites: [], settings: {} });
+  const [chartStyleRestored, setChartStyleRestored] = useState(false);
+  const chartStyle = chartStylePreferences.style;
+  const chartStyleRef = useRef(chartStyle);
+  chartStyleRef.current = chartStyle;
+  const activeStyleSettings = chartStylePreferences.settings[chartStyle] ?? defaultStyleSettings(chartStyle);
+  useEffect(() => {
+    setChartStylePreferences(readChartStylePreferences());
+    setChartStyleRestored(true);
+  }, []);
+  useEffect(() => {
+    if (chartStyleRestored) saveChartStylePreferences(chartStylePreferences);
+  }, [chartStylePreferences, chartStyleRestored]);
   const [mainScaleInverted, setMainScaleInverted] = useState(false);
   const [mainPaneIndex, setMainPaneIndex] = useState(0);
   const [legendBounds, setLegendBounds] = useState({ left: 0, right: 0, top: 0, comparisonTop: 0, volumeTop: 0, sourceTops: {} as Record<string, number> });
@@ -658,7 +672,7 @@ export default function Chart() {
     smoothingLength,
     setSmoothingLength,
   } = useIndicatorSettings();
-  const referenceStudies = useReferenceStudies(chartRef, barsByTimeRef, symbol, resolution, symbolInfo);
+  const referenceStudies = useReferenceStudies(chartRef, barsByTimeRef, symbol, resolution, symbolInfo, chartStyle);
   const secondaryLeftVisible = (activeStudies.includes("macd") && indicatorScaleSides.macd === "left")
     || (activeStudies.includes("rsi") && indicatorScaleSides.rsi === "left");
   const secondaryRightVisible = (activeStudies.includes("macd") && indicatorScaleSides.macd === "right")
@@ -687,7 +701,7 @@ export default function Chart() {
       const bars = [...barsByTimeRef.current.values()].filter((bar) => !range || (Number(bar.time) >= Number(range.from) && Number(bar.time) <= Number(range.to)));
       const step = Math.max(1, Math.ceil(bars.length / 10));
       const selectedBars = bars.filter((_bar, index) => index % step === 0 || index === bars.length - 1);
-      const mainMarkers: SeriesMarker<Time>[] = selectedLegend === "instrument" ? selectedBars.map((bar) => ({ time: bar.time, price: bar.close, position: "atPriceMiddle", shape: "circle", color: "#2962ff", size: 1 })) : [];
+      const mainMarkers: SeriesMarker<Time>[] = selectedLegend === "instrument" ? selectedBars.map((bar) => ({ time: bar.time, price: chartStyleRendererRef.current?.displayPrice(bar) ?? bar.close, position: "atPriceMiddle", shape: "circle", color: "#2962ff", size: 1 })) : [];
       const volumeMarkers: SeriesMarker<Time>[] = selectedLegend === "volume" ? selectedBars.map((bar) => ({ time: bar.time, price: bar.volume, position: "atPriceTop", shape: "circle", color: "#2962ff", size: 1 })) : [];
       mainSelectionMarkersRef.current?.setMarkers(mainMarkers);
       volumeSelectionMarkersRef.current?.setMarkers(volumeMarkers);
@@ -732,7 +746,7 @@ export default function Chart() {
     currentBarRef.current = undefined;
     barsByTimeRef.current.clear();
     previousCloseByTimeRef.current.clear();
-    seriesRef.current?.setData([]);
+    chartStyleRendererRef.current?.setBars([]);
     volumeSeriesRef.current?.setData([]);
     volumeMaSeriesRef.current?.setData([]);
     volumeSmaSeriesRef.current?.setData([]);
@@ -759,8 +773,9 @@ export default function Chart() {
 
   const [lastPrice, setLastPrice] = useState<string>("N/A");
 
-  const updateStudySeries = (bars: Bar[]) => {
-    referenceStudies.update(bars);
+  const updateStudySeries = (rawBars: Bar[]) => {
+    referenceStudies.update(rawBars);
+    const bars = chartStudyBars(rawBars, chartStyleRef.current);
     PRICE_INDICATORS.forEach((indicator) => {
       priceIndicatorSeriesRef.current.get(indicator.id)?.setData(
         priceIndicatorData(bars, indicator.length, indicator.type)
@@ -910,6 +925,9 @@ export default function Chart() {
 
     chartRef.current = chart;
     seriesRef.current = series;
+    chartStyleRendererRef.current = new ChartStyleRenderer(chart, series, containerRef.current, (baseLevel) => {
+      setChartStylePreferences((current) => ({ ...current, settings: { ...current.settings, 10: { ...(current.settings[10] ?? defaultStyleSettings(10)), baseLevel } } }));
+    });
     highLowLinesRef.current = null;
     volumeSeriesRef.current = volumeSeries;
     volumeMaSeriesRef.current = volumeMaSeries;
@@ -1289,6 +1307,8 @@ export default function Chart() {
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(refreshDrawingOverlays);
       lineTools.destroy();
       lineToolsRef.current = null;
+      chartStyleRendererRef.current?.destroy();
+      chartStyleRendererRef.current = null;
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
@@ -1362,7 +1382,7 @@ export default function Chart() {
       } catch (error: unknown) {
         if (cancelled || historyAbortController.signal.aborted) return;
         realtimeTickBuffer.dispose();
-        series.setData([]);
+        chartStyleRendererRef.current?.setBars([]);
         volumeSeriesRef.current?.setData([]);
         volumeMaSeriesRef.current?.setData([]);
         volumeSmaSeriesRef.current?.setData([]);
@@ -1382,12 +1402,9 @@ export default function Chart() {
         activeSession,
         activeTimezone,
       ));
-      series.setData(chartBars);
+      chartStyleRendererRef.current?.setBars(chartBars);
       refreshSelectionMarkersRef.current();
       if (chartBars.length) {
-        const color = candleColor(chartBars[chartBars.length - 1]);
-        series.applyOptions({ priceLineColor: color });
-        lastCandleColorRef.current = color;
         lastRenderedRealtimeBucketRef.current = Number(chartBars[chartBars.length - 1].time);
       }
       const volumeBars = chartBars;
@@ -1452,7 +1469,7 @@ export default function Chart() {
             previousCloseByTimeRef.current = new Map(loaded.slice(1).map((bar, index) => [Number(bar.time), loaded[index].close]));
             earliestHistoryTime = Number(loaded[0]?.time);
             olderHistoryExhausted = false;
-            series.setData(loaded);
+            chartStyleRendererRef.current?.setBars(loaded);
             volumeSeriesRef.current?.setData(loaded.map((bar, index) => ({ time: bar.time, value: bar.volume, color: volumeColorForBar(bar, loaded[index - 1]?.close) })));
             const settings = maSettingsRef.current;
             volumeMaSeriesRef.current?.setData(volumeMa(loaded, settings.length, "SMA", 1));
@@ -1516,7 +1533,7 @@ export default function Chart() {
               mergedBars.slice(1).map((bar, index) => [Number(bar.time), mergedBars[index].close]),
             );
             earliestHistoryTime = Number(mergedBars[0].time);
-            series.setData(mergedBars);
+            chartStyleRendererRef.current?.setBars(mergedBars);
             refreshSelectionMarkersRef.current();
             refreshHighLowRef.current();
             volumeSeriesRef.current?.setData(mergedBars.map((bar, index) => ({
@@ -1670,14 +1687,9 @@ export default function Chart() {
       const visiblePrice = manualPriceScale?.getVisibleRange();
       if (isNewRenderedBucket) timelineSeriesRef.current?.setData(futureTimelinePoints(bucketNumber, resolution));
 
-      seriesRef.current?.update(bar);
+      chartStyleRendererRef.current?.update(bar);
       refreshSelectionMarkersRef.current();
       refreshHighLowRef.current();
-      const color = candleColor(bar);
-      if (color !== lastCandleColorRef.current) {
-        seriesRef.current?.applyOptions({ priceLineColor: color });
-        lastCandleColorRef.current = color;
-      }
       volumeSeriesRef.current?.update({
         time: bar.time,
         value: bar.volume,
@@ -2216,11 +2228,7 @@ export default function Chart() {
   useEffect(() => {
     const chart = chartRef.current;
     if (!chart) return;
-    const { upColor, downColor, wickVisible, borderVisible, backgroundColor, gridColor, gridVisible, crosshairColor, textColor, fontSize, topMargin, bottomMargin, rightMargin } = chartAppearance;
-    seriesRef.current?.applyOptions({
-      upColor, downColor, borderVisible, borderUpColor: upColor, borderDownColor: downColor,
-      wickVisible, wickUpColor: upColor, wickDownColor: downColor,
-    });
+    const { backgroundColor, gridColor, gridVisible, crosshairColor, textColor, fontSize, topMargin, bottomMargin, rightMargin } = chartAppearance;
     chart.applyOptions({
       layout: { background: { type: ColorType.Solid, color: backgroundColor }, textColor, fontSize },
       grid: { vertLines: { color: gridVisible ? gridColor : backgroundColor }, horzLines: { color: gridVisible ? gridColor : backgroundColor } },
@@ -2229,6 +2237,14 @@ export default function Chart() {
     chart.timeScale().applyOptions({ rightOffset: rightMargin });
     chart.priceScale(mainScaleSide, mainPaneIndex).applyOptions({ scaleMargins: { top: topMargin / 100, bottom: bottomMargin / 100 } });
   }, [chartAppearance, mainScaleSide, mainPaneIndex, comparisonActive]);
+
+  useEffect(() => {
+    chartStyleRendererRef.current?.configure(chartStyle, chartStylePreferences.settings[chartStyle] ?? defaultStyleSettings(chartStyle), chartAppearance.backgroundColor);
+    setVisibleBar((current) => current ? { ...current } : currentBarRef.current);
+    updateStudySeries([...barsByTimeRef.current.values()].sort((a, b) => Number(a.time) - Number(b.time)));
+    refreshSelectionMarkersRef.current();
+    refreshHighLowRef.current();
+  }, [chartStyle, chartStylePreferences.settings, chartAppearance.backgroundColor]);
 
   useEffect(() => {
     seriesRef.current?.applyOptions({ visible: mainSeriesVisible });
@@ -2958,7 +2974,7 @@ export default function Chart() {
   useEffect(() => {
     const onShortcut = (event: KeyboardEvent) => {
       const target = event.target instanceof HTMLElement ? event.target : null;
-      if (event.defaultPrevented || target?.closest("input, textarea, select, [contenteditable=true]") || document.querySelector('[role="dialog"]')) return;
+      if (event.defaultPrevented || target?.closest('input, textarea, select, [contenteditable=true], [role="menu"]') || document.querySelector('[role="dialog"]')) return;
       const key = event.key.toLowerCase();
       const mod = event.ctrlKey || event.metaKey;
       const alt = event.altKey && !mod && !event.shiftKey;
@@ -3254,6 +3270,10 @@ export default function Chart() {
       <OutsideDragSelectionGuard />
       {referenceSettings?.definition && referenceSettings.settings && <ReferenceStudySettingsDialog key={referenceSettings.id} definition={referenceSettings.definition} settings={referenceSettings.settings} onApply={(settings) => referenceStudies.apply(referenceSettings.id, settings)} onClose={() => referenceStudies.setSettingsId(null)}/> }
       <ChartHeader
+        chartStyle={chartStyle}
+        favoriteChartStyles={chartStylePreferences.favorites}
+        onChartStyleChange={(style) => setChartStylePreferences((current) => current.style === style ? current : { ...current, style })}
+        onFavoriteChartStylesChange={(favorites) => setChartStylePreferences((current) => ({ ...current, favorites }))}
         symbol={symbol}
         compareSymbols={compareSymbols}
         recentCompareSymbols={recentCompareSymbols}
@@ -3352,8 +3372,13 @@ export default function Chart() {
             symbolInfo={symbolInfo}
             pricePrecision={currentPriceFormat.precision}
             resolution={resolution}
-            quoteBar={quoteBar}
-            previousClose={previousClose}
+            quoteBar={chartStyleRendererRef.current?.displayBar(quoteBar) ?? quoteBar}
+            rawQuoteBar={quoteBar}
+            rawPreviousClose={previousClose}
+            previousClose={chartStyle === 8 ? chartStyleRendererRef.current?.previousClose(quoteBar?.time) : previousClose}
+            chartStyle={chartStyle}
+            chartStyleSettings={activeStyleSettings}
+            chartStyleColor={chartStyleRendererRef.current?.barColor(quoteBar)}
             sourceLegends={sourceLegends}
             volumeRowTop={volumeRowTop}
             onMoveSourceToPane={moveSourceToPane}
@@ -3596,6 +3621,9 @@ export default function Chart() {
       />}
       <ChartSettingsDialog
         open={chartSettingsOpen}
+        chartStyle={chartStyle}
+        styleSettings={activeStyleSettings}
+        onStyleSettingsChange={(settings) => setChartStylePreferences((current) => ({ ...current, settings: { ...current.settings, [current.style]: settings } }))}
         appearance={chartAppearance}
         scaleMode={effectiveScaleMode}
         autoScale={autoScale && !scaleLocked}
