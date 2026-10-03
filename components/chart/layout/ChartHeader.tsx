@@ -12,6 +12,8 @@ import { SymbolSearchModal } from "./SymbolSearchModal";
 import { CompareSymbolModal } from "./CompareSymbolModal";
 import { useDraggablePanel } from "../ui/useDraggablePanel";
 import { PANE_CONTROL_ICONS } from "./pane-control-icons";
+import { ChartTypeMenu } from "./ChartTypeMenu";
+import type { ChartStyle } from "../config/chart-styles";
 
 export const HEADER_SVGS = {
   search: (
@@ -80,6 +82,10 @@ export const HEADER_SVGS = {
 };
 
 export interface ChartHeaderProps {
+  chartStyle: ChartStyle;
+  favoriteChartStyles: ChartStyle[];
+  onChartStyleChange: (style: ChartStyle) => void;
+  onFavoriteChartStylesChange: (styles: ChartStyle[]) => void;
   symbol: string;
   compareSymbols: string[];
   recentCompareSymbols: string[];
@@ -115,6 +121,10 @@ export interface ChartHeaderProps {
 }
 
 export function ChartHeader({
+  chartStyle,
+  favoriteChartStyles,
+  onChartStyleChange,
+  onFavoriteChartStylesChange,
   symbol,
   compareSymbols,
   recentCompareSymbols,
@@ -340,15 +350,7 @@ export function ChartHeader({
 
           <span className="header-divider" />
 
-          {/* Kiểu biểu đồ (Nến) */}
-          <button
-            type="button"
-            className="header-btn header-btn--icon"
-            aria-label="Kiểu biểu đồ (Nến)"
-            data-tooltip="Kiểu biểu đồ"
-          >
-            <span className="header-btn__icon">{HEADER_SVGS.candles}</span>
-          </button>
+          <ChartTypeMenu style={chartStyle} favorites={favoriteChartStyles} onChange={onChartStyleChange} onFavoritesChange={onFavoriteChartStylesChange} otherMenuOpen={timeframeMenuOpen || indicatorMenuOpen || isSymbolModalOpen || isCompareModalOpen} onOpen={() => { onTimeframeMenuToggle(false); onIndicatorMenuToggle(false); }}/>
 
           <span className="header-divider" />
 
