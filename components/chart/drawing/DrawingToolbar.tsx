@@ -1,14 +1,18 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { LineToolType } from "lightweight-charts-line-tools-core";
 import {
   DRAWING_TOOL_GROUPS,
-  type DrawingToolGroup,
   type DrawingToolOption,
 } from "../config/chart-config";
 import {
   VNDIRECT_TOOLBAR_ICONS,
   type VndirectToolbarIconName,
 } from "./vndirect-icons";
+import { useDrawingFavorites } from "./useDrawingFavorites";
+import { FavoriteDrawingToolbar } from "./FavoriteDrawingToolbar";
+import { FAVORITE_ICONS } from "../ui/favorite-icons";
+
+const SHORTCUTS: Record<string, string> = { "trend-line": "Alt + T", "fib-retracement": "Alt + F", "horizontal-line": "Alt + H", "horizontal-ray": "Alt + J", "vertical-line": "Alt + V", "cross-line": "Alt + C" };
 
 type MagnetMode = 0 | 1 | 2;
 type ToolbarIconName = VndirectToolbarIconName;
@@ -77,6 +81,9 @@ export function DrawingToolbar({
   onClearAll,
 }: DrawingToolbarProps) {
   const toolbarRef = useRef<HTMLElement>(null);
+  const drawingMenuRef = useRef<HTMLDivElement>(null);
+  const favorites = useDrawingFavorites();
+  const [menuPosition, setMenuPosition] = useState({ left: 52, top: 60 });
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [selectedTools, setSelectedTools] = useState<Record<string, DrawingToolOption>>(() => {
     const initial: Record<string, DrawingToolOption> = {};
@@ -111,12 +118,27 @@ export function DrawingToolbar({
       );
       if (matchingTool) {
         setSelectedTools((prev) => {
-          if (prev[group.id]?.id === matchingTool.id) return prev;
+          if (prev[group.id]?.type === activeTool) return prev;
           return { ...prev, [group.id]: matchingTool };
         });
       }
     }
   }, [activeTool]);
+
+  useLayoutEffect(() => {
+    if (!openMenu || !drawingMenuRef.current) return;
+    const place = () => {
+      const anchor = toolbarRef.current?.querySelector(`[data-tool-group="${openMenu}"]`)?.getBoundingClientRect();
+      const toolbar = toolbarRef.current?.getBoundingClientRect();
+      const menu = drawingMenuRef.current;
+      if (anchor && toolbar && menu) setMenuPosition({ left: Math.max(0, Math.min(toolbar.right, window.innerWidth - menu.offsetWidth)), top: Math.max(6, Math.min(anchor.top - 6, window.innerHeight - menu.offsetHeight - 6)) });
+    };
+    place();
+    const observer = new ResizeObserver(place);
+    observer.observe(drawingMenuRef.current);
+    window.addEventListener("resize", place);
+    return () => { observer.disconnect(); window.removeEventListener("resize", place); };
+  }, [openMenu]);
 
   const toggleMenu = (menu: string) => setOpenMenu((current) => current === menu ? null : menu);
   const selectTool = (type: LineToolType) => {
@@ -131,8 +153,10 @@ export function DrawingToolbar({
     setOpenMenu(null);
   };
 
+  const activeFavoriteId = activeTool ? Object.values(selectedTools).find((tool) => tool.type === activeTool && tool.available !== false)?.id : undefined;
+
   return (
-    <aside ref={toolbarRef} className="drawing-toolbar" aria-label="Công cụ vẽ">
+    <><aside ref={toolbarRef} className="drawing-toolbar" data-menu-open={openMenu !== null} aria-label="Công cụ vẽ">
       <div className="toolbar-group">
         <button
           className={`toolbar-button toolbar-button--split ${activeTool === null && !eraserMode ? "toolbar-button--active" : ""}`}
@@ -173,7 +197,7 @@ export function DrawingToolbar({
         );
         const currentTool = selectedTools[group.id] ?? group.tools[0];
         return (
-          <div className="toolbar-group" key={group.id}>
+          <div className="toolbar-group" key={group.id} data-tool-group={group.id}>
             <button
               className={`toolbar-button toolbar-button--split ${selected ? "toolbar-button--active" : ""}`}
               aria-label={`Chọn ${currentTool.title}`}
@@ -187,7 +211,7 @@ export function DrawingToolbar({
             >
               <ToolbarIcon name={currentTool.icon} />
             </button>
-            {group.tools.length > 1 && (
+            {group.tools.length > 0 && (
               <button
                 className="toolbar-menu-trigger"
                 data-tooltip={`Các công cụ ${group.title}`}
@@ -202,20 +226,31 @@ export function DrawingToolbar({
               </button>
             )}
             {openMenu === group.id && (
-              <div className="toolbar-menu" role="menu">
-                <div className="toolbar-menu__title">{group.title}</div>
+              <div ref={drawingMenuRef} className="toolbar-menu toolbar-menu--drawing" role="menu" style={menuPosition} onKeyDown={(event) => {
+                if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+                event.preventDefault();
+                const rows = Array.from(drawingMenuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]:not(:disabled)') ?? []);
+                const index = rows.indexOf(document.activeElement as HTMLButtonElement);
+                const next = event.key === "Home" ? 0 : event.key === "End" ? rows.length - 1 : (index + (event.key === "ArrowDown" ? 1 : -1) + rows.length) % rows.length;
+                rows[next]?.focus();
+              }}>
                 {group.tools.map((tool) => (
+                  <div className={`drawing-tool-menu__row ${selected && currentTool.id === tool.id ? "is-active" : ""}`} key={tool.id}>
                   <button
-                    className={currentTool.id === tool.id ? "toolbar-menu__active" : ""}
-                    key={tool.id}
-                    role="menuitem"
+                    className="drawing-tool-menu__select"
+                    type="button"
+                    tabIndex={-1}
+                    role="menuitemradio"
+                    aria-checked={selected && currentTool.id === tool.id}
                     onClick={() => selectGroupTool(group.id, tool)}
                     disabled={tool.available === false}
                     aria-disabled={tool.available === false}
                     data-tooltip={tool.available === false ? "Chưa được package line-tools hiện tại hỗ trợ" : undefined}
                   >
-                    <ToolbarIcon name={tool.icon} /><span>{tool.title}</span>
+                    <ToolbarIcon name={tool.icon} /><span className="drawing-tool-menu__label">{tool.title}</span>{SHORTCUTS[tool.id] && <span className="drawing-tool-menu__shortcut">{SHORTCUTS[tool.id]}</span>}
                   </button>
+                  {tool.available !== false && <button type="button" tabIndex={-1} className={`drawing-tool-menu__favorite ${favorites.ids.includes(tool.id) ? "is-favorite" : ""}`} aria-label={favorites.ids.includes(tool.id) ? "Loại bỏ khỏi mục yêu thích" : "Thêm vào mục yêu thích"} aria-pressed={favorites.ids.includes(tool.id)} data-tooltip={favorites.ids.includes(tool.id) ? "Loại bỏ khỏi mục yêu thích" : "Thêm vào mục yêu thích"} onClick={() => favorites.toggle(tool.id)} dangerouslySetInnerHTML={{ __html: favorites.ids.includes(tool.id) ? FAVORITE_ICONS.filled : FAVORITE_ICONS.empty }}/>}
+                  </div>
                 ))}
               </div>
             )}
@@ -307,6 +342,11 @@ export function DrawingToolbar({
           </div>
         )}
       </div>
+      {favorites.ids.length > 0 && <button type="button" tabIndex={-1} className={`toolbar-button drawing-favorites-toggle ${favorites.visible ? "is-active" : ""}`} aria-label="Hiển thị thanh công cụ vẽ yêu thích" aria-pressed={favorites.visible} data-tooltip="Hiển thị thanh công cụ vẽ yêu thích" data-tooltip-placement="right" onClick={favorites.toggleVisibility} dangerouslySetInnerHTML={{ __html: FAVORITE_ICONS.toolbar }}/>}
     </aside>
+    <FavoriteDrawingToolbar ids={favorites.ids} visible={favorites.visible} locked={locked} activeId={activeFavoriteId} onSelect={(tool) => {
+      const group = DRAWING_TOOL_GROUPS.find((item) => item.tools.some((entry) => entry.id === tool.id));
+      if (group) selectGroupTool(group.id, tool);
+    }} onReorder={favorites.reorder} onHide={favorites.hide}/></>
   );
 }
