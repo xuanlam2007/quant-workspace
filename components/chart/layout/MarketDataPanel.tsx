@@ -8,6 +8,7 @@ import { formatVolume } from "../core/chart-utils";
 import type { ChartAppearance } from "./ChartSettingsDialog";
 import { HEADER_SVGS } from "./ChartHeader";
 import { VolumeSettingsDialog, type VolumeSettings } from "./VolumeSettingsDialog";
+import { singleValueStyle, sourceValue, type ChartStyle, type ChartStyleSettings } from "../config/chart-styles";
 
 const legendIcons = {
   eye: <svg viewBox="0 0 24 22" width="24" height="22" fill="none" aria-hidden="true"><path fill="currentColor" fillRule="evenodd" d="M17.9948 7.91366C16.6965 6.48549 14.6975 5 11.9999 5C9.30225 5 7.30322 6.48549 6.00488 7.91366C6.00488 7.91366 4 10 4 11C4 12 6.00488 14.0863 6.00488 14.0863C7.30322 15.5145 9.30225 17 11.9999 17C14.6975 17 16.6965 15.5145 17.9948 14.0863C17.9948 14.0863 20 12 20 11C20 10 17.9948 7.91366 17.9948 7.91366ZM6.74482 13.4137C7.94648 14.7355 9.69746 16 11.9999 16C14.3022 16 16.0532 14.7355 17.2549 13.4137C17.2549 13.4137 19 11.5 19 11C19 10.5 17.2549 8.58634 17.2549 8.58634C16.0532 7.26451 14.3022 6 11.9999 6C9.69746 6 7.94648 7.26451 6.74482 8.58634C6.74482 8.58634 5 10.5 5 11C5 11.5 6.74482 13.4137 6.74482 13.4137Z"/><path fill="currentColor" fillRule="evenodd" d="M12 13C13.1046 13 14 12.1046 14 11C14 9.89543 13.1046 9 12 9C10.8954 9 10 9.89543 10 11C10 12.1046 10.8954 13 12 13ZM12 14C13.6569 14 15 12.6569 15 11C15 9.34315 13.6569 8 12 8C10.3431 8 9 9.34315 9 11C9 12.6569 10.3431 14 12 14Z"/></svg>,
@@ -61,6 +62,11 @@ interface MarketDataPanelProps {
   pricePrecision: number;
   resolution: string;
   quoteBar?: Bar;
+  rawQuoteBar?: Bar;
+  rawPreviousClose?: number;
+  chartStyle: ChartStyle;
+  chartStyleSettings: ChartStyleSettings;
+  chartStyleColor?: string;
   previousClose?: number;
   sourceLegends: SourceLegend[];
   volumeRowTop: number;
@@ -125,6 +131,11 @@ export function MarketDataPanel({
   pricePrecision,
   resolution,
   quoteBar,
+  rawQuoteBar,
+  rawPreviousClose,
+  chartStyle,
+  chartStyleSettings,
+  chartStyleColor,
   previousClose,
   sourceLegends,
   volumeRowTop,
@@ -198,6 +209,9 @@ export function MarketDataPanel({
   const change = quoteBar && previousClose !== undefined ? quoteBar.close - previousClose : 0;
   const changePercent = previousClose ? (change / previousClose) * 100 : 0;
   const quoteClass = change >= 0 ? "quote--up" : "quote--down";
+  const singleValue = singleValueStyle(chartStyle);
+  const volumeBar = rawQuoteBar ?? quoteBar;
+  const volumePreviousClose = rawPreviousClose ?? previousClose;
   const formatPrice = (value?: number) => value?.toFixed(pricePrecision) ?? "N/A";
   const instrumentTitle = symbolInfo?.description || symbol;
   const timezone = symbolInfo?.timezone || "Asia/Bangkok";
@@ -363,12 +377,14 @@ export function MarketDataPanel({
         </div>}
         {seriesVisible && (loading ? <span className="market-data__loader" role="status" aria-label="Đang tải dữ liệu biểu đồ"><i/><i/><i/></span> : <div className="ohlcv-strip" aria-label="Giá mở cửa, cao nhất, thấp nhất, đóng cửa và khối lượng">
           {appearance.ohlcVisible && <>
-          <span>O <b className={quoteClass}>{formatPrice(quoteBar?.open)}</b></span>
-          <span>H <b className={quoteClass}>{formatPrice(quoteBar?.high)}</b></span>
-          <span>L <b className={quoteClass}>{formatPrice(quoteBar?.low)}</b></span>
-          <span>C <b className={quoteClass}>{formatPrice(quoteBar?.close)}</b></span>
+          {singleValue ? <b style={{ color: chartStyleColor }}>{formatPrice(quoteBar ? sourceValue(quoteBar, chartStyleSettings.source) : undefined)}</b> : <>
+            {chartStyle !== 12 && chartStyle !== 16 && <span>O <b className={quoteClass} style={{ color: chartStyleColor }}>{formatPrice(quoteBar?.open)}</b></span>}
+            <span>H <b className={quoteClass} style={{ color: chartStyle === 16 ? chartStyleSettings.highColor : chartStyleColor }}>{formatPrice(quoteBar?.high)}</b></span>
+            <span>L <b className={quoteClass} style={{ color: chartStyle === 16 ? chartStyleSettings.lowColor : chartStyleColor }}>{formatPrice(quoteBar?.low)}</b></span>
+            {chartStyle !== 12 && <span>C <b className={quoteClass} style={{ color: chartStyle === 16 ? chartStyleSettings.color : chartStyleColor }}>{formatPrice(quoteBar?.close)}</b></span>}
           </>}
-          {appearance.changeVisible && previousClose !== undefined && <span className={quoteClass}>{change >= 0 ? "+" : ""}{change.toFixed(pricePrecision)} ({changePercent.toFixed(2)}%)</span>}
+          </>}
+          {appearance.changeVisible && chartStyle !== 12 && previousClose !== undefined && <span className={quoteClass} style={{ color: chartStyleColor }}>{change >= 0 ? "+" : ""}{change.toFixed(pricePrecision)} ({changePercent.toFixed(2)}%)</span>}
           {appearance.volumeVisible && <span className="ohlcv-strip__volume">Khối lượng <b>{quoteBar ? formatVolume(quoteBar.volume) : "N/A"}</b></span>}
         </div>)}
       </div>
@@ -395,7 +411,7 @@ export function MarketDataPanel({
           <button type="button" tabIndex={-1} aria-label="Loại bỏ" onClick={onRemoveVolume}>{legendIcons.remove}</button>
           <button type="button" tabIndex={-1} aria-label="Thêm nữa" onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); setVolumeMenuPosition({ left: Math.min(rect.left, window.innerWidth - 456), top: Math.min(rect.bottom + 5, window.innerHeight - 460) }); setVolumeMenuOpen(true); }}>{legendIcons.more}</button>
         </div></div>}
-        {!loading && appearance.studyValueVisible && volumeSettings.statusValueVisible && <div className="indicator-data__values"><span className="indicator-data__volume" style={{ color: quoteBar && quoteBar.close >= (volumeSettings.colorByPreviousClose && previousClose !== undefined ? previousClose : quoteBar.open) ? volumeSettings.upColor : volumeSettings.downColor }}>{quoteBar ? formatVolume(quoteBar.volume) : "N/A"}</span>{volumeSettings.smoothedVisible && <span className="indicator-data__ma">{currentVolumeMa !== undefined ? formatVolume(currentVolumeMa) : "N/A"}</span>}</div>}
+        {!loading && appearance.studyValueVisible && volumeSettings.statusValueVisible && <div className="indicator-data__values"><span className="indicator-data__volume" style={{ color: volumeBar && volumeBar.close >= (volumeSettings.colorByPreviousClose && volumePreviousClose !== undefined ? volumePreviousClose : volumeBar.open) ? volumeSettings.upColor : volumeSettings.downColor }}>{volumeBar ? formatVolume(volumeBar.volume) : "N/A"}</span>{volumeSettings.smoothedVisible && <span className="indicator-data__ma">{currentVolumeMa !== undefined ? formatVolume(currentVolumeMa) : "N/A"}</span>}</div>}
       </div>}
 
       {activeSource && createPortal(<div ref={sourceMenuRef} className="series-menu source-series-menu" role="menu" aria-label={`Tùy chọn ${activeSource.label}`} style={{ left: sourceMenuPosition.left, top: sourceMenuPosition.top }}>
