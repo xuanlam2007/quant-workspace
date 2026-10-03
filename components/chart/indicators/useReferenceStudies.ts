@@ -3,6 +3,7 @@ import { LineStyle, type IChartApi, type IPriceLine, type ISeriesApi, type Time,
 import type { Bar, SymbolInfo } from "@/lib/dchart-api";
 import { calculateReferenceStudy, loadReferenceStudies, referenceDefaults, type ReferenceDefinition, type ReferencePoint, type ReferenceSettings } from "@/lib/reference-studies";
 import { ReferenceStudyView } from "./ReferenceStudyView";
+import { chartStudyBars, type ChartStyle } from "../config/chart-styles";
 
 export type ReferenceSeries = ISeriesApi<"Custom", Time, ReferencePoint | WhitespaceData<Time>>;
 export interface ReferenceStudyInstance {
@@ -20,12 +21,12 @@ export interface ReferenceStudyInstance {
   request?: AbortController;
 }
 
-export function useReferenceStudies(chartRef: RefObject<IChartApi | null>, barsRef: RefObject<Map<number, Bar>>, symbol: string, resolution: string, symbolInfo?: SymbolInfo) {
+export function useReferenceStudies(chartRef: RefObject<IChartApi | null>, barsRef: RefObject<Map<number, Bar>>, symbol: string, resolution: string, symbolInfo?: SymbolInfo, chartStyle: ChartStyle = 1) {
   const instances = useRef(new Map<string, ReferenceStudyInstance>());
   const [revision, setRevision] = useState(0);
   const [settingsId, setSettingsId] = useState<string | null>(null);
-  const context = useRef({ symbol, resolution, symbolInfo });
-  context.current = { symbol, resolution, symbolInfo };
+  const context = useRef({ symbol, resolution, symbolInfo, chartStyle });
+  context.current = { symbol, resolution, symbolInfo, chartStyle };
   const refresh = useCallback(() => setRevision((value) => value + 1), []);
   const calculate = useCallback(async (instance: ReferenceStudyInstance, bars?: Bar[]) => {
     if (!instance.definition || !instance.settings || !instance.series || !instance.view) return;
@@ -38,7 +39,8 @@ export function useReferenceStudies(chartRef: RefObject<IChartApi | null>, barsR
     const interval = instance.settings.intervals[group];
     instance.series.applyOptions({ visible: instance.visible && interval.enabled && multiple >= interval.from && multiple <= interval.to, lastValueVisible: false, baseLineVisible: false });
     try {
-      const result = await calculateReferenceStudy(instance.definition, instance.settings, bars ?? [...(barsRef.current?.values() ?? [])].sort((a, b) => Number(a.time) - Number(b.time)), current.symbol, current.resolution, current.symbolInfo, request.signal);
+      const inputBars = bars ?? [...(barsRef.current?.values() ?? [])].sort((a, b) => Number(a.time) - Number(b.time));
+      const result = await calculateReferenceStudy(instance.definition, instance.settings, chartStudyBars(inputBars, current.chartStyle), current.symbol, current.resolution, current.symbolInfo, request.signal);
       if (request.signal.aborted || !instances.current.has(instance.id)) return;
       instance.points = result.points;
       instance.view.settings = instance.settings;
@@ -117,7 +119,7 @@ export function useReferenceStudies(chartRef: RefObject<IChartApi | null>, barsR
     instance.series?.applyOptions({ priceFormat: instance.definition?.metainfo.format?.type === "volume" ? { type: "volume" } : { type: "price", precision: settings.precision ?? 2, minMove: 10 ** -(settings.precision ?? 2) } });
     void calculate(instance);
   }, [calculate]);
-  useEffect(() => { update(); }, [symbol, resolution, symbolInfo, update]);
+  useEffect(() => { update(); }, [symbol, resolution, symbolInfo, chartStyle, update]);
   useEffect(() => () => { instances.current.forEach((instance) => instance.request?.abort()); instances.current.clear(); }, []);
   return { instances, revision, add, remove, clear, update, apply, settingsId, setSettingsId, refresh };
 }
