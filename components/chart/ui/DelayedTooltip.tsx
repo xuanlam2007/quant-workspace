@@ -250,7 +250,7 @@ export function DelayedTooltip() {
 
   useLayoutEffect(() => {
     const element = tooltipRef.current;
-    if (!element || (tooltip?.variant !== "axis" && tooltip?.variant !== "navigation")) return;
+    if (!element || (tooltip?.variant !== "axis" && tooltip?.variant !== "navigation" && tooltip?.variant !== "layout-save")) return;
     const width = element.getBoundingClientRect().width;
     const viewportWidth = document.documentElement.clientWidth;
     const left = Math.max(4, Math.min(tooltip.x - width / 2, viewportWidth - width - 4));
@@ -265,14 +265,14 @@ export function DelayedTooltip() {
     <div
       ref={tooltipRef}
       id={TOOLTIP_ID}
-      className={`delayed-tooltip delayed-tooltip--${tooltip.placement}${tooltip.variant === "axis" || tooltip.variant === "navigation" ? ` delayed-tooltip--${tooltip.variant}` : ""}`}
+      className={`delayed-tooltip delayed-tooltip--${tooltip.placement}${tooltip.variant === "axis" || tooltip.variant === "navigation" || tooltip.variant === "layout-save" ? ` delayed-tooltip--${tooltip.variant}` : ""}`}
       style={{ left: tooltip.x, top: tooltip.y }}
       role="tooltip"
     >
       <span className="delayed-tooltip__arrow" />
       <span className="delayed-tooltip__body">
         <strong>{tooltip.text}</strong>
-        {tooltip.hotkey && tooltip.variant === "navigation" && (
+        {tooltip.hotkey && (tooltip.variant === "navigation" || tooltip.variant === "layout-save") && (
           <span className="delayed-tooltip__navigation-hotkey">
             {tooltip.hotkey.split(" + ").map((key, index) => <span className="delayed-tooltip__navigation-key" key={`${key}-${index}`}>
               {index > 0 && <span aria-hidden="true"> + </span>}
@@ -280,7 +280,7 @@ export function DelayedTooltip() {
             </span>)}
           </span>
         )}
-        {tooltip.hotkey && tooltip.variant !== "navigation" && (
+        {tooltip.hotkey && tooltip.variant !== "navigation" && tooltip.variant !== "layout-save" && (
           <>
             <span className="delayed-tooltip__divider" />
             <kbd>{tooltip.hotkey}</kbd>
