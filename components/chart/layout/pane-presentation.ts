@@ -9,6 +9,9 @@ export interface PanePresentation {
 const COLLAPSED_HEIGHT = 33;
 const HIDDEN_HEIGHT = 2;
 const SEPARATOR_HEIGHT = 1;
+const controllers = new WeakMap<IChartApi, PanePresentationController>();
+export interface SavedPanePresentation { collapsed: number[]; maximized: number | null; factors: number[] }
+export function paneController(chart: IChartApi) { return controllers.get(chart); }
 
 export class PanePresentationController {
   readonly collapsed = new Set<Pane>();
@@ -20,6 +23,7 @@ export class PanePresentationController {
   private observer: ResizeObserver;
 
   constructor(private chart: IChartApi, private changed: (state: PanePresentation) => void) {
+    controllers.set(chart, this);
     this.observer = new ResizeObserver(() => this.refresh());
     const container = chart.chartElement().parentElement;
     if (container) this.observer.observe(container);
@@ -27,6 +31,24 @@ export class PanePresentationController {
 
   canCollapse() {
     return this.chart.panes().filter((pane) => !this.collapsed.has(pane)).length > 1;
+  }
+
+  snapshot(): SavedPanePresentation {
+    const panes = this.chart.panes();
+    return { collapsed: panes.flatMap((pane, index) => this.collapsed.has(pane) ? [index] : []), maximized: this.maximized ? panes.indexOf(this.maximized) : null, factors: panes.map((pane) => this.factors.get(pane) ?? pane.getStretchFactor()) };
+  }
+
+  restore(saved: SavedPanePresentation) {
+    const panes = this.chart.panes();
+    this.collapsed.clear();
+    this.factors.clear();
+    panes.forEach((pane, index) => {
+      const factor = saved.factors[index];
+      if (Number.isFinite(factor) && factor > 0) { pane.setStretchFactor(factor); this.factors.set(pane, factor); }
+      if (saved.collapsed.includes(index)) this.collapsed.add(pane);
+    });
+    this.maximized = saved.maximized === null ? null : panes[saved.maximized] ?? null;
+    this.refresh();
   }
 
   toggleCollapsed(pane: Pane) {
@@ -118,6 +140,7 @@ export class PanePresentationController {
   }
 
   dispose() {
+    if (controllers.get(this.chart) === this) controllers.delete(this.chart);
     this.disposed = true;
     this.observer.disconnect();
     cancelAnimationFrame(this.frame);
