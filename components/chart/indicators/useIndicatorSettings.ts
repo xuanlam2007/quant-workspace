@@ -14,8 +14,10 @@ export function useIndicatorSettings() {
         maLength?: unknown;
         maType?: unknown;
         smoothingLength?: unknown;
+        activeStudies?: unknown;
       } | null;
       if (saved) {
+        if (Array.isArray(saved.activeStudies)) setActiveStudies([...new Set(saved.activeStudies.filter((id): id is StudyId => ["volume", "ma", "ema", "macd", "rsi", "boll"].includes(id)))]);
         if (typeof saved.maLength === "number") setMaLength(Math.max(2, Math.min(500, saved.maLength)));
         if (saved.maType === "SMA" || saved.maType === "EMA" || saved.maType === "WMA") setMaType(saved.maType);
         if (typeof saved.smoothingLength === "number") setSmoothingLength(Math.max(1, Math.min(500, saved.smoothingLength)));
@@ -29,14 +31,16 @@ export function useIndicatorSettings() {
 
   useEffect(() => {
     if (!settingsLoaded) return;
-    localStorage.setItem(INDICATOR_SETTINGS_KEY, JSON.stringify({
+    try { localStorage.setItem(INDICATOR_SETTINGS_KEY, JSON.stringify({
+      activeStudies,
       maLength,
       maType,
       smoothingLength,
-    }));
-  }, [maLength, maType, settingsLoaded, smoothingLength]);
+    })); } catch { /* Giữ tùy chọn trong phiên khi bộ nhớ bị chặn. */ }
+  }, [activeStudies, maLength, maType, settingsLoaded, smoothingLength]);
 
   return {
+    settingsLoaded,
     activeStudies,
     setActiveStudies,
     maLength,
