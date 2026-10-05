@@ -1,4 +1,5 @@
 import { LineStyle } from "lightweight-charts";
+import { overlaySaved, readSaved, writeSaved } from "../config/saved-state";
 import type {
   LineToolExport,
   LineToolPartialOptionsMap,
@@ -32,6 +33,23 @@ const FIB_LEVELS = [
 }));
 
 export function drawingPreset<T extends LineToolType>(type: T): LineToolPartialOptionsMap[T] {
+  const saved = readSaved<Record<string, unknown>>(`chart.drawingDefaults.v1.${type}`);
+  return { ...overlaySaved(defaultDrawingPreset(type), saved), visible: true, editable: true } as LineToolPartialOptionsMap[T];
+}
+
+export function saveDrawingDefaults(tool: LineToolExport<LineToolType>) {
+  const options = structuredClone(tool.options) as unknown as Record<string, unknown>;
+  delete options.visible;
+  delete options.editable;
+  delete options.ownerSource;
+  const text = options.text as Record<string, unknown> | undefined;
+  if (text) delete text.value;
+  const note = options.priceNote as Record<string, unknown> | undefined;
+  if (note) { delete note.value; delete note.title; }
+  writeSaved(`chart.drawingDefaults.v1.${tool.toolType}`, options);
+}
+
+function defaultDrawingPreset<T extends LineToolType>(type: T): LineToolPartialOptionsMap[T] {
   if (type === "PriceLabel" || type === "PriceNote") {
     return {
       showPriceAxisLabels: true,
