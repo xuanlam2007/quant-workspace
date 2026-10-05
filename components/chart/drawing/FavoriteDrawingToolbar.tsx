@@ -8,6 +8,8 @@ import { VNDIRECT_TOOLBAR_ICONS } from "./vndirect-icons";
 
 const TOOLS = new Map(DRAWING_TOOL_GROUPS.flatMap((group) => group.tools.map((tool) => [tool.id, tool] as const)));
 const POSITION_KEY = "chart.favoriteDrawingsPosition";
+const VISIBILITY_DURATION = 160;
+const REMOVAL_DURATION = 180;
 type Position = { left: number; top: number };
 interface Gesture {
   pointer: number;
@@ -49,9 +51,12 @@ export function FavoriteDrawingToolbar({ ids, visible, locked, activeId, onSelec
   const [vertical, setVertical] = useState(false);
   const verticalRef = useRef(vertical);
   const [preview, setPreview] = useState<string[] | null>(null);
+  const [displayIds, setDisplayIds] = useState(ids);
+  const idsRef = useRef(ids);
+  idsRef.current = ids;
   const orderRef = useRef(ids);
   if (!gesture.current) orderRef.current = ids;
-  const [ghost, setGhost] = useState<{ id: string; left: number; top: number } | null>(null);
+  const [sortingId, setSortingId] = useState<string | null>(null);
   const [moving, setMoving] = useState(false);
   const [context, setContext] = useState<Position | null>(null);
 
@@ -86,14 +91,36 @@ export function FavoriteDrawingToolbar({ ids, visible, locked, activeId, onSelec
     }
     cancelGesture.current();
     setShown(false); setContext(null);
-    const timeout = setTimeout(() => setMounted(false), 263);
+    const timeout = setTimeout(() => setMounted(false), window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : VISIBILITY_DURATION);
     return () => clearTimeout(timeout);
   }, [visible]);
 
   useLayoutEffect(() => {
+    if (gesture.current?.kind === "sort") cancelGesture.current();
+    if (!mounted || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      setDisplayIds(ids);
+      return;
+    }
+    // Giữ mục bị xóa đến khi hoàn tất hiệu ứng thu gọn.
+    setDisplayIds((current) => {
+      const next = [...ids];
+      current.forEach((id, index) => {
+        if (!ids.includes(id)) next.splice(Math.min(index, next.length), 0, id);
+      });
+      return next.length === current.length && next.every((id, index) => id === current[index]) ? current : next;
+    });
+  }, [ids, mounted]);
+
+  useEffect(() => {
+    if (!visible || displayIds.every((id) => ids.includes(id))) return;
+    const timeout = setTimeout(() => setDisplayIds((current) => current.filter((id) => idsRef.current.includes(id))), REMOVAL_DURATION + 20);
+    return () => clearTimeout(timeout);
+  }, [ids, displayIds, visible]);
+
+  useLayoutEffect(() => {
     if (!mounted || !root.current) return;
     const resize = () => {
-      const narrow = window.innerWidth < 24 + ids.length * 38 && window.innerWidth < window.innerHeight;
+      const narrow = window.innerWidth < 24 + displayIds.length * 38 && window.innerWidth < window.innerHeight;
       verticalRef.current = narrow; setVertical(narrow);
       move(preferredPosition.current ?? positionRef.current);
     };
@@ -102,7 +129,7 @@ export function FavoriteDrawingToolbar({ ids, visible, locked, activeId, onSelec
     resize();
     window.addEventListener("resize", resize);
     return () => { observer.disconnect(); window.removeEventListener("resize", resize); };
-  }, [mounted, ids.length, portalHost]);
+  }, [mounted, displayIds.length, portalHost]);
 
   useEffect(() => {
     let clickReset: ReturnType<typeof setTimeout> | undefined;
@@ -124,7 +151,7 @@ export function FavoriteDrawingToolbar({ ids, visible, locked, activeId, onSelec
       }
       clearTimeout(clickReset);
       clickReset = setTimeout(() => { suppressedClick.current = false; }, 0);
-      setMoving(false); setPreview(null); setGhost(null);
+      setMoving(false); setPreview(null); setSortingId(null);
     };
     cancelGesture.current = () => finish(true);
     const pointerMove = (event: PointerEvent) => {
@@ -140,8 +167,11 @@ export function FavoriteDrawingToolbar({ ids, visible, locked, activeId, onSelec
       if (drag.kind === "move") {
         setMoving(true); move({ left: drag.origin.left + dx, top: drag.origin.top + dy });
       } else if (drag.toolId) {
-        setGhost({ id: drag.toolId, left: event.clientX - 19, top: event.clientY - 19 });
-        const buttons = Array.from(root.current?.querySelectorAll<HTMLButtonElement>("[data-favorite-id]") ?? []);
+        setSortingId(drag.toolId);
+        const tools = root.current?.querySelector<HTMLElement>(".favorite-drawing-toolbar__tools");
+        const bounds = tools?.getBoundingClientRect();
+        if (!bounds || event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) return;
+        const buttons = Array.from(tools?.querySelectorAll<HTMLButtonElement>("[data-favorite-id]") ?? []).filter((button) => orderRef.current.includes(button.dataset.favoriteId ?? ""));
         const coordinate = verticalRef.current ? event.clientY : event.clientX;
         let target = buttons.findIndex((button) => { const rect = button.getBoundingClientRect(); return coordinate < (verticalRef.current ? rect.top + rect.height / 2 : rect.left + rect.width / 2); });
         if (target < 0) target = buttons.length;
@@ -149,7 +179,9 @@ export function FavoriteDrawingToolbar({ ids, visible, locked, activeId, onSelec
         if (target > originalIndex) target--;
         const next = orderRef.current.filter((id) => id !== drag.toolId);
         next.splice(target, 0, drag.toolId);
-        orderRef.current = next; setPreview(next);
+        if (next.some((id, index) => id !== orderRef.current[index])) {
+          orderRef.current = next; setPreview(next);
+        }
       }
     };
     const pointerUp = (event: PointerEvent) => {
@@ -165,10 +197,12 @@ export function FavoriteDrawingToolbar({ ids, visible, locked, activeId, onSelec
     const outside = (event: PointerEvent) => {
       if (event.target instanceof Node && !menu.current?.contains(event.target)) setContext(null);
     };
+    const blur = () => finish(true);
     window.addEventListener("pointermove", pointerMove, { passive: false });
     window.addEventListener("pointerup", pointerUp);
     window.addEventListener("pointercancel", pointerUp);
     window.addEventListener("keydown", keyboard, true);
+    window.addEventListener("blur", blur);
     document.addEventListener("pointerdown", outside);
     return () => {
       clearLongPress();
@@ -181,12 +215,13 @@ export function FavoriteDrawingToolbar({ ids, visible, locked, activeId, onSelec
       window.removeEventListener("pointerup", pointerUp);
       window.removeEventListener("pointercancel", pointerUp);
       window.removeEventListener("keydown", keyboard, true);
+      window.removeEventListener("blur", blur);
       document.removeEventListener("pointerdown", outside);
     };
   }, []);
 
   const start = (event: ReactPointerEvent, kind: Gesture["kind"], toolId?: string) => {
-    if (event.button !== 0 || !visible || gesture.current) return;
+    if (event.button !== 0 || !visible || gesture.current || toolId && !ids.includes(toolId)) return;
     suppressedClick.current = false;
     gesture.current = { pointer: event.pointerId, kind, toolId, startX: event.clientX, startY: event.clientY, origin: positionRef.current, originalOrder: [...ids], moved: false, sortable: event.pointerType === "mouse" };
     orderRef.current = ids;
@@ -195,17 +230,20 @@ export function FavoriteDrawingToolbar({ ids, visible, locked, activeId, onSelec
   };
 
   if (!mounted || !portalHost) return null;
-  const order = preview ?? ids;
+  const order = preview ?? displayIds;
   return createPortal(<>
-    <div ref={root} className={`favorite-drawing-toolbar ${shown ? "is-open" : "is-closed"} ${vertical ? "is-vertical" : ""} ${moving ? "is-dragging" : ""}`} style={position} role="toolbar" aria-label="Công cụ vẽ yêu thích" aria-hidden={!visible} onLostPointerCapture={(event) => { if (gesture.current?.pointer === event.pointerId) cancelGesture.current(); }} onContextMenu={(event) => { event.preventDefault(); openContext(event.clientX, event.clientY); }} onClickCapture={(event) => { if (suppressedClick.current || !window.matchMedia("(prefers-reduced-motion: reduce)").matches && performance.now() - openedAt.current < 263) { event.preventDefault(); event.stopPropagation(); suppressedClick.current = false; } }}>
+    <div ref={root} className={`favorite-drawing-toolbar ${shown ? "is-open" : "is-closed"} ${vertical ? "is-vertical" : ""} ${moving ? "is-dragging" : ""}`} style={position} role="toolbar" aria-label="Công cụ vẽ yêu thích" aria-hidden={!visible} draggable={false} onDragStart={(event) => event.preventDefault()} onLostPointerCapture={(event) => { if (gesture.current?.pointer === event.pointerId) cancelGesture.current(); }} onContextMenu={(event) => { event.preventDefault(); openContext(event.clientX, event.clientY); }} onClickCapture={(event) => { if (suppressedClick.current || !window.matchMedia("(prefers-reduced-motion: reduce)").matches && performance.now() - openedAt.current < VISIBILITY_DURATION) { event.preventDefault(); event.stopPropagation(); suppressedClick.current = false; } }}>
       <div className="favorite-drawing-toolbar__drag" aria-label="Di chuyển thanh công cụ" onPointerDown={(event) => start(event, "move")} dangerouslySetInnerHTML={{ __html: FAVORITE_ICONS.drag }}/>
       <div className="favorite-drawing-toolbar__tools">{order.map((id) => {
         const tool = TOOLS.get(id);
         if (!tool) return null;
-        return <button type="button" tabIndex={-1} key={id} data-favorite-id={id} className={`favorite-drawing-toolbar__tool ${id === activeId ? "is-active" : ""} ${ghost?.id === id ? "is-sorting" : ""}`} aria-label={tool.title} aria-pressed={id === activeId} data-tooltip={tool.title} disabled={locked || tool.available === false} onPointerDown={(event) => start(event, "sort", id)} onClick={() => { if (id !== activeId) onSelect(tool); }} dangerouslySetInnerHTML={{ __html: VNDIRECT_TOOLBAR_ICONS[tool.icon] }}/>;
+        const removed = !ids.includes(id);
+        const removing = visible && removed;
+        return <div key={id} className={`favorite-drawing-toolbar__slot${removing ? " is-removing" : ""}`} aria-hidden={removed || undefined} onTransitionEnd={(event) => {
+          if (event.target === event.currentTarget && event.propertyName === "flex-basis" && !idsRef.current.includes(id)) setDisplayIds((current) => current.filter((value) => value !== id));
+        }}><button type="button" tabIndex={-1} draggable={false} data-favorite-id={id} className={`favorite-drawing-toolbar__tool ${id === activeId ? "is-active" : ""} ${sortingId === id ? "is-sorting" : ""}`} aria-label={tool.title} aria-pressed={id === activeId} aria-disabled={!visible || removed || locked || tool.available === false} data-tooltip={removed ? undefined : tool.title} disabled={locked || tool.available === false} onPointerDown={(event) => start(event, "sort", id)} onClick={() => { if (visible && !removed && id !== activeId) onSelect(tool); }} dangerouslySetInnerHTML={{ __html: VNDIRECT_TOOLBAR_ICONS[tool.icon] }}/></div>;
       })}</div>
     </div>
-    {ghost && <div className="favorite-drawing-toolbar__ghost" style={{ left: ghost.left, top: ghost.top }} aria-hidden="true" dangerouslySetInnerHTML={{ __html: VNDIRECT_TOOLBAR_ICONS[TOOLS.get(ghost.id)!.icon] }}/>}
     {context && <div className="favorite-drawing-toolbar__menu" ref={menu} role="menu" style={context}><button type="button" tabIndex={-1} role="menuitem" onClick={() => { callbacks.current.onHide(); setContext(null); }}>Ẩn thanh công cụ</button></div>}
   </>, portalHost);
 }
