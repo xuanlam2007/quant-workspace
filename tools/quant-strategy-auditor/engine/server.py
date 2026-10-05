@@ -1,583 +1,554 @@
 import os
+import sys
 import json
-import csv
-import io
 import asyncio
+import base64
+import shutil
+import copy
 import subprocess
-import threading
+from pathlib import Path
+from uuid import uuid4
 from datetime import datetime
-from typing import Dict, Any, List, Optional
+from typing import Any, Dict, Literal, Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
-from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-
+from pydantic import BaseModel, Field
 from .core import TradePairManager, StrategyConflictAuditor, SessionLogger
 from .gemini_analyzer import GeminiMultimodalAnalyzer
-from .desktop_listener import DesktopListener
+from .desktop_listener import DesktopListener, list_windows, window_details
 
-def get_system_windows() -> List[str]:
-    titles = []
-    try:
-        res = subprocess.run(
-            ["tasklist", "/v", "/fo", "csv"],
-            capture_output=True,
-            text=True,
-            encoding="cp1252",
-            errors="ignore",
-            timeout=3
-        )
-        reader = csv.DictReader(io.StringIO(res.stdout))
-        ignore_titles = {
-            "N/A", "", "DWM Notification Window", "Task Host Window",
-            "BroadcastListenerWindow", "RealtekAudioAdminBackgroundProcessClass",
-            "RealtekAudioBackgroundProcessClass", "CrossDeviceResumeWindow",
-            "Windows Push Notifications Platform", "OLEChannelWnd", "NvSvc", "UxdService"
-        }
-        for row in reader:
-            title = (row.get("Window Title") or "").strip()
-            if title and title not in ignore_titles and title not in titles:
-                titles.append(title)
-    except Exception:
-        pass
-    
-    return sorted(titles)
+
+class TerminalPayload(BaseModel):
+    terminal_type: Optional[Literal["ORCA", "WINDOWS", "WT", "NONE"]] = None
+
+
+class TradeEventPayload(BaseModel):
+    type: Literal["TRADE_MANUAL", "TRADE_OPEN", "TRADE_CLOSE"] = "TRADE_MANUAL"
+    action: Literal["BUY", "SELL"]
+    price: float = Field(gt=0, allow_inf_nan=False)
+    contracts: int = Field(default=1, ge=1, le=1000)
+    voice_transcript: str = ""
+    drawing_data: Optional[Dict[str, Any]] = None
+    frame_base64: Optional[str] = None
+    session_id: Optional[str] = None
+    session_date: Optional[str] = None
+    source_id: str = ""
+
+
+class RejectPayload(BaseModel):
+    reason: str = ""
+    voice_transcript: str = ""
+    frame_base64: Optional[str] = None
+    session_id: Optional[str] = None
+    session_date: Optional[str] = None
+    source_id: str = ""
+
+
+class ModePayload(BaseModel):
+    mode: Literal["DESKTOP", "IN_APP"]
+    target_window_title: str = ""
+    target_window_id: int = 0
+    browser_source_id: str = ""
+
+
+class RecordingPayload(BaseModel):
+    action: Literal["start", "pause", "resume"]
+    source_id: str = ""
+    browser_only: bool = False
+    capture_generation: Optional[int] = None
+
+
+class RecordingPreference(BaseModel):
+    auto_start: bool
+
+
+class DecisionTestPayload(RejectPayload):
+    direction: Literal["LONG", "SHORT"]
+    price: float = Field(gt=0, allow_inf_nan=False)
+    contracts: int = Field(default=1, ge=1, le=1000)
+    save: bool = False
+
+
+class StrategyModePayload(BaseModel):
+    enabled: bool
+
+
+class SwitchSessionPayload(BaseModel):
+    date: str
+    session_id: str
+
 
 def create_app(config_path: str = "config.json") -> FastAPI:
-    app = FastAPI(title="Quant Strategy Auditor Bridge")
-
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-
+    config_path = os.path.abspath(config_path)
     config = {}
-    if os.path.exists(config_path):
-        with open(config_path, "r", encoding="utf-8") as f:
-            config = json.load(f)
-
+    if os.path.isfile(config_path):
+        with open(config_path, encoding="utf-8-sig") as file:
+            config = json.load(file)
+    config.pop("gemini_api_key", None)
+    app = FastAPI(title="Quant Strategy Auditor Bridge")
+    app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
     guardrails = config.get("strategy_guardrails", {})
     pair_manager = TradePairManager(fee_per_pair=guardrails.get("fee_per_closed_pair", 0.45))
-    auditor = StrategyConflictAuditor(guardrails=guardrails, enabled=config.get("strategy_mode", True))
-    sessions_root = os.path.join(os.path.dirname(config_path), config.get("storage", {}).get("sessions_dir", "sessions"))
-    logger = SessionLogger(base_dir=sessions_root)
-    analyzer = GeminiMultimodalAnalyzer(api_key=config.get("gemini_api_key", ""))
-
-    state = {
-        "mode": config.get("mode", "DESKTOP"),
-        "target_window_title": config.get("target_window_title", "VNDIRECT"),
-        "strategy_mode": config.get("strategy_mode", True),
-        "is_recording": True,
-        "config": config,
-        "config_path": config_path
-    }
-
-    connected_clients: List[WebSocket] = []
+    auditor = StrategyConflictAuditor(guardrails, enabled=config.get("strategy_mode", True))
+    logger = SessionLogger(os.path.join(os.path.dirname(config_path), config.get("storage", {}).get("sessions_dir", "sessions")))
+    analyzer = GeminiMultimodalAnalyzer()
+    state = {"mode": config.get("mode", "DESKTOP"), "target_window_title": "", "target_window_id": 0, "browser_source_id": "", "strategy_mode": auditor.enabled, "recording_status": "stopped", "recording_error": "", "auto_start_recording": config.get("auto_start_recording", True), "capture_generation": 0}
+    clients = []
     main_loop = None
+    source_monitor = None
+    pending_analysis = set()
 
-    def open_session_terminal(date_str: str, session_id: str, terminal_type: Optional[str] = None):
-        def _launch():
+    def replay_session():
+        pair_manager.reset()
+        auditor.reset()
+        for event in logger.events:
+            if event.get("ai_pending") and event["id"] not in pending_analysis:
+                logger.update_event(event["id"], {"ai_pending": False, "ai_error": "Analysis was interrupted by an engine restart."})
+            action = event.get("action", "").upper()
+            price = float(event.get("price") or 0)
+            if action in ("BUY", "SELL") and price > 0:
+                pair_manager.register_trade(action, price, event.get("timestamp", ""), int(event.get("contracts", 1)))
+            if event.get("type") in ("TRADE_OPEN", "TRADE_CLOSE", "TRADE_MANUAL"):
+                auditor.trade_count += 1
+
+    replay_session()
+
+    def snapshot():
+        return {**state, "protocol_version": 3, "current_date": logger.current_date, "date": logger.current_date, "session_id": logger.session_id, "is_recording": state["recording_status"] == "recording", "summary": pair_manager.get_summary(), "recent_events": logger.events[-200:], "gemini_status": analyzer.status(), "config": config}
+
+    async def broadcast(message):
+        message.setdefault("date", logger.current_date)
+        message.setdefault("session_id", logger.session_id)
+        for client in list(clients):
             try:
-                import shutil
-                current_dir = os.path.dirname(os.path.abspath(__file__))
-                script_path = os.path.join(current_dir, "session_terminal.py")
-                time_part = session_id.replace("session_", "")
-                title_time = f"{time_part[:2]}:{time_part[2:4]}" if len(time_part) == 6 else time_part
-                tab_title = f"Auditor AI [{date_str} {title_time}]"
-                
-                term = (terminal_type or state["config"].get("terminal_type", "ORCA")).upper()
-                if term == "NONE":
-                    return
-
-                if term == "ORCA":
-                    orca_path = shutil.which("orca") or os.path.expandvars(r"%LocalAppData%\Programs\orca\resources\bin\orca.exe")
-                    if os.path.exists(orca_path):
-                        res = subprocess.run([orca_path, "terminal", "create", "--title", tab_title, "--focus", "--json"], capture_output=True, text=True, timeout=5)
-                        if res.returncode == 0:
-                            data = json.loads(res.stdout)
-                            handle = data.get("result", {}).get("terminal", {}).get("handle")
-                            if handle:
-                                cmd = f'python "{script_path}" --date {date_str} --session {session_id}'
-                                subprocess.run([orca_path, "terminal", "send", "--terminal", handle, "--text", cmd, "--enter", "--json"], capture_output=True, timeout=5)
-                                return
-                    # Fallback sang Windows console host nếu Orca không khả dụng
-                    term = "WINDOWS"
-
-                if term == "WT":
-                    wt_path = shutil.which("wt") or os.path.expandvars(r"%LocalAppData%\Microsoft\WindowsApps\wt.exe")
-                    if os.path.exists(wt_path):
-                        cmd = f'python "{script_path}" --date {date_str} --session {session_id}'
-                        subprocess.Popen([wt_path, "--title", tab_title, "cmd.exe", "/k", cmd])
-                        return
-                    term = "WINDOWS"
-
-                if term in ("WINDOWS", "CONHOST"):
-                    conhost_path = shutil.which("conhost") or "conhost.exe"
-                    cmd = f'title {tab_title} && python "{script_path}" --date {date_str} --session {session_id}'
-                    subprocess.Popen([conhost_path, "cmd.exe", "/k", cmd])
+                await client.send_json(message)
             except Exception:
-                pass
-        
-        threading.Thread(target=_launch, daemon=True).start()
+                if client in clients:
+                    clients.remove(client)
+
+    def save_config():
+        try:
+            with open(config_path, "w", encoding="utf-8") as file:
+                json.dump(config, file, indent=2, ensure_ascii=False)
+        except OSError as error:
+            raise HTTPException(500, f"Cannot save preference: {error}") from error
+
+    def require_session(session_id=None, session_date=None):
+        if not logger.session_id:
+            raise HTTPException(409, "Create or select a session before recording")
+        if session_id and (session_id != logger.session_id or session_date != logger.current_date):
+            raise HTTPException(409, "The active session changed. Review the current session and try again.")
+
+    def session_path(date, session_id):
+        try:
+            return logger.session_path(date, session_id)
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
+
+    def sync_listener():
+        if state["mode"] == "DESKTOP" and logger.session_id and state["recording_status"] == "recording":
+            listener.target_window_title = state["target_window_title"]
+            listener.target_window_id = state["target_window_id"]
+            listener.generation = state["capture_generation"]
+            listener.start()
+        else:
+            listener.stop()
+
+    async def desktop_event(event):
+        if state["recording_status"] != "recording" or event.get("capture_generation") != state["capture_generation"] or not logger.session_id or event.get("session_id") != logger.session_id or event.get("date") != logger.current_date:
+            return
+        event["warnings"] = auditor.audit(event_type=event["type"])
+        logger.log_event(event)
+        await broadcast({"type": "EVENT_LOGGED", "event": event, "summary": pair_manager.get_summary()})
+
+    def on_desktop_event(event):
+        event.update(date=logger.current_date, session_id=logger.session_id)
+        if main_loop and main_loop.is_running():
+            asyncio.run_coroutine_threadsafe(desktop_event(event), main_loop)
+
+    listener = DesktopListener(state["target_window_title"], on_desktop_event, lambda: logger.frames_dir)
+
+    def stop_recording(status="paused", error=""):
+        state.update(recording_status=status, recording_error=error, capture_generation=state["capture_generation"] + 1)
+        listener.stop()
+
+    def start_recording(source_id=""):
+        require_session()
+        if state["mode"] == "DESKTOP":
+            details = window_details(state["target_window_id"])
+            if not state["target_window_title"] or not details or details["title"] != state["target_window_title"]:
+                raise HTTPException(409, "Select an available window before starting recording")
+        elif not source_id or source_id != state["browser_source_id"] or not any(ws.query_params.get("client_id") == source_id for ws in clients):
+            raise HTTPException(409, "Choose a browser tab or window before starting recording")
+        state.update(recording_status="recording", recording_error="", capture_generation=state["capture_generation"] + 1)
+        try:
+            sync_listener()
+        except Exception as error:
+            stop_recording(error=str(error))
+            raise HTTPException(503, str(error)) from error
+
+    def require_recording(source_id=""):
+        require_session()
+        if state["recording_status"] != "recording":
+            raise HTTPException(409, "Start or resume recording before saving events")
+        if state["mode"] == "DESKTOP":
+            if not listener.source():
+                stop_recording(error="The selected window is unavailable. Select it again to continue.")
+                asyncio.create_task(broadcast({"type": "RECORDING_CHANGED", **state}))
+                raise HTTPException(409, state["recording_error"])
+        elif not source_id or source_id != state["browser_source_id"]:
+            raise HTTPException(409, "This browser does not own the selected capture source")
+
+    async def monitor_source():
+        while True:
+            await asyncio.sleep(1)
+            if state["recording_status"] == "recording" and state["mode"] == "DESKTOP":
+                if not listener.source() or listener.last_error:
+                    stop_recording(error=listener.last_error or "The selected window is unavailable. Recording is paused.")
+                    await broadcast({"type": "RECORDING_CHANGED", **state})
 
     @app.on_event("startup")
-    async def on_startup():
-        nonlocal main_loop
+    async def startup():
+        nonlocal main_loop, source_monitor
         main_loop = asyncio.get_running_loop()
-        # Tự động mở terminal giám sát phiên giao dịch theo cấu hình người dùng
-        open_session_terminal(logger.current_date, logger.session_id)
+        source_monitor = asyncio.create_task(monitor_source())
 
-    async def broadcast(message: Dict[str, Any]):
-        dead = []
-        for ws in list(connected_clients):
-            try:
-                await ws.send_text(json.dumps(message, ensure_ascii=False))
-            except Exception:
-                dead.append(ws)
-        for ws in dead:
-            if ws in connected_clients:
-                try:
-                    connected_clients.remove(ws)
-                except ValueError:
-                    pass
+    @app.on_event("shutdown")
+    async def shutdown():
+        if source_monitor:
+            source_monitor.cancel()
+        listener.stop()
 
-    def on_desktop_event(event_data: Dict[str, Any]):
-        if not state["is_recording"]:
-            return
-        warnings = auditor.audit(event_type=event_data["type"])
-        event_data["warnings"] = warnings
-        logger.log_event(event_data)
-        msg = {"type": "EVENT_LOGGED", "event": event_data, "summary": pair_manager.get_summary()}
-        if main_loop and main_loop.is_running():
-            asyncio.run_coroutine_threadsafe(broadcast(msg), main_loop)
+    def open_terminal(terminal_type):
+        require_session()
+        term = terminal_type or config.get("terminal_type", "ORCA")
+        if term == "NONE":
+            return {"status": "disabled", "terminal_type": term}
+        script = str(Path(__file__).with_name("session_terminal.py"))
+        worktree = str(Path(__file__).resolve().parents[3])
+        arguments = [sys.executable, script, "--date", logger.current_date, "--session", logger.session_id]
+        command = "& " + " ".join("'" + value.replace("'", "''") + "'" for value in arguments)
+        title = f"Auditor [{logger.current_date} {logger.session_id[8:14]}]"
+        encoded = base64.b64encode(command.encode("utf-16le")).decode("ascii")
+        try:
+            if term == "ORCA":
+                executable = shutil.which("orca") or os.path.expandvars(r"%LocalAppData%\Programs\orca\resources\bin\orca.exe")
+                if not os.path.isfile(executable):
+                    raise RuntimeError("Orca CLI was not found. Open Orca or select another terminal host.")
+                result = subprocess.run([executable, "terminal", "create", "--worktree", f"path:{worktree}", "--shell", "powershell.exe", "--title", title, "--command", command, "--focus", "--json"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30, creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+                if result.returncode != 0:
+                    raise RuntimeError(result.stderr.strip() or result.stdout.strip() or f"Orca exit code {result.returncode}")
+                response = json.loads(result.stdout)
+                handle = response.get("result", {}).get("terminal", {}).get("handle")
+                if not response.get("ok") or not handle:
+                    raise RuntimeError(str(response.get("error") or "Orca did not confirm terminal creation"))
+                return {"status": "opened", "terminal_type": term, "handle": handle}
+            if term == "WT":
+                executable = shutil.which("wt")
+                if not executable:
+                    raise RuntimeError("Windows Terminal was not found")
+                process = subprocess.Popen([executable, "new-tab", "--title", title, "powershell.exe", "-NoExit", "-EncodedCommand", encoded], cwd=worktree)
+            elif term == "WINDOWS":
+                process = subprocess.Popen(["conhost.exe", "powershell.exe", "-NoExit", "-EncodedCommand", encoded], cwd=worktree)
+            else:
+                raise HTTPException(400, "Unsupported terminal host")
+            return {"status": "launched", "terminal_type": term, "pid": process.pid}
+        except HTTPException:
+            raise
+        except Exception as error:
+            raise HTTPException(503, f"Terminal launch failed: {error}") from error
 
-    listener = DesktopListener(
-        target_window_title=state["target_window_title"],
-        on_event_callback=on_desktop_event,
-        frames_dir_provider=lambda: logger.frames_dir
-    )
-    if state["mode"] == "DESKTOP":
-        listener.start()
-
-    class TradeEventPayload(BaseModel):
-        type: str = "TRADE_MANUAL"
-        action: str = ""
-        price: float = 0.0
-        contracts: int = 1
-        voice_transcript: Optional[str] = ""
-        drawing_data: Optional[Dict[str, Any]] = None
-        frame_base64: Optional[str] = None
-
-    class ModePayload(BaseModel):
-        mode: str
-        target_window_title: str = ""
-
-    class StrategyModePayload(BaseModel):
-        enabled: bool
-
-    class KeyPayload(BaseModel):
-        api_key: str
-
-    class SwitchSessionPayload(BaseModel):
-        date: str
-        session_id: str
-
-    class TerminalPayload(BaseModel):
-        terminal_type: Optional[str] = None
+    @app.get("/api/status")
+    def status():
+        return snapshot()
 
     @app.get("/api/windows")
-    def list_windows():
-        return {"windows": get_system_windows()}
+    def windows():
+        try:
+            return {"windows": list_windows()}
+        except Exception as error:
+            raise HTTPException(503, str(error)) from error
+
+    @app.post("/api/recording")
+    async def recording(payload: RecordingPayload):
+        if payload.browser_only and payload.capture_generation != state["capture_generation"]:
+            return state
+        if payload.browser_only and (state["mode"] != "IN_APP" or payload.source_id != state["browser_source_id"]):
+            return state
+        if state["mode"] == "IN_APP" and state["browser_source_id"] and payload.source_id != state["browser_source_id"]:
+            raise HTTPException(409, "Use the browser that owns the capture source")
+        if payload.action == "pause":
+            stop_recording()
+        else:
+            try:
+                start_recording(payload.source_id)
+            except HTTPException:
+                await broadcast({"type": "RECORDING_CHANGED", **state})
+                raise
+        await broadcast({"type": "RECORDING_CHANGED", **state})
+        return state
+
+    @app.post("/api/recording/preference")
+    async def recording_preference(payload: RecordingPreference):
+        previous = config.get("auto_start_recording", True)
+        config["auto_start_recording"] = payload.auto_start
+        try:
+            save_config()
+        except HTTPException:
+            config["auto_start_recording"] = previous
+            raise
+        state["auto_start_recording"] = payload.auto_start
+        await broadcast({"type": "RECORDING_CHANGED", **state})
+        return state
 
     @app.get("/api/gemini/status")
     def gemini_status():
         return analyzer.test_connection()
 
-    @app.post("/api/gemini/key")
-    def update_gemini_key(payload: KeyPayload):
-        analyzer.update_key(payload.api_key)
-        state["config"]["gemini_api_key"] = payload.api_key
-        try:
-            with open(state["config_path"], "w", encoding="utf-8") as f:
-                json.dump(state["config"], f, indent=2, ensure_ascii=False)
-        except Exception:
-            pass
-        return analyzer.test_connection()
-
-    @app.get("/api/sessions")
-    def get_sessions():
-        return {"dates": logger.list_all_sessions()}
-
     @app.get("/api/terminal/config")
-    def get_terminal_config():
-        return {
-            "terminal_type": state["config"].get("terminal_type", "ORCA"),
-            "supported": ["ORCA", "WINDOWS", "WT", "NONE"]
-        }
+    def terminal_config():
+        return {"terminal_type": config.get("terminal_type", "ORCA"), "supported": ["ORCA", "WINDOWS", "WT", "NONE"]}
 
     @app.post("/api/terminal/config")
     def set_terminal_config(payload: TerminalPayload):
-        if payload.terminal_type:
-            state["config"]["terminal_type"] = payload.terminal_type.upper()
-            try:
-                with open(state["config_path"], "w", encoding="utf-8") as f:
-                    json.dump(state["config"], f, indent=2, ensure_ascii=False)
-            except Exception:
-                pass
-        return {"status": "ok", "terminal_type": state["config"].get("terminal_type", "ORCA")}
+        previous = config.get("terminal_type", "ORCA")
+        config["terminal_type"] = payload.terminal_type or previous
+        try:
+            save_config()
+        except HTTPException:
+            config["terminal_type"] = previous
+            raise
+        return terminal_config()
 
     @app.post("/api/terminal/open")
-    def api_open_terminal(payload: Optional[TerminalPayload] = None):
-        ttype = payload.terminal_type if payload else None
-        open_session_terminal(logger.current_date, logger.session_id, ttype)
-        return {
-            "status": "ok",
-            "session_id": logger.session_id,
-            "date": logger.current_date,
-            "terminal_type": ttype or state["config"].get("terminal_type", "ORCA")
-        }
+    def terminal_open(payload: Optional[TerminalPayload] = None):
+        return open_terminal(payload.terminal_type if payload else None)
+
+    @app.get("/api/sessions")
+    def sessions():
+        return {"dates": logger.list_all_sessions()}
+
+    async def session_changed():
+        stop_recording("stopped")
+        replay_session()
+        sync_listener()
+        result = snapshot()
+        await broadcast({"type": "SESSION_SWITCHED", **result})
+        return {"status": "ok", **result, "dates": logger.list_all_sessions()}
 
     @app.post("/api/sessions/new")
-    async def create_new_session():
-        pair_manager.reset()
-        auditor.reset()
-        new_id = logger.new_session()
-        open_session_terminal(logger.current_date, new_id)
-        await broadcast({
-            "type": "SESSION_SWITCHED",
-            "session_id": new_id,
-            "date": logger.current_date,
-            "summary": pair_manager.get_summary(),
-            "recent_events": []
-        })
-        return {
-            "status": "ok",
-            "session_id": new_id,
-            "date": logger.current_date,
-            "dates": logger.list_all_sessions()
-        }
+    async def new_session():
+        listener.stop()
+        logger.new_session()
+        return await session_changed()
 
     @app.post("/api/sessions/switch")
     async def switch_session(payload: SwitchSessionPayload):
-        success = logger.load_session(payload.date, payload.session_id)
-        if not success:
-            return {"status": "error", "message": "Không tìm thấy phiên"}
-        
-        # Tái tính toán số điểm từ nhật ký phiên cũ
-        pair_manager.reset()
-        for ev in logger.events:
-            act = ev.get("action", "").upper()
-            pr = float(ev.get("price") or 0.0)
-            if act in ("BUY", "SELL") and pr > 0:
-                pair_manager.register_trade(
-                    action=act,
-                    price=pr,
-                    timestamp=ev.get("timestamp", ""),
-                    contracts=ev.get("contracts", 1)
-                )
-
-        summary = pair_manager.get_summary()
-        open_session_terminal(payload.date, payload.session_id)
-        await broadcast({
-            "type": "SESSION_SWITCHED",
-            "session_id": payload.session_id,
-            "date": payload.date,
-            "summary": summary,
-            "recent_events": logger.events[-50:]
-        })
-        return {"status": "ok", "session_id": payload.session_id, "summary": summary}
+        session_path(payload.date, payload.session_id)
+        listener.stop()
+        if not logger.load_session(payload.date, payload.session_id):
+            sync_listener()
+            raise HTTPException(404, "Session was not found")
+        return await session_changed()
 
     @app.delete("/api/sessions")
     async def delete_all_sessions():
-        success = logger.delete_all_sessions()
-        pair_manager.reset()
-        auditor.reset()
-        await broadcast({
-            "type": "SESSION_SWITCHED",
-            "session_id": logger.session_id,
-            "date": logger.current_date,
-            "summary": pair_manager.get_summary(),
-            "recent_events": []
-        })
-        return {"status": "ok" if success else "error", "dates": logger.list_all_sessions()}
+        listener.stop()
+        if not logger.delete_all_sessions():
+            sync_listener()
+            raise HTTPException(500, "Could not delete sessions")
+        return await session_changed()
 
     @app.delete("/api/sessions/{date}/{session_id}")
     async def delete_session(date: str, session_id: str):
-        was_current = (date == logger.current_date and session_id == logger.session_id)
-        success = logger.delete_session(date, session_id)
-        if success and was_current:
-            pair_manager.reset()
-            auditor.reset()
-            await broadcast({
-                "type": "SESSION_SWITCHED",
-                "session_id": logger.session_id,
-                "date": logger.current_date,
-                "summary": pair_manager.get_summary(),
-                "recent_events": []
-            })
-        return {"status": "ok" if success else "error", "dates": logger.list_all_sessions()}
+        session_path(date, session_id)
+        listener.stop()
+        if not logger.delete_session(date, session_id):
+            sync_listener()
+            raise HTTPException(404, "Session could not be deleted")
+        return await session_changed()
 
     @app.get("/api/sessions/{date}/{session_id}/report/{report_type}")
-    def get_session_report(date: str, session_id: str, report_type: str):
-        filename = "session_review.html" if report_type.lower() == "html" else "session_review.pdf"
-        file_path = os.path.join(sessions_root, date, session_id, filename)
-        if not os.path.exists(file_path):
-            raise HTTPException(status_code=404, detail="Báo cáo không tồn tại")
-        media_type = "text/html" if report_type.lower() == "html" else "application/pdf"
-        return FileResponse(file_path, media_type=media_type, filename=filename)
+    def report(date: str, session_id: str, report_type: Literal["html", "pdf"]):
+        path = os.path.join(session_path(date, session_id), f"session_review.{report_type}")
+        if not os.path.isfile(path):
+            raise HTTPException(404, "Report is not available")
+        return FileResponse(path, media_type="text/html" if report_type == "html" else "application/pdf")
 
-    @app.get("/api/status")
-    def get_status():
-        return {
-            "mode": state["mode"],
-            "target_window_title": state["target_window_title"],
-            "strategy_mode": state["strategy_mode"],
-            "is_recording": state["is_recording"],
-            "current_date": logger.current_date,
-            "session_id": logger.session_id,
-            "summary": pair_manager.get_summary(),
-            "gemini_status": analyzer.test_connection(),
-            "config": state["config"]
-        }
+    @app.get("/api/sessions/{date}/{session_id}/frames/{filename}")
+    @app.get("/api/sessions/{date}/{session_id}/report/frames/{filename}")
+    def frame(date: str, session_id: str, filename: str):
+        if os.path.basename(filename) != filename or not filename.endswith(".png"):
+            raise HTTPException(400, "Invalid frame")
+        path = os.path.join(session_path(date, session_id), "frames", filename)
+        if not os.path.isfile(path):
+            raise HTTPException(404, "Frame is not available")
+        return FileResponse(path, media_type="image/png")
 
     @app.post("/api/strategy-mode")
-    async def toggle_strategy_mode(payload: StrategyModePayload):
-        state["strategy_mode"] = payload.enabled
-        auditor.enabled = payload.enabled
+    async def strategy_mode(payload: StrategyModePayload):
+        previous = config.get("strategy_mode", True)
+        config["strategy_mode"] = payload.enabled
+        try:
+            save_config()
+        except HTTPException:
+            config["strategy_mode"] = previous
+            raise
+        state["strategy_mode"] = auditor.enabled = payload.enabled
         await broadcast({"type": "STRATEGY_MODE_CHANGED", "enabled": payload.enabled})
-        return {"status": "ok", "strategy_mode": state["strategy_mode"]}
+        return {"status": "ok", "strategy_mode": payload.enabled}
 
     @app.post("/api/mode")
-    async def set_mode(payload: ModePayload):
-        state["mode"] = payload.mode
-        if payload.target_window_title:
-            state["target_window_title"] = payload.target_window_title
-        
-        if state["mode"] == "DESKTOP":
-            listener.target_window_title = state["target_window_title"]
-            listener.start()
-        else:
-            listener.stop()
-
-        await broadcast({"type": "MODE_CHANGED", "mode": state["mode"], "target_window_title": state["target_window_title"]})
-        return {"status": "ok", "mode": state["mode"], "target_window_title": state["target_window_title"]}
-
-    @app.post("/api/trade")
-    async def receive_trade(payload: TradeEventPayload):
-        now_str = datetime.now().strftime("%H:%M:%S")
-        warnings = auditor.audit(
-            event_type=payload.type,
-            action=payload.action,
-            price=payload.price
-        )
-
-        trade_result = {}
-        if payload.action.upper() in ("BUY", "SELL"):
-            trade_result = pair_manager.register_trade(
-                action=payload.action,
-                price=payload.price,
-                timestamp=now_str,
-                contracts=payload.contracts
-            )
-
-        frame_path = None
-        if payload.frame_base64:
+    async def mode(payload: ModePayload):
+        details = window_details(payload.target_window_id) if payload.mode == "DESKTOP" and payload.target_window_id else None
+        if payload.target_window_id and not details:
+            raise HTTPException(409, "That window is unavailable. Refresh the window list.")
+        if payload.mode == "IN_APP" and payload.browser_source_id and not any(ws.query_params.get("client_id") == payload.browser_source_id for ws in clients):
+            raise HTTPException(409, "Reconnect this browser before selecting a capture source")
+        previous = dict(config)
+        config.update(mode=payload.mode)
+        try:
+            save_config()
+        except HTTPException:
+            config.clear()
+            config.update(previous)
+            raise
+        stop_recording("stopped")
+        state.update(mode=payload.mode, target_window_title=details["title"] if details else "", target_window_id=details["id"] if details else 0, browser_source_id=payload.browser_source_id if payload.mode == "IN_APP" else "")
+        if state["auto_start_recording"] and logger.session_id and (details or state["browser_source_id"]):
             try:
-                import base64
-                b64_data = payload.frame_base64.split(",")[-1]
-                img_data = base64.b64decode(b64_data)
-                filename = f"tab_{datetime.now().strftime('%H%M%S_%f')[:10]}.png"
-                filepath = os.path.join(logger.frames_dir, filename)
-                with open(filepath, "wb") as f:
-                    f.write(img_data)
-                frame_path = filepath
-            except Exception:
-                frame_path = None
+                start_recording(state["browser_source_id"])
+            except HTTPException as error:
+                state["recording_error"] = str(error.detail)
+        await broadcast({"type": "MODE_CHANGED", **state})
+        return {"status": "ok", **state}
 
-        if not frame_path and state["mode"] == "DESKTOP":
-            frame_path = listener.capture_screen()
+    def capture(frame_base64):
+        if state["mode"] == "DESKTOP":
+            image = listener.capture_screen()
+            if not image:
+                raise HTTPException(503, listener.last_error or "The selected window cannot be captured")
+            return image
+        if frame_base64:
+            try:
+                data = base64.b64decode(frame_base64.split(",")[-1], validate=True)
+                if len(data) > 20 * 1024 * 1024 or not data.startswith(b"\x89PNG\r\n\x1a\n"):
+                    raise ValueError("Expected a PNG image under 20 MB")
+                path = os.path.join(logger.frames_dir, f"tab_{uuid4().hex}.png")
+                with open(path, "wb") as file:
+                    file.write(data)
+                return path
+            except (ValueError, OSError) as error:
+                raise HTTPException(400, f"Capture failed: {error}") from error
+        raise HTTPException(409, "No browser frame is available. Select the source again.")
 
-        event_id = f"evt_{datetime.now().strftime('%H%M%S_%f')[:10]}"
-        event = {
-            "id": event_id,
-            "type": payload.type,
-            "action": payload.action.upper(),
-            "price": payload.price,
-            "contracts": payload.contracts,
-            "timestamp": now_str,
-            "voice_transcript": payload.voice_transcript,
-            "drawing_data": payload.drawing_data,
-            "warnings": warnings,
-            "trade_result": trade_result,
-            "frame_path": frame_path,
-            "ai_thesis": "",
-            "ai_pending": True
-        }
+    def queue_analysis(event):
+        date, session_id = event["date"], event["session_id"]
+        pending_analysis.add(event["id"])
 
+        async def analyze():
+            try:
+                result = await asyncio.to_thread(analyzer.analyze_event, event.get("frame_path"), None, event, f"{date}_{session_id}")
+                updates = {"ai_thesis": result.get("ai_thesis", ""), "ai_error": result.get("ai_error", ""), "ai_pending": False}
+                # Gắn kết quả vào phiên gốc khi người dùng đã chuyển phiên.
+                if logger.update_event(event["id"], updates, date, session_id):
+                    event.update(updates)
+                    await broadcast({"type": "EVENT_UPDATED", "event": event, "date": date, "session_id": session_id})
+            finally:
+                pending_analysis.discard(event["id"])
+
+        asyncio.create_task(analyze())
+
+    async def log_trade(payload):
+        require_session(payload.session_id, payload.session_date)
+        require_recording(payload.source_id)
+        frame_path = capture(payload.frame_base64)
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        warnings = auditor.audit(payload.type, payload.action, payload.price)
+        result = pair_manager.register_trade(payload.action, payload.price, timestamp, payload.contracts)
+        event = {"type": payload.type, "action": payload.action, "price": payload.price, "contracts": payload.contracts, "timestamp": timestamp, "voice_transcript": payload.voice_transcript, "drawing_data": payload.drawing_data, "warnings": warnings, "trade_result": result, "frame_path": frame_path, "ai_pending": True}
         logger.log_event(event)
         summary = pair_manager.get_summary()
-
-        await broadcast({
-            "type": "TRADE_LOGGED",
-            "event": event,
-            "summary": summary
-        })
-
-        def run_trade_ai():
-            res = analyzer.analyze_event(
-                image_path=frame_path,
-                audio_path=None,
-                context={
-                    "action": payload.action,
-                    "price": payload.price,
-                    "voice_transcript": payload.voice_transcript,
-                    "warnings": warnings
-                },
-                session_id=logger.session_id
-            )
-            thesis = res.get("ai_thesis", "")
-            if thesis:
-                event["ai_thesis"] = thesis
-                event["ai_pending"] = False
-                logger.update_event(event_id, {"ai_thesis": thesis, "ai_pending": False})
-                msg = {"type": "EVENT_UPDATED", "event": event, "summary": pair_manager.get_summary()}
-                if main_loop and main_loop.is_running():
-                    asyncio.run_coroutine_threadsafe(broadcast(msg), main_loop)
-
-        import threading
-        threading.Thread(target=run_trade_ai, daemon=True).start()
-
+        await broadcast({"type": "TRADE_LOGGED", "event": event, "summary": summary})
+        queue_analysis(event)
         return {"status": "ok", "event": event, "summary": summary}
 
+    @app.post("/api/trade")
+    async def trade(payload: TradeEventPayload):
+        return await log_trade(payload)
+
     @app.post("/api/reject-setup")
-    async def reject_setup(payload: Dict[str, Any]):
-        now_str = datetime.now().strftime("%H:%M:%S")
-        frame_path = None
-        if payload.get("frame_base64"):
-            try:
-                import base64
-                b64_data = payload["frame_base64"].split(",")[-1]
-                img_data = base64.b64decode(b64_data)
-                filename = f"reject_{datetime.now().strftime('%H%M%S_%f')[:10]}.png"
-                filepath = os.path.join(logger.frames_dir, filename)
-                with open(filepath, "wb") as f:
-                    f.write(img_data)
-                frame_path = filepath
-            except Exception:
-                frame_path = None
-
-        if not frame_path and state["mode"] == "DESKTOP":
-            frame_path = listener.capture_screen()
-
-        event_id = f"evt_{datetime.now().strftime('%H%M%S_%f')[:10]}"
-        event = {
-            "id": event_id,
-            "type": "REJECTED_SETUP",
-            "action": "REJECT",
-            "timestamp": now_str,
-            "reason": payload.get("reason", "Trader từ chối setup vì tín hiệu không đạt"),
-            "voice_transcript": payload.get("voice_transcript", ""),
-            "warnings": [],
-            "frame_path": frame_path,
-            "ai_thesis": "",
-            "ai_pending": True
-        }
+    async def reject(payload: RejectPayload):
+        require_session(payload.session_id, payload.session_date)
+        require_recording(payload.source_id)
+        event = {"type": "REJECTED_SETUP", "action": "REJECT", "reason": payload.reason, "voice_transcript": payload.voice_transcript, "timestamp": datetime.now().strftime("%H:%M:%S"), "warnings": [], "frame_path": capture(payload.frame_base64), "ai_pending": True}
         logger.log_event(event)
-        await broadcast({
-            "type": "REJECT_LOGGED",
-            "event": event,
-            "summary": pair_manager.get_summary()
-        })
-
-        def run_reject_ai():
-            res = analyzer.analyze_event(
-                image_path=frame_path,
-                audio_path=None,
-                context={
-                    "action": "REJECT",
-                    "reason": payload.get("reason", "Trader từ chối setup vì tín hiệu không đạt"),
-                    "voice_transcript": payload.get("voice_transcript", ""),
-                    "warnings": []
-                },
-                session_id=logger.session_id
-            )
-            thesis = res.get("ai_thesis", "")
-            if thesis:
-                event["ai_thesis"] = thesis
-                event["ai_pending"] = False
-                logger.update_event(event_id, {"ai_thesis": thesis, "ai_pending": False})
-                msg = {"type": "EVENT_UPDATED", "event": event, "summary": pair_manager.get_summary()}
-                if main_loop and main_loop.is_running():
-                    asyncio.run_coroutine_threadsafe(broadcast(msg), main_loop)
-
-        import threading
-        threading.Thread(target=run_reject_ai, daemon=True).start()
-
+        await broadcast({"type": "REJECT_LOGGED", "event": event, "summary": pair_manager.get_summary()})
+        queue_analysis(event)
         return {"status": "ok", "event": event}
 
+    @app.post("/api/decision-test")
+    async def decision_test(payload: DecisionTestPayload):
+        preview_auditor = copy.copy(auditor)
+        warnings = preview_auditor.audit("TRADE_MANUAL", payload.direction, payload.price)
+        result = {"direction": payload.direction, "price": payload.price, "contracts": payload.contracts, "warnings": warnings, "saved": False}
+        if not payload.save:
+            return result
+        require_session(payload.session_id, payload.session_date)
+        require_recording(payload.source_id)
+        event = {"type": "DECISION_TEST", "action": payload.direction, "price": payload.price, "contracts": payload.contracts, "voice_transcript": payload.voice_transcript, "timestamp": datetime.now().strftime("%H:%M:%S"), "warnings": warnings, "frame_path": capture(payload.frame_base64), "ai_pending": True}
+        logger.log_event(event)
+        await broadcast({"type": "EVENT_LOGGED", "event": event, "summary": pair_manager.get_summary()})
+        queue_analysis(event)
+        return {**result, "saved": True, "event": event}
+
     @app.post("/api/end-session")
-    def end_session():
+    async def export():
+        require_session()
+        report_logger = copy.copy(logger)
+        report_logger.events = [dict(event) for event in logger.events]
         summary = pair_manager.get_summary()
-        reports = logger.export_reports(summary=summary)
-        return {
-            "status": "ended",
-            "date": logger.current_date,
-            "session_id": logger.session_id,
-            "summary": summary,
-            "reports": reports
-        }
+        reports = await asyncio.to_thread(report_logger.export_reports, summary)
+        return {"status": "ended", "date": report_logger.current_date, "session_id": report_logger.session_id, "summary": summary, "reports": reports}
 
     @app.websocket("/ws")
-    async def websocket_endpoint(websocket: WebSocket):
+    async def websocket(websocket: WebSocket):
         await websocket.accept()
-        connected_clients.append(websocket)
+        clients.append(websocket)
         try:
-            await websocket.send_text(json.dumps({
-                "type": "INIT_STATE",
-                "mode": state["mode"],
-                "target_window_title": state["target_window_title"],
-                "strategy_mode": state["strategy_mode"],
-                "current_date": logger.current_date,
-                "session_id": logger.session_id,
-                "summary": pair_manager.get_summary(),
-                "gemini_status": analyzer.test_connection(),
-                "recent_events": logger.events[-50:]
-            }, ensure_ascii=False))
-
+            await websocket.send_json({"type": "INIT_STATE", **snapshot()})
             while True:
-                data = await websocket.receive_text()
-                msg = json.loads(data)
-                if msg.get("type") in ("TRADE_OPEN", "TRADE_CLOSE", "DRAWING"):
-                    now_str = datetime.now().strftime("%H:%M:%S")
-                    action = msg.get("action", "").upper()
-                    price = float(msg.get("price", 0.0))
-                    warnings = auditor.audit(event_type=msg["type"], action=action, price=price)
-                    trade_result = {}
-                    if action in ("BUY", "SELL"):
-                        trade_result = pair_manager.register_trade(action=action, price=price, timestamp=now_str)
-                    
-                    event = {
-                        "type": msg["type"],
-                        "action": action,
-                        "price": price,
-                        "timestamp": now_str,
-                        "voice_transcript": msg.get("voice_transcript", ""),
-                        "drawing_data": msg.get("drawing_data", {}),
-                        "warnings": warnings,
-                        "trade_result": trade_result
-                    }
+                message = await websocket.receive_json()
+                if message.get("type") in ("TRADE_OPEN", "TRADE_CLOSE"):
+                    try:
+                        await log_trade(TradeEventPayload(**message))
+                    except Exception as error:
+                        await websocket.send_json({"type": "ERROR", "message": str(error)})
+                elif message.get("type") == "DRAWING":
+                    try:
+                        require_recording(message.get("source_id", ""))
+                    except HTTPException as error:
+                        await websocket.send_json({"type": "ERROR", "message": error.detail})
+                        continue
+                    event = {"type": "DRAWING", "drawing_data": message.get("drawing_data", {}), "timestamp": datetime.now().strftime("%H:%M:%S"), "warnings": auditor.audit("DRAWING")}
                     logger.log_event(event)
                     await broadcast({"type": "EVENT_LOGGED", "event": event, "summary": pair_manager.get_summary()})
         except WebSocketDisconnect:
-            if websocket in connected_clients:
-                connected_clients.remove(websocket)
+            pass
+        finally:
+            if websocket in clients:
+                clients.remove(websocket)
+            owner = websocket.query_params.get("client_id")
+            if owner and state["mode"] == "IN_APP" and owner == state["browser_source_id"] and not any(ws.query_params.get("client_id") == owner for ws in clients):
+                state["browser_source_id"] = ""
+                stop_recording(error="Browser sharing disconnected. Select a source to continue.")
+                await broadcast({"type": "RECORDING_CHANGED", **state})
 
-    web_dir = os.path.join(os.path.dirname(config_path), "web")
-    if os.path.exists(web_dir):
-        app.mount("/", StaticFiles(directory=web_dir, html=True), name="web")
+    @app.get("/")
+    @app.get("/auditor")
+    def frontend():
+        return RedirectResponse(os.getenv("AUDITOR_UI_URL", "http://localhost:3000/auditor"))
 
     return app
+

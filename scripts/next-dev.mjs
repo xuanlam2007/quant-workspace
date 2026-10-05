@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import net from "node:net";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { startAuditor } from "./auditor-dev.mjs";
 
 const DEFAULT_PORT = 3000;
 
@@ -53,6 +54,7 @@ async function run() {
     env.NODE_OPTIONS = `${env.NODE_OPTIONS ?? ""} --require "${preload}"`.trim();
   }
 
+  const stopAuditor = await startAuditor(port);
   const child = spawn(process.execPath, [nextBin, "dev", "--webpack", ...nextArgs], {
     env,
     stdio: "inherit",
@@ -60,8 +62,13 @@ async function run() {
   });
 
   child.once("exit", (code) => {
+    stopAuditor();
     process.exitCode = code ?? 1;
   });
+  child.once("error", error => { stopAuditor(); console.error(error); process.exitCode = 1; });
+  for (const signal of ["SIGINT", "SIGTERM"]) {
+    process.once(signal, () => { stopAuditor(); child.kill(signal); });
+  }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

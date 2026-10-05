@@ -43,6 +43,9 @@ async def monitor_session(date_str: str, session_id: str):
                     data = json.loads(msg)
                     msg_type = data.get("type")
 
+                    if data.get("session_id") != session_id or (data.get("date") or data.get("current_date")) != date_str:
+                        continue
+
                     if msg_type in ("EVENT_LOGGED", "TRADE_LOGGED", "REJECT_LOGGED"):
                         ev = data.get("event", {})
                         summary = data.get("summary", {})
@@ -70,7 +73,7 @@ async def monitor_session(date_str: str, session_id: str):
                             print(f"  {CLR_CYAN}🤖 Nhận định AGY AI:{CLR_RESET} {ai_thesis}")
                             print(f"{CLR_GRAY}────────────────────────────────────────────────────────────────────────────────{CLR_RESET}")
                         elif ev.get("ai_pending"):
-                            print(f"  {CLR_GRAY}🤖 Đang gọi AGY AI phân tích biểu đồ và kỷ luật...{CLR_RESET}")
+                            print(f"  {CLR_GRAY}Đang gọi AGY phân tích thao tác và kỷ luật...{CLR_RESET}")
 
                     elif msg_type == "EVENT_UPDATED":
                         ev = data.get("event", {})
@@ -79,6 +82,8 @@ async def monitor_session(date_str: str, session_id: str):
                         if ai_thesis:
                             print(f"  {CLR_CYAN}🤖 Nhận định AGY AI [{ts}]:{CLR_RESET} {ai_thesis}")
                             print(f"{CLR_GRAY}────────────────────────────────────────────────────────────────────────────────{CLR_RESET}")
+                        elif ev.get("ai_error"):
+                            print(f"  {CLR_YELLOW}AGY: {ev['ai_error']}{CLR_RESET}")
 
                     elif msg_type == "SESSION_SWITCHED":
                         new_id = data.get("session_id", "")
@@ -92,7 +97,7 @@ async def monitor_session(date_str: str, session_id: str):
 def main():
     parser = argparse.ArgumentParser(description="Quant Strategy Auditor Session Terminal")
     parser.add_argument("--date", default=time.strftime("%Y-%m-%d"))
-    parser.add_argument("--session", default=f"session_{time.strftime('%H%M%S')}")
+    parser.add_argument("--session", required=True)
     args = parser.parse_args()
 
     try:

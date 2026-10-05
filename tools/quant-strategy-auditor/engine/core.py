@@ -3,6 +3,10 @@ import json
 import time
 import shutil
 import subprocess
+import re
+import threading
+from html import escape
+from uuid import uuid4
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 
@@ -35,7 +39,10 @@ class TradePairManager:
         if action.upper() == "BUY":
             remaining = contracts
             while remaining > 0 and self.open_shorts:
-                short_trade = self.open_shorts.pop(0)
+                short_trade = self.open_shorts[0]
+                short_trade["contracts"] -= 1
+                if short_trade["contracts"] == 0:
+                    self.open_shorts.pop(0)
                 p_red = short_trade["price"]
                 p_green = price
                 gross_diff = p_red - p_green
@@ -59,7 +66,10 @@ class TradePairManager:
         elif action.upper() == "SELL":
             remaining = contracts
             while remaining > 0 and self.open_longs:
-                long_trade = self.open_longs.pop(0)
+                long_trade = self.open_longs[0]
+                long_trade["contracts"] -= 1
+                if long_trade["contracts"] == 0:
+                    self.open_longs.pop(0)
                 p_red = price
                 p_green = long_trade["price"]
                 gross_diff = p_red - p_green
@@ -92,8 +102,8 @@ class TradePairManager:
             "total_gross_points": round(total_gross, 2),
             "total_fees_points": round(total_fees, 2),
             "total_net_points": round(total_net, 2),
-            "open_longs_count": len(self.open_longs),
-            "open_shorts_count": len(self.open_shorts),
+            "open_longs_count": sum(item["contracts"] for item in self.open_longs),
+            "open_shorts_count": sum(item["contracts"] for item in self.open_shorts),
             "pairs": self.closed_pairs
         }
 
@@ -114,24 +124,60 @@ class StrategyConflictAuditor:
 class SessionLogger:
     # Quản lý lưu trữ nhật ký phiên giao dịch theo ngày: sessions/YYYY-MM-DD/session_HHMMSS/
     def __init__(self, base_dir: str = "sessions"):
-        self.base_dir = base_dir
+        self.base_dir = os.path.abspath(base_dir)
         self.events: List[Dict[str, Any]] = []
         self.current_date = ""
         self.session_id = ""
         self.session_folder = ""
         self.events_file = ""
         self.frames_dir = ""
-        self.new_session()
+        self._lock = threading.RLock()
+        self.active_file = os.path.join(self.base_dir, ".active-session.json")
+        self.restore_active_session()
+
+    def session_path(self, date: str, session_id: str) -> str:
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date) or not re.fullmatch(r"session_\d{6}(?:_\w+)?", session_id):
+            raise ValueError("Invalid session identifier")
+        return os.path.join(self.base_dir, date, session_id)
+
+    def _persist_active(self):
+        os.makedirs(self.base_dir, exist_ok=True)
+        temp = self.active_file + ".tmp"
+        with open(temp, "w", encoding="utf-8") as f:
+            json.dump({"date": self.current_date, "session_id": self.session_id}, f)
+        os.replace(temp, self.active_file)
+
+    def clear_active(self):
+        self.events = []
+        self.current_date = self.session_id = self.session_folder = self.events_file = self.frames_dir = ""
+        self._persist_active()
+
+    def restore_active_session(self):
+        if os.path.isfile(self.active_file):
+            try:
+                with open(self.active_file, encoding="utf-8") as f:
+                    active = json.load(f)
+                if active.get("session_id") and self.load_session(active["date"], active["session_id"]):
+                    return
+                if not active.get("session_id"):
+                    return
+            except (OSError, ValueError, KeyError):
+                pass
+        for group in self.list_all_sessions():
+            for session in group["sessions"]:
+                if self.load_session(group["date"], session["id"]):
+                    return
 
     def new_session(self) -> str:
         now = datetime.now()
         self.current_date = now.strftime("%Y-%m-%d")
-        self.session_id = f"session_{now.strftime('%H%M%S')}"
+        self.session_id = f"session_{now.strftime('%H%M%S')}_{uuid4().hex[:8]}"
         self.session_folder = os.path.join(self.base_dir, self.current_date, self.session_id)
         self.events_file = os.path.join(self.session_folder, "events.jsonl")
         self.frames_dir = os.path.join(self.session_folder, "frames")
         self.events = []
         os.makedirs(self.frames_dir, exist_ok=True)
+        self._persist_active()
         return self.session_id
 
     def list_all_sessions(self) -> List[Dict[str, Any]]:
@@ -142,12 +188,16 @@ class SessionLogger:
         date_groups = []
         date_folders = sorted(os.listdir(self.base_dir), reverse=True)
         for d in date_folders:
+            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", d):
+                continue
             d_path = os.path.join(self.base_dir, d)
             if not os.path.isdir(d_path):
                 continue
             sessions = []
             session_folders = sorted(os.listdir(d_path), reverse=True)
             for s in session_folders:
+                if not re.fullmatch(r"session_\d{6}(?:_\w+)?", s):
+                    continue
                 s_path = os.path.join(d_path, s)
                 if not os.path.isdir(s_path):
                     continue
@@ -161,7 +211,7 @@ class SessionLogger:
                         pass
                 
                 # Xác định nhãn sáng hay chiều
-                time_part = s.replace("session_", "")
+                time_part = s.replace("session_", "").split("_")[0]
                 time_str = f"{time_part[:2]}:{time_part[2:4]}:{time_part[4:6]}" if len(time_part) == 6 else time_part
                 period = "Sáng" if time_part < "120000" else "Chiều"
                 is_active = (d == self.current_date and s == self.session_id)
@@ -186,8 +236,8 @@ class SessionLogger:
         return date_groups
 
     def load_session(self, date: str, session_id: str) -> bool:
-        target_folder = os.path.join(self.base_dir, date, session_id)
-        if not os.path.exists(target_folder):
+        target_folder = self.session_path(date, session_id)
+        if not os.path.isdir(target_folder):
             return False
         self.current_date = date
         self.session_id = session_id
@@ -200,16 +250,19 @@ class SessionLogger:
                 with open(self.events_file, "r", encoding="utf-8") as f:
                     for line in f:
                         if line.strip():
-                            self.events.append(json.loads(line))
+                            ev = json.loads(line)
+                            ev.setdefault("id", f"legacy_{len(self.events)}")
+                            self.events.append(ev)
             except Exception:
                 pass
+        self._persist_active()
         return True
 
     def delete_session(self, date: str, session_id: str) -> bool:
-        target_folder = os.path.join(self.base_dir, date, session_id)
+        target_folder = self.session_path(date, session_id)
         if os.path.exists(target_folder):
             try:
-                shutil.rmtree(target_folder, ignore_errors=True)
+                shutil.rmtree(target_folder)
                 date_folder = os.path.join(self.base_dir, date)
                 if os.path.exists(date_folder) and not os.listdir(date_folder):
                     try:
@@ -217,7 +270,11 @@ class SessionLogger:
                     except Exception:
                         pass
                 if date == self.current_date and session_id == self.session_id:
-                    self.new_session()
+                    self.clear_active()
+                    for group in self.list_all_sessions():
+                        if group["sessions"]:
+                            self.load_session(group["date"], group["sessions"][0]["id"])
+                            break
                 return True
             except Exception:
                 return False
@@ -226,50 +283,65 @@ class SessionLogger:
     def delete_all_sessions(self) -> bool:
         try:
             if os.path.exists(self.base_dir):
-                shutil.rmtree(self.base_dir, ignore_errors=True)
+                shutil.rmtree(self.base_dir)
             os.makedirs(self.base_dir, exist_ok=True)
-            self.new_session()
+            self.clear_active()
             return True
         except Exception:
             return False
 
     def log_event(self, event: Dict[str, Any]):
+        if not self.session_id:
+            raise ValueError("Create a session before recording events")
         if "id" not in event:
-            event["id"] = f"evt_{datetime.now().strftime('%H%M%S_%f')[:10]}"
+            event["id"] = f"evt_{uuid4().hex}"
+        event["date"] = self.current_date
+        event["session_id"] = self.session_id
         event["logged_at"] = datetime.now().isoformat()
-        self.events.append(event)
-        with open(self.events_file, "a", encoding="utf-8") as f:
-            f.write(json.dumps(event, ensure_ascii=False) + "\n")
+        with self._lock:
+            self.events.append(event)
+            with open(self.events_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(event, ensure_ascii=False) + "\n")
 
-    def update_event(self, event_id: str, updates: Dict[str, Any]):
-        updated = False
-        for ev in self.events:
-            if ev.get("id") == event_id:
-                ev.update(updates)
-                updated = True
-                break
-        if updated and os.path.exists(self.events_file):
-            try:
-                with open(self.events_file, "w", encoding="utf-8") as f:
-                    for ev in self.events:
-                        f.write(json.dumps(ev, ensure_ascii=False) + "\n")
-            except Exception:
-                pass
+    def update_event(self, event_id: str, updates: Dict[str, Any], date: Optional[str] = None, session_id: Optional[str] = None):
+        with self._lock:
+            is_active = not session_id or (date == self.current_date and session_id == self.session_id)
+            events_file = self.events_file if is_active else os.path.join(self.session_path(date, session_id), "events.jsonl")
+            if not os.path.isfile(events_file):
+                return False
+            if is_active:
+                events = self.events
+            else:
+                with open(events_file, encoding="utf-8") as f:
+                    events = [json.loads(line) for line in f if line.strip()]
+            for ev in events:
+                if ev.get("id") == event_id:
+                    ev.update(updates)
+                    temp = events_file + ".tmp"
+                    with open(temp, "w", encoding="utf-8") as f:
+                        for item in events:
+                            f.write(json.dumps(item, ensure_ascii=False) + "\n")
+                    os.replace(temp, events_file)
+                    return True
+            return False
 
     def export_reports(self, summary: Dict[str, Any]) -> Dict[str, str]:
+        if not self.session_id:
+            raise ValueError("No active session")
         html_path = os.path.abspath(os.path.join(self.session_folder, "session_review.html"))
         pdf_path = os.path.abspath(os.path.join(self.session_folder, "session_review.pdf"))
 
         rows = []
         for ev in self.events:
-            ev_type = ev.get("type", "UNKNOWN")
-            action = ev.get("action", "")
-            price = ev.get("price", "-")
-            timestamp = ev.get("timestamp", "")
-            transcript = ev.get("voice_transcript", "")
+            ev_type = escape(str(ev.get("type", "UNKNOWN")))
+            action = escape(str(ev.get("action", "")))
+            price = escape(str(ev.get("price", "-")))
+            timestamp = escape(str(ev.get("timestamp", "")))
+            transcript = escape(str(ev.get("voice_transcript", "") or ev.get("reason", "")))
+            thesis = escape(str(ev.get("ai_thesis", "") or ev.get("ai_error", "")))
             img_rel = os.path.relpath(ev.get("frame_path", ""), self.session_folder) if ev.get("frame_path") else ""
             warnings = ev.get("warnings", [])
-            warn_html = "".join([f"<span class='badge warn'>{w['message']}</span>" for w in warnings])
+            warn_html = "".join([f"<span class='badge warn'>{escape(str(w['message']))}</span>" for w in warnings])
             
             badge_class = "buy" if action == "BUY" else ("sell" if action == "SELL" else "neutral")
             img_tag = f"<img src='{img_rel}' alt='Chart' class='thumb'/>" if img_rel and os.path.exists(ev.get("frame_path", "")) else "-"
@@ -279,7 +351,7 @@ class SessionLogger:
                 <td class="mono">{timestamp}</td>
                 <td><span class="badge {badge_class}">{ev_type} {action}</span></td>
                 <td class="mono">{price}</td>
-                <td>{transcript or "<em>Không có ghi âm</em>"}</td>
+                <td>{transcript or "<em>Không có ghi chú</em>"}{'<p>AGY: ' + thesis + '</p>' if thesis else ''}</td>
                 <td>{warn_html or "<span class='badge ok'>Hợp lệ</span>"}</td>
                 <td>{img_tag}</td>
             </tr>
@@ -382,9 +454,10 @@ th {{ background: #131822; color: var(--text-muted); font-size: 11px; text-trans
                         "--headless",
                         "--disable-gpu",
                         "--run-all-compositor-stages-before-draw",
+                        f"--user-data-dir={os.path.join(self.session_folder, '.report-browser')}",
                         f"--print-to-pdf={pdf_path}",
-                        html_path
-                    ], timeout=10, check=True)
+                        "file:///" + html_path.replace("\\", "/")
+                    ], timeout=10, check=True, creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
                     break
                 except Exception:
                     pass
