@@ -20,7 +20,9 @@ type Action = { id: keyof typeof PANE_CONTROL_ICONS; label: string; run: () => v
 export function PaneControls({ chart, revision, onLayoutChange, onPresentationChange, mainPane, onRemovePane, allowDoubleClick }: Props) {
   const rootRef = useRef<HTMLDivElement>(null);
   const controller = useRef<PanePresentationController | null>(null);
-  const [positions, setPositions] = useState<{ pane: Pane; top: number; right: number; width: number }[]>([]);
+  const paneKeys = useRef(new WeakMap<Pane, number>());
+  const nextPaneKey = useRef(0);
+  const [positions, setPositions] = useState<{ key: number; pane: Pane; top: number; right: number; width: number }[]>([]);
   const [hovered, setHovered] = useState<Pane | null>(null);
   const [menu, setMenu] = useState<Pane | null>(null);
   const [touch, setTouch] = useState(false);
@@ -42,7 +44,12 @@ export function PaneControls({ chart, revision, onLayoutChange, onPresentationCh
       };
       const right = scaleWidth("right");
       const left = scaleWidth("left");
-      return [{ pane, top: rect.top - rootRect.top + 4, right: rootRect.right - chartRect.right + right + 4, width: rect.width - left - right }];
+      let key = paneKeys.current.get(pane);
+      if (key === undefined) {
+        key = nextPaneKey.current++;
+        paneKeys.current.set(pane, key);
+      }
+      return [{ key, pane, top: rect.top - rootRect.top + 4, right: rootRect.right - chartRect.right + right + 4, width: rect.width - left - right }];
     }));
   }, [chart]);
 
@@ -127,8 +134,11 @@ export function PaneControls({ chart, revision, onLayoutChange, onPresentationCh
     return result;
   };
 
+  const panes = chart?.panes() ?? [];
+
   return <div ref={rootRef} className="chart-pane-controls">
-    {(chart?.panes().length ?? 0) > 1 && positions.map(({ pane, top, right, width }) => {
+    {panes.length > 1 && positions.map(({ key, pane, top, right, width }) => {
+      if (!panes.includes(pane)) return null;
       const actions = actionsFor(pane);
       const maximized = controller.current?.maximized === pane;
       const compact = !maximized && (width < 666.65 || touch);
@@ -138,7 +148,7 @@ export function PaneControls({ chart, revision, onLayoutChange, onPresentationCh
         <span className="chart-pane-controls__icon" aria-hidden="true" dangerouslySetInnerHTML={{ __html: PANE_CONTROL_ICONS[action.id] }}/>
         {inMenu && <><span>{action.label}</span>{action.hotkey && <kbd>{action.hotkey}</kbd>}</>}
       </button>;
-      return <div key={pane.paneIndex()} className={`chart-pane-controls__row${hovered === pane || menu === pane ? " is-visible" : ""}`} style={{ top, right }} onPointerDown={(event) => event.stopPropagation()} onMouseDown={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onContextMenu={(event) => event.preventDefault()}>
+      return <div key={key} className={`chart-pane-controls__row${hovered === pane || menu === pane ? " is-visible" : ""}`} style={{ top, right }} onPointerDown={(event) => event.stopPropagation()} onMouseDown={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onContextMenu={(event) => event.preventDefault()}>
         {compact ? <button type="button" tabIndex={-1} className="chart-pane-controls__button" aria-label="Quản lý khung" data-tooltip="Quản lý khung" data-tooltip-placement="top" aria-haspopup="menu" aria-expanded={menu === pane} onClick={() => setMenu(menu === pane ? null : pane)} dangerouslySetInnerHTML={{ __html: PANE_CONTROL_ICONS.more }}/> : actions.map((action) => renderButton(action))}
         {compact && menu === pane && <div className="chart-pane-controls__menu" role="menu" aria-label="Quản lý khung">{menuActions.map((action) => renderButton(action, true))}</div>}
       </div>;
