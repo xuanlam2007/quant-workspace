@@ -1,7 +1,8 @@
-import { useEffect, useRef, type RefObject } from "react";
+import { useCallback, useEffect, useRef, type RefObject } from "react";
 import type { IChartApi, IPriceScaleApi } from "lightweight-charts";
 import { paneController, type Pane, type SavedPanePresentation } from "./pane-presentation";
 import { readSaved, writeSaved } from "../config/saved-state";
+import { WORKSPACE_CHANGED } from "./named-layouts";
 
 interface SourceState { id: string; pane: number; side: string; visible: boolean; order: number }
 interface ScaleState { mode: number; autoScale: boolean; invertScale: boolean; alignLabels: boolean; scaleMargins: { top: number; bottom: number }; range: { from: number; to: number } | null }
@@ -39,7 +40,7 @@ export function useSavedLayout<S extends PersistentSeries>({ chartRef, ready, re
   const restoredChart = useRef<IChartApi | null>(null);
   const saved = useRef<Layout | null | undefined>(undefined);
   const lastWritten = useRef("");
-  const saveRef = useRef(() => {});
+  const saveRef = useRef<(strict?: boolean) => void>(() => {});
 
   useEffect(() => {
     if (!ready) return;
@@ -98,9 +99,12 @@ export function useSavedLayout<S extends PersistentSeries>({ chartRef, ready, re
     return () => cancelAnimationFrame(frame);
   }, [chartRef, ready]);
 
-  saveRef.current = () => {
+  saveRef.current = (strict = false) => {
     const chart = chartRef.current;
-    if (!current.current.ready || !chart || restoredChart.current !== chart) return;
+    if (!current.current.ready || !chart || restoredChart.current !== chart) {
+      if (strict) throw new Error("Biểu đồ đang khôi phục bố cục. Vui lòng thử lại.");
+      return;
+    }
     const controller = paneController(chart);
     if (!controller) return;
     const sources = current.current.sources().map(({ id, series }) => ({ id, pane: series.getPane().paneIndex(), side: series.options().priceScaleId ?? "right", visible: series.options().visible, order: series.seriesOrder() }));
@@ -115,7 +119,12 @@ export function useSavedLayout<S extends PersistentSeries>({ chartRef, ready, re
     const { barSpacing, rightOffset } = chart.timeScale().options();
     const layout = { version: 1 as const, context: current.current.context, time: { barSpacing, rightOffset }, sources, panes, presentation: controller.snapshot() };
     const serialized = JSON.stringify(layout);
-    if (serialized !== lastWritten.current) { writeSaved(KEY, layout); lastWritten.current = serialized; }
+    if (strict) localStorage.setItem(KEY, serialized);
+    if (serialized !== lastWritten.current) {
+      if (!strict) writeSaved(KEY, layout);
+      lastWritten.current = serialized;
+      window.dispatchEvent(new Event(WORKSPACE_CHANGED));
+    }
   };
   useEffect(() => {
     const timer = setTimeout(() => saveRef.current(), 250);
@@ -132,4 +141,5 @@ export function useSavedLayout<S extends PersistentSeries>({ chartRef, ready, re
     document.addEventListener("visibilitychange", visibility);
     return () => { clearTimeout(timer); window.removeEventListener("pointerup", schedule); window.removeEventListener("wheel", schedule); window.removeEventListener("pagehide", flush); document.removeEventListener("visibilitychange", visibility); };
   }, []);
+  return useCallback(() => saveRef.current(true), []);
 }
