@@ -51,6 +51,7 @@ async function run() {
   const child = spawn(process.execPath, [nextBin, "dev", "--webpack", ...nextArgs], {
     env: { ...process.env, NEXT_DIST_DIR: devDistDir(port) },
     stdio: "inherit",
+    windowsHide: true,
   });
 
   child.once("exit", (code) => {
