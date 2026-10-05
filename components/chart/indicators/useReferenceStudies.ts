@@ -4,6 +4,10 @@ import type { Bar, SymbolInfo } from "@/lib/dchart-api";
 import { calculateReferenceStudy, loadReferenceStudies, referenceDefaults, type ReferenceDefinition, type ReferencePoint, type ReferenceSettings } from "@/lib/reference-studies";
 import { ReferenceStudyView } from "./ReferenceStudyView";
 import { chartStudyBars, type ChartStyle } from "../config/chart-styles";
+import { mergeSaved, overlaySaved, readSaved, writeSaved } from "../config/saved-state";
+
+interface SavedStudy { id: string; name: string; settings?: ReferenceSettings; visible: boolean }
+const STORAGE_KEY = "chart.referenceStudies.v1";
 
 export type ReferenceSeries = ISeriesApi<"Custom", Time, ReferencePoint | WhitespaceData<Time>>;
 export interface ReferenceStudyInstance {
@@ -25,9 +29,19 @@ export function useReferenceStudies(chartRef: RefObject<IChartApi | null>, barsR
   const instances = useRef(new Map<string, ReferenceStudyInstance>());
   const [revision, setRevision] = useState(0);
   const [settingsId, setSettingsId] = useState<string | null>(null);
+  const [restored, setRestored] = useState(false);
+  const ready = useRef(false);
+  const lastSaved = useRef("");
   const context = useRef({ symbol, resolution, symbolInfo, chartStyle });
   context.current = { symbol, resolution, symbolInfo, chartStyle };
-  const refresh = useCallback(() => setRevision((value) => value + 1), []);
+  const refresh = useCallback(() => {
+    if (ready.current) {
+      const saved = [...instances.current.values()].map(({ id, name, settings, visible }) => ({ id, name, settings, visible }));
+      const serialized = JSON.stringify(saved);
+      if (serialized !== lastSaved.current) { writeSaved(STORAGE_KEY, saved); lastSaved.current = serialized; }
+    }
+    setRevision((value) => value + 1);
+  }, []);
   const calculate = useCallback(async (instance: ReferenceStudyInstance, bars?: Bar[]) => {
     if (!instance.definition || !instance.settings || !instance.series || !instance.view) return;
     instance.request?.abort();
@@ -74,18 +88,21 @@ export function useReferenceStudies(chartRef: RefObject<IChartApi | null>, barsR
     }
   }, [barsRef, refresh]);
 
-  const add = useCallback(async (name: string) => {
-    const instance: ReferenceStudyInstance = { id: `reference:${crypto.randomUUID()}`, name, points: [], loading: true, visible: true };
+  const add = useCallback(async (name: string, saved?: SavedStudy) => {
+    const instance: ReferenceStudyInstance = { id: saved?.id ?? `reference:${crypto.randomUUID()}`, name, settings: saved?.settings, points: [], loading: true, visible: saved?.visible ?? true };
     instances.current.set(instance.id, instance);
     refresh();
     try {
       const { bundledStudies } = await loadReferenceStudies();
       const chart = chartRef.current;
-      if (!chart || !instances.current.has(instance.id)) return;
+      if (!chart || instances.current.get(instance.id) !== instance) return;
       const definition = bundledStudies.find((study) => study.name === name || study.metainfo.description === name);
       if (!definition) throw new Error(`Không tìm thấy định nghĩa chỉ báo: ${name}`);
       instance.definition = definition;
-      instance.settings = referenceDefaults(definition);
+      const defaults = referenceDefaults(definition);
+      instance.settings = overlaySaved(defaults, saved?.settings);
+      instance.settings.intervals = mergeSaved(defaults.intervals, saved?.settings?.intervals);
+      instance.settings.precision = typeof instance.settings.precision === "number" && Number.isInteger(instance.settings.precision) && instance.settings.precision >= 0 && instance.settings.precision <= 12 ? instance.settings.precision : defaults.precision;
       instance.view = new ReferenceStudyView(definition, instance.settings);
       instance.series = chart.addCustomSeries(instance.view, {
         priceScaleId: "right", priceLineVisible: false, lastValueVisible: instance.settings.scaleLabels,
@@ -100,6 +117,19 @@ export function useReferenceStudies(chartRef: RefObject<IChartApi | null>, barsR
       refresh();
     }
   }, [calculate, chartRef, refresh]);
+
+  useEffect(() => {
+    let cancelled = false;
+    ready.current = false;
+    const saved = readSaved<unknown>(STORAGE_KEY);
+    const entries = Array.isArray(saved) ? saved.filter((item): item is SavedStudy => Boolean(item && typeof item.id === "string" && item.id.startsWith("reference:") && typeof item.name === "string" && typeof item.visible === "boolean")) : [];
+    const unique = [...new Map(entries.map((item) => [item.id, item])).values()];
+    void Promise.all(unique.map((item) => add(item.name, item))).then(() => {
+      if (cancelled) return;
+      ready.current = true; setRestored(true); refresh();
+    });
+    return () => { cancelled = true; ready.current = false; };
+  }, [add, refresh]);
 
   const remove = useCallback((id: string) => {
     const instance = instances.current.get(id);
@@ -121,5 +151,5 @@ export function useReferenceStudies(chartRef: RefObject<IChartApi | null>, barsR
   }, [calculate]);
   useEffect(() => { update(); }, [symbol, resolution, symbolInfo, chartStyle, update]);
   useEffect(() => () => { instances.current.forEach((instance) => instance.request?.abort()); instances.current.clear(); }, []);
-  return { instances, revision, add, remove, clear, update, apply, settingsId, setSettingsId, refresh };
+  return { instances, revision, restored, add, remove, clear, update, apply, settingsId, setSettingsId, refresh };
 }
