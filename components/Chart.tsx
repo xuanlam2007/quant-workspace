@@ -69,6 +69,7 @@ import { TextToolDialog } from "./chart/drawing/TextToolDialog";
 import { createDrawingTools } from "./chart/drawing/chart-drawing";
 import {
   drawingPreset,
+  saveDrawingDefaults,
   normalizeDrawingState,
   priceRangeAppearance,
 } from "./chart/drawing/drawing-presets";
@@ -104,6 +105,8 @@ import { useReferenceStudies, type ReferenceSeries } from "./chart/indicators/us
 import { ReferenceStudySettingsDialog } from "./chart/layout/ReferenceStudySettingsDialog";
 import { formatVolume } from "./chart/core/chart-utils";
 import { useIndicatorSettings } from "./chart/indicators/useIndicatorSettings";
+import { useSavedState } from "./chart/config/saved-state";
+import { useSavedLayout } from "./chart/layout/useSavedLayout";
 import { DelayedTooltip } from "./chart/ui/DelayedTooltip";
 import { OutsideDragSelectionGuard } from "./chart/ui/OutsideDragSelectionGuard";
 import { readAxisSettings, writeAxisSettings, readManualAxisRange, writeManualAxisRange } from "./chart/config/axis-settings";
@@ -349,12 +352,14 @@ export default function Chart() {
   }, [symbol, resolution, closeGoToDate]);
   const [timeframeMenuOpen, setTimeframeMenuOpen] = useState(false);
   const [status, setStatus] = useState<ConnStatus>("disconnected");
-  const [drawingsLocked, setDrawingsLocked] = useState(false);
+  const [drawingsLocked, setDrawingsLocked] = useSavedState("chart.drawingsLocked.v1", false);
   const [activeDrawingTool, setActiveDrawingTool] = useState<LineToolType | null>(null);
   const [eraserMode, setEraserMode] = useState(false);
-  const [magnetMode, setMagnetMode] = useState<0 | 1 | 2>(0);
-  const [stayInDrawingMode, setStayInDrawingMode] = useState(false);
-  const [drawingsHidden, setDrawingsHidden] = useState(false);
+  const [magnetMode, setMagnetMode] = useSavedState<0 | 1 | 2>("chart.magnetMode.v1", 0);
+  const [stayInDrawingMode, setStayInDrawingMode] = useSavedState("chart.stayInDrawingMode.v1", false);
+  const [drawingsHidden, setDrawingsHidden] = useSavedState("chart.drawingsHidden.v1", false);
+  const drawingsHiddenRef = useRef(drawingsHidden);
+  drawingsHiddenRef.current = drawingsHidden;
   const [selectedDrawing, setSelectedDrawing] = useState<LineToolExport<LineToolType> | null>(null);
   const [textDialogOpen, setTextDialogOpen] = useState(false);
   const [editingTextDrawing, setEditingTextDrawing] = useState<LineToolExport<LineToolType> | null>(null);
@@ -363,7 +368,7 @@ export default function Chart() {
   const [drawingViewportVersion, setDrawingViewportVersion] = useState(0);
   const [visibleBar, setVisibleBar] = useState<Bar | undefined>(undefined);
   const [comparisonQuotes, setComparisonQuotes] = useState<ComparisonQuote[]>([]);
-  const [mainSeriesVisible, setMainSeriesVisible] = useState(true);
+  const [mainSeriesVisible, setMainSeriesVisible] = useSavedState("chart.mainVisible.v1", true);
   const [rangeDays, setRangeDays] = useState<number | undefined>(undefined);
   const [scaleMode, setScaleMode] = useState<ScaleMode>("normal");
   const [axisSettingsRestored, setAxisSettingsRestored] = useState(false);
@@ -394,15 +399,15 @@ export default function Chart() {
   const [symbolSearchInitialQuery, setSymbolSearchInitialQuery] = useState("");
   const [dataError, setDataError] = useState<string>();
   const [historyLoading, setHistoryLoading] = useState(true);
-  const [chartTimezone, setChartTimezone] = useState("Asia/Bangkok");
+  const [chartTimezone, setChartTimezone] = useSavedState("chart.timezone.v1", "Asia/Bangkok");
   const [chartSettingsOpen, setChartSettingsOpen] = useState(false);
-  const [volumeMaVisible, setVolumeMaVisible] = useState(false);
+  const [volumeMaVisible, setVolumeMaVisible] = useSavedState("chart.volumeMaVisible.v1", false);
   const [selectedLegend, setSelectedLegend] = useState<string | null>(null);
-  const [volumeHidden, setVolumeHidden] = useState(false);
+  const [volumeHidden, setVolumeHidden] = useSavedState("chart.volumeHidden.v1", false);
   const [volumePaneIndex, setVolumePaneIndex] = useState(0);
   const [volumeScaleSideOverride, setVolumeScaleSideOverride] = useState<"left" | "right" | null>(null);
-  const [volumeSmoothedMaVisible, setVolumeSmoothedMaVisible] = useState(false);
-  const [volumeVisualSettings, setVolumeVisualSettings] = useState({
+  const [volumeSmoothedMaVisible, setVolumeSmoothedMaVisible] = useSavedState("chart.volumeSmoothingVisible.v1", false);
+  const [volumeVisualSettings, setVolumeVisualSettings, volumeSettingsRestored] = useSavedState("chart.volumeAppearance.v1", {
     colorByPreviousClose: false,
     histogramVisible: true,
     upColor: "#54ba88",
@@ -426,7 +431,7 @@ export default function Chart() {
     const alpha = /^#[\da-f]{8}$/i.test(color) ? parseInt(color.slice(7), 16) : 255;
     return `${color.slice(0, 7)}${Math.round(alpha * 0.4).toString(16).padStart(2, "0")}`;
   }, []);
-  const [chartAppearance, setChartAppearance] = useState<ChartAppearance>(DEFAULT_CHART_APPEARANCE);
+  const [chartAppearance, setChartAppearance, appearanceRestored] = useSavedState<ChartAppearance>("chart.appearance.v1", DEFAULT_CHART_APPEARANCE);
   const [chartStylePreferences, setChartStylePreferences] = useState<ChartStylePreferences>({ style: 1, favorites: [], settings: {} });
   const [chartStyleRestored, setChartStyleRestored] = useState(false);
   const chartStyle = chartStylePreferences.style;
@@ -624,7 +629,8 @@ export default function Chart() {
     const lineTools = lineToolsRef.current;
     if (!lineTools) return;
     lineTools.removeAllLineTools();
-    if (drawingState !== "[]") lineTools.importLineTools(drawingState);
+    if (drawingsHiddenRef.current) hiddenDrawingsRef.current = drawingState;
+    else if (drawingState !== "[]") lineTools.importLineTools(drawingState);
     setSelectedDrawing(null);
     if (drawingKeyRef.current) {
       localStorage.setItem(drawingKeyRef.current, drawingState);
@@ -664,6 +670,7 @@ export default function Chart() {
   }, []);
   const {
     activeStudies,
+    settingsLoaded: indicatorSettingsRestored,
     setActiveStudies,
     maLength,
     setMaLength,
@@ -957,6 +964,7 @@ export default function Chart() {
         lineTools.createOrUpdateLineTool(selectedLineTool.toolType, selectedLineTool.points, selectedLineTool.options, selectedLineTool.id);
       }
       setSelectedDrawing(selectedLineTool);
+      if (!textDialogOpenRef.current) saveDrawingDefaults(selectedLineTool);
       persistDrawingState();
       if (event.stage !== "lineToolFinished") return;
 
@@ -1362,7 +1370,6 @@ export default function Chart() {
     setZoomMode(false);
     drawingKeyRef.current = drawingStorageKey(symbol, resolution);
     hiddenDrawingsRef.current = null;
-    setDrawingsHidden(false);
     setSelectedDrawing(null);
     setTextDialogOpen(false);
     setEditingTextDrawing(null);
@@ -1606,7 +1613,8 @@ export default function Chart() {
         ? normalizeDrawingState(savedDrawings)
         : "[]";
       if (savedDrawings) {
-        lineToolsRef.current?.importLineTools(normalizedDrawings);
+        if (drawingsHiddenRef.current) hiddenDrawingsRef.current = normalizedDrawings;
+        else lineToolsRef.current?.importLineTools(normalizedDrawings);
         if (normalizedDrawings !== savedDrawings) {
           localStorage.setItem(drawingKeyRef.current, normalizedDrawings);
         }
@@ -2094,6 +2102,31 @@ export default function Chart() {
     syncPaneLayout();
   }, [syncPaneLayout, transferSeriesGroup, activeStudies, compareSymbols.length, resolution, symbolInfo?.session, symbolInfo?.timezone, volumeMaVisible, volumeSmoothedMaVisible, volumeAllowed, volumeVisualSettings.histogramVisible, volumeHidden]);
 
+  useSavedLayout<MovableSeries>({
+    chartRef,
+    ready: axisSettingsRestored && appearanceRestored && chartStyleRestored && volumeSettingsRestored && indicatorSettingsRestored && referenceStudies.restored && !historyLoading,
+    revision: paneRevision + referenceStudies.revision,
+    context: `${symbol}:${resolution}`,
+    setRange: setVisiblePriceRange,
+    transfer: transferSeriesGroup,
+    changed: syncPaneLayout,
+    sources: () => {
+      const result: { id: string; series: MovableSeries }[] = [];
+      const add = (id: string, series: MovableSeries | null | undefined) => { if (series) result.push({ id, series }); };
+      add("main", seriesRef.current);
+      add("timeline", timelineSeriesRef.current);
+      add("volume", volumeSeriesRef.current);
+      add("volume:ma", volumeMaSeriesRef.current);
+      add("volume:smoothing", volumeSmaSeriesRef.current);
+      priceIndicatorSeriesRef.current.forEach((series, id) => add(`study:${id}`, series));
+      compareSeriesRef.current.forEach((series, id) => add(`compare:${id}`, series));
+      referenceStudies.instances.current.forEach((study) => add(study.id, study.series));
+      if (macdSeriesRef.current) Object.entries(macdSeriesRef.current).forEach(([id, series]) => add(`macd:${id}`, series));
+      if (rsiSeriesRef.current) Object.entries(rsiSeriesRef.current).forEach(([id, series]) => add(`rsi:${id}`, series));
+      return result;
+    },
+  });
+
   useEffect(() => {
     const onFullscreenChange = () => setIsFullscreen(document.fullscreenElement !== null);
     document.addEventListener("fullscreenchange", onFullscreenChange);
@@ -2415,6 +2448,10 @@ export default function Chart() {
   useEffect(() => {
     lineToolsRef.current?.setLocked(drawingsLocked);
   }, [drawingsLocked]);
+
+  useEffect(() => {
+    lineToolsRef.current?.setMagnetThreshold(magnetMode === 0 ? 0 : magnetMode === 1 ? 10 : 24);
+  }, [magnetMode]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -2831,6 +2868,7 @@ export default function Chart() {
     const lineTools = lineToolsRef.current;
     if (!lineTools || lineTools.getLineToolByID(drawing.id) === "[]") return;
     lineTools.createOrUpdateLineTool(drawing.toolType, drawing.points, drawing.options, drawing.id);
+    saveDrawingDefaults(drawing);
     setSelectedDrawing(drawing);
     persistCurrentDrawings();
   };
@@ -3140,6 +3178,7 @@ export default function Chart() {
     const visible = group.some((item) => item.options().visible !== false);
     const reference = referenceStudies.instances.current.get(id);
     if (reference) reference.visible = !visible;
+    if (reference) referenceStudies.refresh();
     group.forEach((item) => item.applyOptions({ visible: !visible }));
     if (visible) setSelectedLegend((current) => current === id ? null : current);
     setPaneRevision((value) => value + 1);
