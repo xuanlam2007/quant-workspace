@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import net from "node:net";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const DEFAULT_PORT = 3000;
 
@@ -47,9 +47,14 @@ async function run() {
   const nextArgs = explicitPort ? args : [...args, "--port", String(port)];
   const require = createRequire(import.meta.url);
   const nextBin = require.resolve("next/dist/bin/next");
+  const env = { ...process.env, NEXT_DIST_DIR: devDistDir(port) };
+  if (process.platform === "win32") {
+    const preload = fileURLToPath(new URL("./hide-windows-console.cjs", import.meta.url)).replaceAll("\\", "/");
+    env.NODE_OPTIONS = `${env.NODE_OPTIONS ?? ""} --require "${preload}"`.trim();
+  }
 
   const child = spawn(process.execPath, [nextBin, "dev", "--webpack", ...nextArgs], {
-    env: { ...process.env, NEXT_DIST_DIR: devDistDir(port) },
+    env,
     stdio: "inherit",
     windowsHide: true,
   });
