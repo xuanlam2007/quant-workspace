@@ -1,5 +1,6 @@
 "use client";
 
+import { LayoutSaveLoad } from "./LayoutSaveLoad";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { connectionStatusLabel, type ConnStatus } from "@/lib/dchart-socket";
 import {
@@ -82,6 +83,9 @@ export const HEADER_SVGS = {
 };
 
 export interface ChartHeaderProps {
+  layoutReady: boolean;
+  captureLayout: () => import("./named-layouts").WorkspaceSnapshot;
+  onLoadLayout: (id: string) => void;
   chartStyle: ChartStyle;
   favoriteChartStyles: ChartStyle[];
   onChartStyleChange: (style: ChartStyle) => void;
@@ -121,6 +125,9 @@ export interface ChartHeaderProps {
 }
 
 export function ChartHeader({
+  layoutReady,
+  captureLayout,
+  onLoadLayout,
   chartStyle,
   favoriteChartStyles,
   onChartStyleChange,
@@ -452,6 +459,10 @@ export function ChartHeader({
             <span className="connection-status__label">{statusLabel}</span>
           </span>
 
+          <LayoutSaveLoad symbol={symbol} resolution={resolution} ready={layoutReady} capture={captureLayout} onLoad={onLoadLayout}
+            otherMenuOpen={timeframeMenuOpen || indicatorMenuOpen || isSymbolModalOpen || isCompareModalOpen}
+            onOpen={() => { onTimeframeMenuToggle(false); onIndicatorMenuToggle(false); setSymbolModalOpen(false); onCompareModalToggle?.(false); }}/>
+          <span className="header-divider" />
           {/* Nút Cài đặt */}
           <button
             type="button"
