@@ -54,6 +54,7 @@ import { PriceAxisContextMenu, type PriceAxisMenuAction, type PriceAxisMenuState
 import { PriceAxisScaleButton, type ScaleButtonTarget } from "./chart/layout/PriceAxisScaleButton";
 import { ScrollToLatestButton } from "./chart/layout/ScrollToLatestButton";
 import { ChartHeader } from "./chart/layout/ChartHeader";
+import { activateNamedLayout, captureWorkspace } from "./chart/layout/named-layouts";
 import { ChartStyleRenderer } from "./chart/core/chart-style-renderer";
 import { chartStudyBars, defaultStyleSettings, readChartStylePreferences, saveChartStylePreferences, type ChartStylePreferences } from "./chart/config/chart-styles";
 import { MarketDataPanel, type ComparisonQuote, type SourceLegend } from "./chart/layout/MarketDataPanel";
@@ -233,6 +234,15 @@ function latestVolumeMaPoint(
 }
 
 export default function Chart() {
+  const [generation, setGeneration] = useState(0);
+  const loadLayout = useCallback((id: string) => {
+    activateNamedLayout(id);
+    setGeneration((value) => value + 1);
+  }, []);
+  return <div id="app"><ChartInstance key={generation} onLoadLayout={loadLayout}/></div>;
+}
+
+function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -2102,9 +2112,10 @@ export default function Chart() {
     syncPaneLayout();
   }, [syncPaneLayout, transferSeriesGroup, activeStudies, compareSymbols.length, resolution, symbolInfo?.session, symbolInfo?.timezone, volumeMaVisible, volumeSmoothedMaVisible, volumeAllowed, volumeVisualSettings.histogramVisible, volumeHidden]);
 
-  useSavedLayout<MovableSeries>({
+  const layoutReady = axisSettingsRestored && appearanceRestored && chartStyleRestored && volumeSettingsRestored && indicatorSettingsRestored && referenceStudies.restored && !historyLoading;
+  const flushLayout = useSavedLayout<MovableSeries>({
     chartRef,
-    ready: axisSettingsRestored && appearanceRestored && chartStyleRestored && volumeSettingsRestored && indicatorSettingsRestored && referenceStudies.restored && !historyLoading,
+    ready: layoutReady,
     revision: paneRevision + referenceStudies.revision,
     context: `${symbol}:${resolution}`,
     setRange: setVisiblePriceRange,
@@ -2129,6 +2140,7 @@ export default function Chart() {
 
   useEffect(() => {
     const onFullscreenChange = () => setIsFullscreen(document.fullscreenElement !== null);
+    onFullscreenChange();
     document.addEventListener("fullscreenchange", onFullscreenChange);
     return () => document.removeEventListener("fullscreenchange", onFullscreenChange);
   }, []);
@@ -3304,11 +3316,14 @@ export default function Chart() {
     ? chartRef.current.timeScale().options().barSpacing * (menuRange.to - menuRange.from) / Math.max(1, menuHeight * (1 - menuScaleOptions.scaleMargins.top - menuScaleOptions.scaleMargins.bottom))
     : undefined;
   return (
-    <div id="app">
+    <>
       <DelayedTooltip />
       <OutsideDragSelectionGuard />
       {referenceSettings?.definition && referenceSettings.settings && <ReferenceStudySettingsDialog key={referenceSettings.id} definition={referenceSettings.definition} settings={referenceSettings.settings} onApply={(settings) => referenceStudies.apply(referenceSettings.id, settings)} onClose={() => referenceStudies.setSettingsId(null)}/> }
       <ChartHeader
+        layoutReady={layoutReady}
+        captureLayout={() => { flushLayout(); return captureWorkspace(); }}
+        onLoadLayout={onLoadLayout}
         chartStyle={chartStyle}
         favoriteChartStyles={chartStylePreferences.favorites}
         onChartStyleChange={(style) => setChartStylePreferences((current) => current.style === style ? current : { ...current, style })}
@@ -3724,6 +3739,6 @@ export default function Chart() {
           }}
         />
       )}
-    </div>
+    </>
   );
 }
