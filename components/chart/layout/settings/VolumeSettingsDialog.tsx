@@ -2,8 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { MaType } from "../config/chart-config";
-import { useDraggablePanel } from "../ui/useDraggablePanel";
+import type { MaType } from "../../config/chart-config";
+import { useDraggablePanel } from "../../ui/useDraggablePanel";
 import { ChartColorPicker } from "./ChartColorPicker";
 
 export type VolumePlotStyle = "line" | "dashed" | "step" | "curved";

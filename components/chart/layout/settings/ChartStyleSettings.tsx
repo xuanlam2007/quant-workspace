@@ -1,6 +1,6 @@
 "use client";
 
-import { CHART_STYLES, PRICE_SOURCES, candleStyle, singleValueStyle, type ChartStyle, type ChartStyleSettings as Settings } from "../config/chart-styles";
+import { CHART_STYLES, PRICE_SOURCES, candleStyle, singleValueStyle, type ChartStyle, type ChartStyleSettings as Settings } from "../../config/chart-styles";
 import { ChartColorPicker } from "./ChartColorPicker";
 
 export function ChartStyleSettings({ style, value, onChange }: { style: ChartStyle; value: Settings; onChange: (value: Settings) => void }) {

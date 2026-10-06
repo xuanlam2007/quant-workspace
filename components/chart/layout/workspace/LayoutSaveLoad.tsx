@@ -2,9 +2,9 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { createPortal } from "react-dom";
-import { RESOLUTIONS } from "../config/chart-config";
-import { FAVORITE_ICONS } from "../ui/favorite-icons";
-import { useDraggablePanel } from "../ui/useDraggablePanel";
+import { RESOLUTIONS } from "../../config/chart-config";
+import { FAVORITE_ICONS } from "../../ui/favorite-icons";
+import { useDraggablePanel } from "../../ui/useDraggablePanel";
 import { LAYOUT_ICONS } from "./layout-icons";
 import {
   deleteNamedLayout, layoutStorageError, LAYOUT_LIBRARY_CHANGED, LAYOUT_LIBRARY_KEY,

@@ -2,9 +2,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { ReferenceDefinition, ReferencePlotStyle, ReferenceSettings } from "@/lib/reference-studies";
-import { useDraggablePanel } from "../ui/useDraggablePanel";
+import { useDraggablePanel } from "../../ui/useDraggablePanel";
 import { ChartColorPicker } from "./ChartColorPicker";
-import { PANE_CONTROL_ICONS } from "./pane-control-icons";
+import { PANE_CONTROL_ICONS } from "../panes/pane-control-icons";
 
 interface Props {
   definition: ReferenceDefinition;

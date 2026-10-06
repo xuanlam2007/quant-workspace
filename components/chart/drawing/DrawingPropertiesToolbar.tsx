@@ -9,7 +9,7 @@ import { LineStyle } from "lightweight-charts";
 import type { LineToolExport, LineToolType, TextOptions } from "lightweight-charts-line-tools-core";
 import type { DrawingIcon } from "../config/chart-config";
 import { VNDIRECT_TOOLBAR_ICONS } from "./vndirect-icons";
-import { ChartColorPicker } from "../layout/ChartColorPicker";
+import { ChartColorPicker } from "../layout/settings/ChartColorPicker";
 
 const TOOL_ICONS: Partial<Record<LineToolType, DrawingIcon>> = {
   TrendLine: "trend",

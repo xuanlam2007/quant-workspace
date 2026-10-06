@@ -3,8 +3,8 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { LineStyle, type IChartApi, type ISeriesApi, type Time } from "lightweight-charts";
 import { interpolateLogicalIndexFromTime, interpolateTimeFromLogicalIndex, type LineToolExport, type TextFontOptions } from "lightweight-charts-line-tools-core";
-import { ChartColorPicker } from "../layout/ChartColorPicker";
-import { PANE_CONTROL_ICONS } from "../layout/pane-control-icons";
+import { ChartColorPicker } from "../layout/settings/ChartColorPicker";
+import { PANE_CONTROL_ICONS } from "../layout/panes/pane-control-icons";
 import { useDraggablePanel } from "../ui/useDraggablePanel";
 import { NOTE_INTERVALS, priceNoteSettings, type NoteInterval, type NoteIntervalRange, type PriceNoteOptions, type PriceNoteSettings } from "./price-note-options";
 import { VNDIRECT_TOOLBAR_ICONS } from "./vndirect-icons";

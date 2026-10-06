@@ -2,7 +2,10 @@ import type { UTCTimestamp } from "lightweight-charts";
 
 const HISTORY_URL = "/api/dchart/history";
 const SYMBOL_URL = "/api/dchart/symbols";
-const CACHE_DURATION_MS = 2_000;
+const RECENT_HISTORY_FRESH_MS = 2_000;
+const HISTORY_RETENTION_MS = 15 * 60_000;
+const MAX_HISTORY_ENTRIES = 16;
+const MAX_HISTORY_BARS = 20_000;
 
 export interface Bar {
   time: UTCTimestamp;
@@ -49,7 +52,16 @@ export interface SymbolInfo {
   supportedResolutions: string[];
 }
 
-const historyCache = new Map<string, { expiresAt: number; bars: Bar[] }>();
+interface HistoryCacheEntry {
+  series: string;
+  from: number;
+  to: number;
+  expiresAt: number;
+  fetchedAt: number;
+  bars: Bar[];
+}
+
+const historyCache = new Map<string, HistoryCacheEntry>();
 const unsupportedResolutions = new Set<string>();
 
 class UnsupportedResolutionError extends Error {}
@@ -125,7 +137,7 @@ export function symbolPriceFormat(info: SymbolInfo) {
   return { type: "price" as const, precision, minMove };
 }
 
-async function requestHistory(
+async function fetchHistoryRange(
   symbol: string,
   resolution: string,
   from: number,
@@ -139,9 +151,6 @@ async function requestHistory(
     to: String(to),
   });
   const url = `${HISTORY_URL}?${params}`;
-  const cached = historyCache.get(url);
-  if (cached && cached.expiresAt > Date.now()) return cached.bars;
-  if (cached) historyCache.delete(url);
 
   const response = await fetch(url, { signal });
   if (!response.ok) throw new Error(`history fetch failed: ${response.status}`);
@@ -158,9 +167,7 @@ async function requestHistory(
   }
   if (data.s === "error") throw new Error("history service returned error");
   if (data.s === "no_data") {
-    const bars: Bar[] = [];
-    historyCache.set(url, { expiresAt: Date.now() + CACHE_DURATION_MS, bars });
-    return bars;
+    return [];
   }
   if (data.s !== "ok") throw new Error("history response has invalid status");
   validateHistory(data);
@@ -173,8 +180,71 @@ async function requestHistory(
     close: data.c[index],
     volume: data.v[index],
   }));
-  historyCache.set(url, { expiresAt: Date.now() + CACHE_DURATION_MS, bars });
   return bars;
+}
+
+async function requestHistory(
+  symbol: string,
+  resolution: string,
+  from: number,
+  to: number,
+  signal?: AbortSignal,
+): Promise<Bar[]> {
+  signal?.throwIfAborted();
+  const now = Date.now();
+  const series = JSON.stringify([symbol, resolution]);
+  let cached: HistoryCacheEntry | undefined;
+  let cachedKey: string | undefined;
+  for (const [key, entry] of historyCache) {
+    if (entry.expiresAt <= now) {
+      historyCache.delete(key);
+    } else if (entry.series === series && entry.from <= from && entry.to >= from
+      && (!cached || entry.to > cached.to)) {
+      cached = entry;
+      cachedKey = key;
+    }
+  }
+
+  const copyRange = (bars: Bar[]) => bars
+    .filter((bar) => Number(bar.time) >= from && Number(bar.time) <= to)
+    .map((bar) => ({ ...bar }));
+  const refreshBoundary = cached?.bars.at(-2)?.time;
+  if (cached && to <= cached.to && (
+    now - cached.fetchedAt < RECENT_HISTORY_FRESH_MS
+    || (refreshBoundary !== undefined && to < Number(refreshBoundary))
+  )) {
+    historyCache.delete(cachedKey!);
+    historyCache.set(cachedKey!, cached);
+    return copyRange(cached.bars);
+  }
+
+  // Nạp lại hai nến cuối và khoảng thiếu để cập nhật dữ liệu khi quay lại biểu đồ.
+  const requestFrom = cached && refreshBoundary !== undefined
+    ? Math.max(from, Math.min(Number(refreshBoundary), cached.to, to))
+    : from;
+  const incoming = await fetchHistoryRange(symbol, resolution, requestFrom, to, signal);
+  signal?.throwIfAborted();
+  const bars = mergeBars(incoming, cached?.bars.filter((bar) => (
+    Number(bar.time) < requestFrom
+  )) ?? []).filter((bar) => Number(bar.time) <= to);
+  const retained = bars.slice(-MAX_HISTORY_BARS).map((bar) => ({ ...bar }));
+  const retainedFrom = bars.length > MAX_HISTORY_BARS
+    ? Number(retained[0].time)
+    : cached?.from ?? from;
+  const key = JSON.stringify([symbol, resolution, retainedFrom]);
+  historyCache.delete(key);
+  historyCache.set(key, {
+    series,
+    from: retainedFrom,
+    to,
+    expiresAt: requestFrom > from && cached ? cached.expiresAt : now + HISTORY_RETENTION_MS,
+    fetchedAt: Date.now(),
+    bars: retained,
+  });
+  while (historyCache.size > MAX_HISTORY_ENTRIES) {
+    historyCache.delete(historyCache.keys().next().value!);
+  }
+  return copyRange(bars);
 }
 
 export async function fetchHistory(

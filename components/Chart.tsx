@@ -45,22 +45,22 @@ import {
   selectedZoomRange,
   type WheelState,
 } from "./chart/core/chart-zoom";
-import { PaneControls } from "./chart/layout/PaneControls";
-import type { PanePresentation } from "./chart/layout/pane-presentation";
-import { ChangeIntervalDialog } from "./chart/layout/ChangeIntervalDialog";
-import { GoToDateDialog } from "./chart/layout/GoToDateDialog";
-import { ChartFooter } from "./chart/layout/ChartFooter";
-import { PriceAxisContextMenu, type PriceAxisMenuAction, type PriceAxisMenuState } from "./chart/layout/PriceAxisContextMenu";
-import { PriceAxisScaleButton, type ScaleButtonTarget } from "./chart/layout/PriceAxisScaleButton";
-import { ScrollToLatestButton } from "./chart/layout/ScrollToLatestButton";
+import { PaneControls } from "./chart/layout/panes/PaneControls";
+import type { PanePresentation } from "./chart/layout/panes/pane-presentation";
+import { ChangeIntervalDialog } from "./chart/layout/navigation/ChangeIntervalDialog";
+import { GoToDateDialog } from "./chart/layout/navigation/GoToDateDialog";
+import { ChartFooter } from "./chart/layout/navigation/ChartFooter";
+import { PriceAxisContextMenu, type PriceAxisMenuAction, type PriceAxisMenuState } from "./chart/layout/panes/PriceAxisContextMenu";
+import { PriceAxisScaleButton, type ScaleButtonTarget } from "./chart/layout/panes/PriceAxisScaleButton";
+import { ScrollToLatestButton } from "./chart/layout/navigation/ScrollToLatestButton";
 import { AppHeader } from "./AppHeader";
-import { ChartHeader } from "./chart/layout/ChartHeader";
-import { activateNamedLayout, captureWorkspace } from "./chart/layout/named-layouts";
+import { ChartHeader } from "./chart/layout/navigation/ChartHeader";
+import { activateNamedLayout, captureWorkspace } from "./chart/layout/workspace/named-layouts";
 import { ChartStyleRenderer } from "./chart/core/chart-style-renderer";
 import { chartStudyBars, defaultStyleSettings, readChartStylePreferences, saveChartStylePreferences, type ChartStylePreferences } from "./chart/config/chart-styles";
-import { MarketDataPanel, type ComparisonQuote, type SourceLegend } from "./chart/layout/MarketDataPanel";
-import type { VolumeSettings } from "./chart/layout/VolumeSettingsDialog";
-import { ChartSettingsDialog, DEFAULT_CHART_APPEARANCE, type ChartAppearance } from "./chart/layout/ChartSettingsDialog";
+import { MarketDataPanel, type ComparisonQuote, type SourceLegend } from "./chart/layout/symbols/MarketDataPanel";
+import type { VolumeSettings } from "./chart/layout/settings/VolumeSettingsDialog";
+import { ChartSettingsDialog, DEFAULT_CHART_APPEARANCE, type ChartAppearance } from "./chart/layout/settings/ChartSettingsDialog";
 import { DrawingToolbar } from "./chart/drawing/DrawingToolbar";
 import { DrawingPropertiesToolbar } from "./chart/drawing/DrawingPropertiesToolbar";
 import { DrawingAxisRangeHighlight } from "./chart/drawing/DrawingAxisRangeHighlight";
@@ -104,11 +104,11 @@ import {
   rangeForResolution,
 } from "./chart/core/chart-utils";
 import { useReferenceStudies, type ReferenceSeries } from "./chart/indicators/useReferenceStudies";
-import { ReferenceStudySettingsDialog } from "./chart/layout/ReferenceStudySettingsDialog";
+import { ReferenceStudySettingsDialog } from "./chart/layout/settings/ReferenceStudySettingsDialog";
 import { formatVolume } from "./chart/core/chart-utils";
 import { useIndicatorSettings } from "./chart/indicators/useIndicatorSettings";
 import { useSavedState } from "./chart/config/saved-state";
-import { useSavedLayout } from "./chart/layout/useSavedLayout";
+import { useSavedLayout } from "./chart/layout/workspace/useSavedLayout";
 import { DelayedTooltip } from "./chart/ui/DelayedTooltip";
 import { OutsideDragSelectionGuard } from "./chart/ui/OutsideDragSelectionGuard";
 import { readAxisSettings, writeAxisSettings, readManualAxisRange, writeManualAxisRange } from "./chart/config/axis-settings";

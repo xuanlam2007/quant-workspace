@@ -1,19 +1,19 @@
 "use client";
 
-import { LayoutSaveLoad } from "./LayoutSaveLoad";
+import { LayoutSaveLoad } from "../workspace/LayoutSaveLoad";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   RESOLUTIONS,
   BUNDLED_STUDY_NAMES,
   TIMEFRAME_GROUPS,
   type StudyId,
-} from "../config/chart-config";
-import { SymbolSearchModal } from "./SymbolSearchModal";
-import { CompareSymbolModal } from "./CompareSymbolModal";
-import { useDraggablePanel } from "../ui/useDraggablePanel";
-import { PANE_CONTROL_ICONS } from "./pane-control-icons";
+} from "../../config/chart-config";
+import { SymbolSearchModal } from "../symbols/SymbolSearchModal";
+import { CompareSymbolModal } from "../symbols/CompareSymbolModal";
+import { useDraggablePanel } from "../../ui/useDraggablePanel";
+import { PANE_CONTROL_ICONS } from "../panes/pane-control-icons";
 import { ChartTypeMenu } from "./ChartTypeMenu";
-import type { ChartStyle } from "../config/chart-styles";
+import type { ChartStyle } from "../../config/chart-styles";
 
 export const HEADER_SVGS = {
   search: (
@@ -83,7 +83,7 @@ export const HEADER_SVGS = {
 
 export interface ChartHeaderProps {
   layoutReady: boolean;
-  captureLayout: () => import("./named-layouts").WorkspaceSnapshot;
+  captureLayout: () => import("../workspace/named-layouts").WorkspaceSnapshot;
   onLoadLayout: (id: string) => void;
   chartStyle: ChartStyle;
   favoriteChartStyles: ChartStyle[];

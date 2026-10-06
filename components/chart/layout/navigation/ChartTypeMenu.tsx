@@ -2,9 +2,9 @@
 
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { CHART_STYLES, type ChartStyle } from "../config/chart-styles";
-import { CHART_STYLE_ICONS } from "../config/chart-style-icons";
-import { FAVORITE_ICONS } from "../ui/favorite-icons";
+import { CHART_STYLES, type ChartStyle } from "../../config/chart-styles";
+import { CHART_STYLE_ICONS } from "../../config/chart-style-icons";
+import { FAVORITE_ICONS } from "../../ui/favorite-icons";
 
 
 interface Props {

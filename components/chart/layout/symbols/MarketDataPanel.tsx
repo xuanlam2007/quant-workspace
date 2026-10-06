@@ -3,12 +3,12 @@
 import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { createPortal } from "react-dom";
 import type { Bar, SymbolInfo } from "@/lib/dchart-api";
-import { RESOLUTIONS, type MaType } from "../config/chart-config";
-import { formatVolume } from "../core/chart-utils";
-import type { ChartAppearance } from "./ChartSettingsDialog";
-import { HEADER_SVGS } from "./ChartHeader";
-import { VolumeSettingsDialog, type VolumeSettings } from "./VolumeSettingsDialog";
-import { singleValueStyle, sourceValue, type ChartStyle, type ChartStyleSettings } from "../config/chart-styles";
+import { RESOLUTIONS, type MaType } from "../../config/chart-config";
+import { formatVolume } from "../../core/chart-utils";
+import type { ChartAppearance } from "../settings/ChartSettingsDialog";
+import { HEADER_SVGS } from "../navigation/ChartHeader";
+import { VolumeSettingsDialog, type VolumeSettings } from "../settings/VolumeSettingsDialog";
+import { singleValueStyle, sourceValue, type ChartStyle, type ChartStyleSettings } from "../../config/chart-styles";
 
 const legendIcons = {
   eye: <svg viewBox="0 0 24 22" width="24" height="22" fill="none" aria-hidden="true"><path fill="currentColor" fillRule="evenodd" d="M17.9948 7.91366C16.6965 6.48549 14.6975 5 11.9999 5C9.30225 5 7.30322 6.48549 6.00488 7.91366C6.00488 7.91366 4 10 4 11C4 12 6.00488 14.0863 6.00488 14.0863C7.30322 15.5145 9.30225 17 11.9999 17C14.6975 17 16.6965 15.5145 17.9948 14.0863C17.9948 14.0863 20 12 20 11C20 10 17.9948 7.91366 17.9948 7.91366ZM6.74482 13.4137C7.94648 14.7355 9.69746 16 11.9999 16C14.3022 16 16.0532 14.7355 17.2549 13.4137C17.2549 13.4137 19 11.5 19 11C19 10.5 17.2549 8.58634 17.2549 8.58634C16.0532 7.26451 14.3022 6 11.9999 6C9.69746 6 7.94648 7.26451 6.74482 8.58634C6.74482 8.58634 5 10.5 5 11C5 11.5 6.74482 13.4137 6.74482 13.4137Z"/><path fill="currentColor" fillRule="evenodd" d="M12 13C13.1046 13 14 12.1046 14 11C14 9.89543 13.1046 9 12 9C10.8954 9 10 9.89543 10 11C10 12.1046 10.8954 13 12 13ZM12 14C13.6569 14 15 12.6569 15 11C15 9.34315 13.6569 8 12 8C10.3431 8 9 9.34315 9 11C9 12.6569 10.3431 14 12 14Z"/></svg>,

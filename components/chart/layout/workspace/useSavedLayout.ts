@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, type RefObject } from "react";
 import type { IChartApi, IPriceScaleApi } from "lightweight-charts";
-import { paneController, type Pane, type SavedPanePresentation } from "./pane-presentation";
-import { readSaved, writeSaved } from "../config/saved-state";
+import { paneController, type Pane, type SavedPanePresentation } from "../panes/pane-presentation";
+import { readSaved, writeSaved } from "../../config/saved-state";
 import { WORKSPACE_CHANGED } from "./named-layouts";
 
 interface SourceState { id: string; pane: number; side: string; visible: boolean; order: number }

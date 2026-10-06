@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { sortedTimezoneOptions } from "./chart/config/chart-timezones";
-import { PRICE_AXIS_ICONS } from "./chart/layout/price-axis-icons";
+import { PRICE_AXIS_ICONS } from "./chart/layout/panes/price-axis-icons";
 import { formatTimeInTimezone, getTimezoneOffsetString, millisecondsUntilNextSecond } from "./chart/core/chart-utils";
 
 export function WorkspaceClock({ timezone = "Asia/Bangkok", exchangeTimezone = "Asia/Bangkok", onTimezoneChange }: { timezone?: string; exchangeTimezone?: string; onTimezoneChange?: (timezone: string) => void }) {

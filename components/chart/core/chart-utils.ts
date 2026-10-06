@@ -64,15 +64,21 @@ export function isTradingSessionTime(
 }
 
 export function formatVolume(value: number) {
-  if (!Number.isFinite(value)) return "N/A";
+  if (!Number.isFinite(value)) return "---";
   const sign = value < 0 ? "−" : "";
-  const absolute = Math.round(Math.abs(value));
-  if (absolute < 995) return `${sign}${absolute}`;
-  const [divisor, suffix] = absolute < 999_995 ? [1_000, "K"] as const
-    : absolute < 999_999_995 ? [1_000_000, "M"] as const
-      : absolute < 999_999_999_995 ? [1_000_000_000, "B"] as const
-        : [1_000_000_000_000, "T"] as const;
-  return `${sign}${Number((absolute / divisor).toFixed(3))}${suffix}`;
+  const absolute = Math.abs(value);
+  if (absolute >= 1e100) return "N/A";
+  const rounded = Math.round(absolute);
+  if (rounded < 995) return `${sign}${rounded}`;
+  if (rounded < 999_995) return `${sign}${rounded / 1_000}K`;
+  // Giữ thứ tự làm tròn trước khi đổi đơn vị theo VolumeFormatter của VNDIRECT.
+  if (rounded < 999_999_995) {
+    return `${sign}${1_000 * Math.round(rounded / 1_000) / 1_000_000}M`;
+  }
+  if (rounded < 999_999_999_995) {
+    return `${sign}${1_000_000 * Math.round(rounded / 1_000_000) / 1_000_000_000}B`;
+  }
+  return `${sign}${1_000_000_000 * Math.round(rounded / 1_000_000_000) / 1_000_000_000_000}T`;
 }
 
 export function formatChartTime(time: unknown, timezone = "Asia/Bangkok") {

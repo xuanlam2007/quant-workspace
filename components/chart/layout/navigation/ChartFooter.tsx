@@ -1,5 +1,5 @@
 import { GO_TO_DATE_ICON } from "./GoToDateDialog";
-import { RANGE_PRESETS, type RangePreset, type ScaleMode } from "../config/chart-config";
+import { RANGE_PRESETS, type RangePreset, type ScaleMode } from "../../config/chart-config";
 
 interface ChartFooterProps {
   rangeDays?: number;

@@ -1,12 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { ScaleMode } from "../config/chart-config";
+import type { ScaleMode } from "../../config/chart-config";
 import { ChartColorPicker } from "./ChartColorPicker";
-import { useDraggablePanel } from "../ui/useDraggablePanel";
-import { PANE_CONTROL_ICONS } from "./pane-control-icons";
+import { useDraggablePanel } from "../../ui/useDraggablePanel";
+import { PANE_CONTROL_ICONS } from "../panes/pane-control-icons";
 import { ChartStyleSettings } from "./ChartStyleSettings";
-import type { ChartStyle, ChartStyleSettings as StyleSettings } from "../config/chart-styles";
+import type { ChartStyle, ChartStyleSettings as StyleSettings } from "../../config/chart-styles";
 
 export interface ChartAppearance {
   upColor: string;

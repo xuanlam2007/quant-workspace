@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { LineStyle } from "lightweight-charts";
 import type { TextOptions } from "lightweight-charts-line-tools-core";
-import { ChartColorPicker } from "../layout/ChartColorPicker";
+import { ChartColorPicker } from "../layout/settings/ChartColorPicker";
 import { useDraggablePanel } from "../ui/useDraggablePanel";
 
 interface TextToolDialogProps {
