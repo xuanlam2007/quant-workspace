@@ -2,13 +2,13 @@
 
 The UI is a React workspace in the existing Next.js app at `/auditor`. FastAPI retains desktop capture, strategy auditing, storage, trade pairing, reports, and AGY CLI analysis.
 
-From the repository root, start both services with:
+From the repository root, start the app with:
 
 ```powershell
 npm run dev
 ```
 
-The development launcher starts Python in the background, without opening another window. Engine Python changes reload the backend automatically. Stopping the launcher stops the engine it started. An existing process on port 8765 is left untouched; stop an older manually started engine once to let the launcher take over. Set `AUDITOR_PYTHON` to a Python executable if needed, or `AUDITOR_AUTOSTART=0` to opt out. Missing dependencies and startup failures appear in the development terminal.
+Python starts in the background only when you first open `/auditor`. Opening the chart or running `npm run dev` alone does not launch it. Later visits reuse the engine, which stays running when navigating away. Engine Python changes reload automatically. An existing healthy engine is reused. Set `AUDITOR_PYTHON` to select an interpreter or `AUDITOR_AUTOSTART=0` for manual startup. Startup failures appear in the header with a retry action and details in the development terminal. Header health checks do not create sessions or start recording.
 
 For standalone use, run `python tools/quant-strategy-auditor/run.py --watch`. The watcher only monitors Python source, not saved screenshots or session files. Failed code reloads wait for the next source edit rather than repeatedly restarting.
 

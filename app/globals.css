@@ -1,4 +1,5 @@
 :root {
+  --app-header-height: 44px;
   --bg: #10131a;
   --panel: #161a23;
   --border: #262b38;
@@ -5847,6 +5848,10 @@ html input[type="checkbox"]:focus-visible {
   scrollbar-width: thin;
 }
 
+@media (max-width: 900px) {
+  :root { --app-header-height: 84px; }
+}
+
 .favorite-drawing-toolbar__slot {
   flex: 0 0 38px;
   width: 38px;
@@ -6141,3 +6146,8 @@ html input[type="checkbox"]:focus-visible {
   .layout-save__name { max-width: 75px; }
 }
 @media (prefers-reduced-motion: reduce) { .layout-spinner { animation: none; } }
+
+@media (max-width: 600px) {
+  :root { --app-header-height: 116px; }
+}
+

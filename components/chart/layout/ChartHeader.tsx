@@ -2,7 +2,6 @@
 
 import { LayoutSaveLoad } from "./LayoutSaveLoad";
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { connectionStatusLabel, type ConnStatus } from "@/lib/dchart-socket";
 import {
   RESOLUTIONS,
   BUNDLED_STUDY_NAMES,
@@ -100,7 +99,6 @@ export interface ChartHeaderProps {
   activeStudies: StudyId[];
   maDescription: string;
   isFullscreen: boolean;
-  connectionStatus: ConnStatus;
   canUndo?: boolean;
   canRedo?: boolean;
   isSymbolModalOpen?: boolean;
@@ -142,7 +140,6 @@ export function ChartHeader({
   activeStudies,
   maDescription,
   isFullscreen,
-  connectionStatus,
   canUndo = false,
   canRedo = false,
   isSymbolModalOpen: controlledSymbolModalOpen,
@@ -252,7 +249,6 @@ export function ChartHeader({
 
   const currentResolutionLabel =
     RESOLUTIONS.find((item) => item.value === resolution)?.label ?? "1D";
-  const statusLabel = connectionStatusLabel(connectionStatus);
 
   return (
     <>
@@ -448,16 +444,6 @@ export function ChartHeader({
 
         <div className="chart-header__group chart-header__group--right">
           <span className="header-divider" />
-
-          <span
-            className={`connection-status connection-status--${connectionStatus}`}
-            role="status"
-            aria-live="polite"
-            title={statusLabel}
-          >
-            <span className="connection-status__dot" aria-hidden="true" />
-            <span className="connection-status__label">{statusLabel}</span>
-          </span>
 
           <LayoutSaveLoad symbol={symbol} resolution={resolution} ready={layoutReady} capture={captureLayout} onLoad={onLoadLayout}
             otherMenuOpen={timeframeMenuOpen || indicatorMenuOpen || isSymbolModalOpen || isCompareModalOpen}

@@ -40,6 +40,7 @@ let socket: SocketClient | undefined;
 let status: ConnStatus = "disconnected";
 let nextSubscriberId = 1;
 const subscribers = new Map<number, Subscriber>();
+const statusListeners = new Set<(status: ConnStatus) => void>();
 const symbolSubscribers = new Map<string, number>();
 
 export function normalizePriceTick(data: RawPriceTick): PriceTick | undefined {
@@ -56,7 +57,18 @@ export function normalizePriceTick(data: RawPriceTick): PriceTick | undefined {
 
 function updateStatus(nextStatus: ConnStatus) {
   status = nextStatus;
+  statusListeners.forEach((listener) => listener(nextStatus));
   subscribers.forEach((subscriber) => subscriber.onStatus(nextStatus));
+}
+
+export const getConnectionStatus = () => status;
+export const getServerConnectionStatus = (): ConnStatus => "disconnected";
+
+export function subscribeConnectionStatus(listener: (status: ConnStatus) => void) {
+  statusListeners.add(listener);
+  ensureSocket();
+  listener(status);
+  return () => { statusListeners.delete(listener); };
 }
 
 function subscribeSymbol(symbol: string) {

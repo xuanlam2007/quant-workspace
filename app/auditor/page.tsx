@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import AuditorWorkspace from "../../components/auditor/AuditorWorkspace";
+import { AppHeader } from "../../components/AppHeader";
 
 export const metadata: Metadata = {
   title: "Quant Strategy Auditor",
@@ -7,5 +8,5 @@ export const metadata: Metadata = {
 };
 
 export default function AuditorPage() {
-  return <AuditorWorkspace />;
+  return <><AppHeader /><AuditorWorkspace /></>;
 }

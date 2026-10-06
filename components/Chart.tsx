@@ -53,6 +53,7 @@ import { ChartFooter } from "./chart/layout/ChartFooter";
 import { PriceAxisContextMenu, type PriceAxisMenuAction, type PriceAxisMenuState } from "./chart/layout/PriceAxisContextMenu";
 import { PriceAxisScaleButton, type ScaleButtonTarget } from "./chart/layout/PriceAxisScaleButton";
 import { ScrollToLatestButton } from "./chart/layout/ScrollToLatestButton";
+import { AppHeader } from "./AppHeader";
 import { ChartHeader } from "./chart/layout/ChartHeader";
 import { activateNamedLayout, captureWorkspace } from "./chart/layout/named-layouts";
 import { ChartStyleRenderer } from "./chart/core/chart-style-renderer";
@@ -3320,6 +3321,7 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
       <DelayedTooltip />
       <OutsideDragSelectionGuard />
       {referenceSettings?.definition && referenceSettings.settings && <ReferenceStudySettingsDialog key={referenceSettings.id} definition={referenceSettings.definition} settings={referenceSettings.settings} onApply={(settings) => referenceStudies.apply(referenceSettings.id, settings)} onClose={() => referenceStudies.setSettingsId(null)}/> }
+      <AppHeader connectionStatus={status} timezone={chartTimezone} exchangeTimezone={symbolInfo?.timezone} onTimezoneChange={handleTimezoneChange} />
       <ChartHeader
         layoutReady={layoutReady}
         captureLayout={() => { flushLayout(); return captureWorkspace(); }}
@@ -3338,7 +3340,6 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
         activeStudies={activeStudies}
         maDescription={`${maLength} ${maType} ${smoothingLength}`}
         isFullscreen={isFullscreen}
-        connectionStatus={status}
         canUndo={canUndo}
         canRedo={canRedo}
         isSymbolModalOpen={isSymbolModalOpen}
@@ -3610,8 +3611,6 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
             rangeDays={rangeDays}
             scaleMode={footerScaleMode}
             autoScale={footerAutoScale}
-            timezone={chartTimezone}
-            exchangeTimezone={symbolInfo?.timezone}
             onRangeChange={applyRangePreset}
             onGoToDate={() => setGoToDateOpen(true)}
             onScaleModeChange={(mode) => {
@@ -3633,7 +3632,6 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
                 setFooterAxis({ ...footerTarget });
               }
             }}
-            onTimezoneChange={handleTimezoneChange}
           />
         </div>
       </div>
