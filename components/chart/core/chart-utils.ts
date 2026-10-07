@@ -49,7 +49,7 @@ export function isTradingSessionTime(
   session = "0900-1500",
   timezone = "Asia/Bangkok",
 ) {
-  if (["D", "W", "M"].includes(resolution)) return true;
+  if (["D", "W", "M"].includes(resolution) || session === "24x7") return true;
 
   let formatter = tradingTimeFormatters.get(timezone);
   if (!formatter) {
@@ -69,7 +69,6 @@ export function isTradingSessionTime(
   const hour = Number(parts.find((part) => part.type === "hour")?.value ?? 0);
   const minute = Number(parts.find((part) => part.type === "minute")?.value ?? 0);
   const minutes = hour * 60 + minute;
-  if (session === "24x7") return true;
 
   const ranges = session.split(",").flatMap((range) => {
     const match = /^(\d{2})(\d{2})-(\d{2})(\d{2})$/.exec(range.trim());

@@ -9,6 +9,7 @@ from html import escape
 from uuid import uuid4
 from datetime import datetime
 from typing import Dict, Any, List, Optional
+from .strategy_backend import StrategyConflictAuditor
 
 class TradePairManager:
     # Quản lý khớp cặp hợp đồng và tính điểm sau phí theo quy ước P_đỏ - P_xanh - 0.45 * N
@@ -106,19 +107,6 @@ class TradePairManager:
             "open_shorts_count": sum(item["contracts"] for item in self.open_shorts),
             "pairs": self.closed_pairs
         }
-
-
-class StrategyConflictAuditor:
-    def __init__(self, guardrails, enabled=True):
-        self.guardrails = guardrails
-        self.enabled = enabled
-        self.trade_count = 0
-
-    def reset(self):
-        self.trade_count = 0
-
-    def audit(self, event_type, action=None, price=None, current_dt=None):
-        return []
 
 
 class SessionLogger:

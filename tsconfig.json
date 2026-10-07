@@ -46,6 +46,7 @@
     ".next-dev-3002/dev/types/**/*.ts"
   ],
   "exclude": [
-    "node_modules"
+    "node_modules",
+    "private"
   ]
 }

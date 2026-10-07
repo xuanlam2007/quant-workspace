@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-
-const UPSTREAM_URL = "https://api.example.com/history";
+import { marketDataConfig } from "@/lib/market-data-config";
+import { sampleHistory } from "@/lib/sample-market-data";
 const SYMBOL_PATTERN = /^[A-Z0-9._-]{1,32}$/;
 const RESOLUTIONS = new Set(["1", "5", "15", "30", "60", "D", "W", "M"]);
 const MAX_RANGE_SECONDS = 20 * 366 * 86400;
@@ -20,6 +20,13 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "invalid history request" }, { status: 400 });
   }
 
+  let config;
+  try { config = marketDataConfig(); } catch {
+    return NextResponse.json({ error: "invalid market data configuration" }, { status: 503 });
+  }
+  if (config.mode === "sample") {
+    return NextResponse.json(sampleHistory(symbol, resolution, from, to), { headers: { "Cache-Control": "no-store" } });
+  }
   const params = new URLSearchParams({
     resolution,
     symbol,
@@ -27,7 +34,7 @@ export async function GET(request: NextRequest) {
     to: String(to),
   });
   try {
-    const upstream = await fetch(`${UPSTREAM_URL}?${params}`, { cache: "no-store" });
+    const upstream = await fetch(`${config.apiUrl}/history?${params}`, { cache: "no-store", signal: request.signal });
     const body = await upstream.text();
     return new NextResponse(body, {
       status: upstream.status,

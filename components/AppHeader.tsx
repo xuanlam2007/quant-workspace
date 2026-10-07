@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useLayoutEffect, useRef, useSyncExternalStore } from "react";
-import { connectionStatusLabel, getConnectionStatus, getServerConnectionStatus, subscribeConnectionStatus, type ConnStatus } from "@/lib/dchart-socket";
+import { connectionStatusLabel, getConnectionStatus, getServerConnectionStatus, subscribeConnectionStatus, getPriceFeedName, getServerPriceFeedName, subscribePriceFeedName, type ConnStatus } from "@/lib/dchart-socket";
 import { activateAuditor, getAuditorStatus, getServerAuditorStatus, subscribeAuditorStatus } from "@/lib/auditor-status";
 import { useSavedState } from "./chart/config/saved-state";
 import { WorkspaceClock } from "./WorkspaceClock";
@@ -49,6 +49,7 @@ export function AppHeader({ timezone, exchangeTimezone, onTimezoneChange }: {
   const navRef = useRef<HTMLElement>(null);
   const indicatorRef = useRef<HTMLSpanElement>(null);
   const status = useSyncExternalStore(subscribeConnectionStatus, getConnectionStatus, getServerConnectionStatus);
+  const providerName = useSyncExternalStore(subscribePriceFeedName, getPriceFeedName, getServerPriceFeedName);
   const engine = useSyncExternalStore(subscribeAuditorStatus, getAuditorStatus, getServerAuditorStatus);
   const engineStatus = engine.status;
   const engineError = engine.error;
@@ -115,7 +116,7 @@ export function AppHeader({ timezone, exchangeTimezone, onTimezoneChange }: {
         {onTimezoneChange ? <WorkspaceClock timezone={timezone} exchangeTimezone={exchangeTimezone} onTimezoneChange={onTimezoneChange} /> : <SavedClock />}
       </div>
       <div className={styles.services}>
-        <ServiceStatus name="VNDIRECT" status={status} title={connectionStatusLabel(status)} />
+        <ServiceStatus name={providerName} status={status} title={connectionStatusLabel(status, providerName)} />
         <ServiceStatus name="Auditor engine" status={engineStatus} title={engineError || "Quant Strategy Auditor engine"} />
       </div>
     </div>

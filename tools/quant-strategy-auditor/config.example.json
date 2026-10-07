@@ -1,0 +1,21 @@
+{
+  "mode": "DESKTOP",
+  "target_window_title": "",
+  "strategy_mode": false,
+  "strategy_configured": false,
+  "strategy_notes": "",
+  "terminal_type": "WINDOWS",
+  "hotkeys": {
+    "reject_setup": "<ctrl>+<alt>+s",
+    "manual_snapshot": "<ctrl>+<alt>+c",
+    "end_session": "<ctrl>+<alt>+q"
+  },
+  "strategy_guardrails": {
+    "fee_per_closed_pair": 0.45
+  },
+  "storage": {
+    "sessions_dir": "sessions",
+    "export_html_report": true
+  },
+  "auto_start_recording": false
+}

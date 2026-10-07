@@ -188,7 +188,7 @@ class RecordingControlTests(unittest.TestCase):
 
     def test_legacy_defaults_are_not_treated_as_user_strategy(self):
         config_path = self.root / "config.json"
-        config_path.write_text(json.dumps({"strategy_mode": True, "strategy_guardrails": {"session_start_time": "09:15:00", "session_cutoff_time": "10:00:00", "optimal_window_seconds_before": 5, "optimal_window_seconds_after": 3, "max_trades_per_day": 10, "fee_per_closed_pair": 0.75}}), encoding="utf-8")
+        config_path.write_text(json.dumps({"strategy_mode": True, "strategy_guardrails": {"session_start_time": "08:00:00", "session_cutoff_time": "16:00:00", "optimal_window_seconds_before": 2, "optimal_window_seconds_after": 1, "max_trades_per_day": 4, "fee_per_closed_pair": 0.75}}), encoding="utf-8")
         self.app = create_app(str(config_path))
         self.assertFalse(self.status()["strategy_mode"])
         self.assertEqual(self.status()["config"]["strategy_guardrails"], {"fee_per_closed_pair": 0.75})
