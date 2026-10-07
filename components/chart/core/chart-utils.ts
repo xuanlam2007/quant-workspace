@@ -22,6 +22,27 @@ export function comparisonSeriesPoints(bars: Bar[]) {
   return bars.map((bar) => ({ time: bar.time, value: bar.close }));
 }
 
+type ComparisonPoint = { time: Bar["time"]; value: number };
+
+export function comparisonValueAt(points: readonly ComparisonPoint[], time: Bar["time"]) {
+  let from = 0, to = points.length;
+  while (from < to) {
+    const middle = (from + to) >>> 1;
+    if (points[middle].time <= time) from = middle + 1;
+    else to = middle;
+  }
+  return from > 0 ? points[from - 1].value : undefined;
+}
+
+export function alignComparisonPoints(points: readonly ComparisonPoint[], mainTimes: readonly Bar["time"][]) {
+  let index = 0;
+  // Compare.adopt(..., 0) dùng giá gần nhất trước hoặc tại thời gian của mã chính.
+  return mainTimes.map((time) => {
+    while (index < points.length && points[index].time <= time) index++;
+    return index > 0 ? { time, value: points[index - 1].value } : { time };
+  });
+}
+
 export function isTradingSessionTime(
   time: Bar["time"],
   resolution: string,

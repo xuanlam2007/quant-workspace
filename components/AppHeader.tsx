@@ -32,7 +32,7 @@ function ServiceStatus({ name, status, title }: { name: string; status: ConnStat
     return () => animation?.cancel();
   }, [status]);
   const label = status === "idle" ? "Not started" : status === "connected" ? "Connected" : status === "reconnecting" ? "Connecting" : "Offline";
-  return <div className={`${styles.connection} ${styles[status]}`} role="status" aria-live="polite" aria-atomic="true" title={title}>
+  return <div className={`${styles.connection} ${styles[status]}`} role="status" aria-label={`${name}: ${label}`} aria-live="polite" aria-atomic="true" title={title}>
     <span className={styles.dot} aria-hidden="true" />
     <span className={styles.source}>{name}</span>
     <span className={styles.statusWindow}><span ref={text} className={styles.statusReveal} style={{ animation: "none" }}>{label}</span></span>
@@ -116,7 +116,7 @@ export function AppHeader({ timezone, exchangeTimezone, onTimezoneChange }: {
       </div>
       <div className={styles.services}>
         <ServiceStatus name="VNDIRECT" status={status} title={connectionStatusLabel(status)} />
-        <ServiceStatus name="Auditor" status={engineStatus} title={engineError || "Quant Strategy Auditor engine"} />
+        <ServiceStatus name="Auditor engine" status={engineStatus} title={engineError || "Quant Strategy Auditor engine"} />
       </div>
     </div>
     {engineError && pathname === "/auditor" && <p className={styles.engineError} role="alert">{engineError} <button type="button" tabIndex={-1} onClick={() => activateAuditor(true)}>Retry</button></p>}

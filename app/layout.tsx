@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import "./auditor/auditor.module.css";
+import { WorkspaceTabs } from "@/components/WorkspaceTabs";
 
 export const metadata: Metadata = {
   title: "VN30 · live chart",
@@ -8,7 +10,10 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body suppressHydrationWarning>{children}</body>
+      <body suppressHydrationWarning>
+        <WorkspaceTabs />
+        {children}
+      </body>
     </html>
   );
 }

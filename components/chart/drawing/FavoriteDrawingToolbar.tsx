@@ -33,6 +33,7 @@ interface Props {
 }
 
 export function FavoriteDrawingToolbar({ ids, visible, locked, activeId, onSelect, onReorder, onHide }: Props) {
+  const anchor = useRef<HTMLSpanElement>(null);
   const root = useRef<HTMLDivElement>(null);
   const menu = useRef<HTMLDivElement>(null);
   const gesture = useRef<Gesture | null>(null);
@@ -60,15 +61,37 @@ export function FavoriteDrawingToolbar({ ids, visible, locked, activeId, onSelec
   const [moving, setMoving] = useState(false);
   const [context, setContext] = useState<Position | null>(null);
 
-  const clamp = (next: Position): Position => ({
-    left: Math.max(0, Math.min(next.left, window.innerWidth - (root.current?.offsetWidth ?? 62))),
-    top: Math.max(0, Math.min(next.top, window.innerHeight - (root.current?.offsetHeight ?? 38))),
-  });
+  const bounds = () => {
+    const shell = anchor.current?.closest("#app")?.querySelector<HTMLElement>(".chart-shell");
+    const rect = shell?.getBoundingClientRect();
+    return {
+      left: Math.max(0, rect?.left ?? 0),
+      top: Math.max(0, rect?.top ?? 0),
+      right: Math.min(window.innerWidth, rect?.right ?? window.innerWidth),
+      bottom: Math.min(window.innerHeight, rect?.bottom ?? window.innerHeight),
+    };
+  };
+  const clamp = (next: Position): Position => {
+    const area = bounds();
+    return {
+      left: Math.max(area.left, Math.min(next.left, area.right - (root.current?.offsetWidth ?? 62))),
+      top: Math.max(area.top, Math.min(next.top, area.bottom - (root.current?.offsetHeight ?? 38))),
+    };
+  };
   const move = (next: Position) => { const value = clamp(next); positionRef.current = value; setPosition(value); };
-  const openContext = (x: number, y: number) => setContext({ left: Math.max(4, Math.min(x, window.innerWidth - 164)), top: Math.max(4, Math.min(y, window.innerHeight - 48)) });
+  const clampContext = (next: Position): Position => {
+    const area = bounds();
+    return { left: Math.max(area.left + 4, Math.min(next.left, area.right - 164)), top: Math.max(area.top + 4, Math.min(next.top, area.bottom - 48)) };
+  };
+  const openContext = (x: number, y: number) => setContext(clampContext({ left: x, top: y }));
 
   useEffect(() => {
-    const host = () => setPortalHost(document.fullscreenElement ?? document.body);
+    const host = () => {
+      const workspace = anchor.current?.closest(".chart-workspace") ?? document.getElementById("app");
+      const fullscreen = document.fullscreenElement;
+      // Giữ lớp nổi trong workspace để kế thừa trạng thái ẩn khi đổi thẻ.
+      setPortalHost(fullscreen && (!workspace || fullscreen.contains(workspace) || workspace.contains(fullscreen)) ? fullscreen : workspace ?? document.body);
+    };
     host();
     document.addEventListener("fullscreenchange", host);
     try {
@@ -120,12 +143,20 @@ export function FavoriteDrawingToolbar({ ids, visible, locked, activeId, onSelec
   useLayoutEffect(() => {
     if (!mounted || !root.current) return;
     const resize = () => {
+      const area = bounds();
+      if (root.current) {
+        root.current.style.maxWidth = `${Math.max(0, area.right - area.left)}px`;
+        root.current.style.maxHeight = `${Math.max(0, area.bottom - area.top)}px`;
+      }
       const narrow = window.innerWidth < 24 + displayIds.length * 38 && window.innerWidth < window.innerHeight;
       verticalRef.current = narrow; setVertical(narrow);
       move(preferredPosition.current ?? positionRef.current);
+      setContext(current => current ? clampContext(current) : current);
     };
     const observer = new ResizeObserver(resize);
     observer.observe(root.current);
+    const shell = anchor.current?.closest("#app")?.querySelector(".chart-shell");
+    if (shell) observer.observe(shell);
     resize();
     window.addEventListener("resize", resize);
     return () => { observer.disconnect(); window.removeEventListener("resize", resize); };
@@ -229,9 +260,8 @@ export function FavoriteDrawingToolbar({ ids, visible, locked, activeId, onSelec
     event.stopPropagation();
   };
 
-  if (!mounted || !portalHost) return null;
   const order = preview ?? displayIds;
-  return createPortal(<>
+  return <><span ref={anchor} hidden />{mounted && portalHost && createPortal(<>
     <div ref={root} className={`favorite-drawing-toolbar ${shown ? "is-open" : "is-closed"} ${vertical ? "is-vertical" : ""} ${moving ? "is-dragging" : ""}`} style={position} role="toolbar" aria-label="Công cụ vẽ yêu thích" aria-hidden={!visible} draggable={false} onDragStart={(event) => event.preventDefault()} onLostPointerCapture={(event) => { if (gesture.current?.pointer === event.pointerId) cancelGesture.current(); }} onContextMenu={(event) => { event.preventDefault(); openContext(event.clientX, event.clientY); }} onClickCapture={(event) => { if (suppressedClick.current || !window.matchMedia("(prefers-reduced-motion: reduce)").matches && performance.now() - openedAt.current < VISIBILITY_DURATION) { event.preventDefault(); event.stopPropagation(); suppressedClick.current = false; } }}>
       <div className="favorite-drawing-toolbar__drag" aria-label="Di chuyển thanh công cụ" onPointerDown={(event) => start(event, "move")} dangerouslySetInnerHTML={{ __html: FAVORITE_ICONS.drag }}/>
       <div className="favorite-drawing-toolbar__tools">{order.map((id) => {
@@ -245,5 +275,5 @@ export function FavoriteDrawingToolbar({ ids, visible, locked, activeId, onSelec
       })}</div>
     </div>
     {context && <div className="favorite-drawing-toolbar__menu" ref={menu} role="menu" style={context}><button type="button" tabIndex={-1} role="menuitem" onClick={() => { callbacks.current.onHide(); setContext(null); }}>Ẩn thanh công cụ</button></div>}
-  </>, portalHost);
+  </>, portalHost)}</>;
 }

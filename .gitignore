@@ -11,3 +11,5 @@ AGENTS.md
 .agents
 VNDIRECT_DATA_PARITY_AUDIT.md
 tools/quant-strategy-auditor/.engine.lock
+/docs/
+/.docs/

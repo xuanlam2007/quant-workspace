@@ -146,7 +146,10 @@ export class ChartStyleRenderer implements ISeriesPrimitive<Time> {
 
   private syncLastPrice() {
     const last = this.raw.at(-1);
-    if (last) this.series.applyOptions({ priceLineColor: this.color(this.raw.length - 1) });
+    if (last) {
+      const color = this.color(this.raw.length - 1);
+      if (this.series.options().priceLineColor !== color) this.series.applyOptions({ priceLineColor: color });
+    }
     if (this.style === 8 && this.settings.realPriceVisible && last) {
       const options = { price: last.close, color: this.settings.color, lineWidth: 1 as const, lineStyle: LineStyle.Dotted, axisLabelVisible: true, title: "" };
       if (this.realPriceLine) this.realPriceLine.applyOptions(options);

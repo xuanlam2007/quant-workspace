@@ -9,9 +9,10 @@ export interface PriceTick {
   time: number;
 }
 
-export type ConnStatus = "connected" | "disconnected" | "reconnecting";
+export type ConnStatus = "idle" | "connected" | "disconnected" | "reconnecting";
 
 export function connectionStatusLabel(connectionStatus: ConnStatus) {
+  if (connectionStatus === "idle") return "Chưa kết nối VNDIRECT";
   if (connectionStatus === "connected") return "Đã kết nối VNDIRECT";
   if (connectionStatus === "reconnecting") return "Đang kết nối VNDIRECT";
   return "Mất kết nối VNDIRECT";
@@ -37,7 +38,7 @@ interface Subscriber {
 }
 
 let socket: SocketClient | undefined;
-let status: ConnStatus = "disconnected";
+let status: ConnStatus = "idle";
 let nextSubscriberId = 1;
 const subscribers = new Map<number, Subscriber>();
 const statusListeners = new Set<(status: ConnStatus) => void>();
@@ -62,11 +63,10 @@ function updateStatus(nextStatus: ConnStatus) {
 }
 
 export const getConnectionStatus = () => status;
-export const getServerConnectionStatus = (): ConnStatus => "disconnected";
+export const getServerConnectionStatus = (): ConnStatus => "idle";
 
 export function subscribeConnectionStatus(listener: (status: ConnStatus) => void) {
   statusListeners.add(listener);
-  ensureSocket();
   listener(status);
   return () => { statusListeners.delete(listener); };
 }

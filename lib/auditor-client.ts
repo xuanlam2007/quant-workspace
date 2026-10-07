@@ -14,6 +14,7 @@ export type RecordingState = {
   mode: CaptureMode;
 };
 export type DecisionPreview = { direction: "LONG" | "SHORT"; price: number; contracts: number; warnings: AuditEvent["warnings"]; saved: boolean; event?: AuditEvent };
+export type StrategyState = { strategy_mode: boolean; config: Snapshot["config"] };
 export type AuditEvent = {
   id: string;
   type: string;
@@ -31,6 +32,7 @@ export type AuditEvent = {
   ai_error?: string;
   frame_path?: string;
   drawing_data?: Record<string, unknown>;
+  strategy?: { enabled: boolean; notes: string; rules: Record<string, unknown> };
   warnings: { type: string; severity: string; message: string }[];
 };
 export type TradePair = { open_time: string; close_time: string; p_red: number; p_green: number; gross_points: number; net_points: number };
@@ -49,8 +51,23 @@ export type Snapshot = RecordingState & {
   summary: Summary;
   recent_events: AuditEvent[];
   gemini_status: AiStatus;
-  config: { terminal_type?: TerminalHost; strategy_guardrails?: { session_start_time?: string; session_cutoff_time?: string; optimal_window_seconds_before?: number; optimal_window_seconds_after?: number } };
+  config: { terminal_type?: TerminalHost; strategy_notes?: string; strategy_configured?: boolean; strategy_guardrails?: { fee_per_closed_pair?: number; session_start_time?: string; session_cutoff_time?: string; optimal_window_seconds_before?: number; optimal_window_seconds_after?: number } };
 };
+
+export function auditEventLabel(event: Pick<AuditEvent, "type" | "action">) {
+  const value = event.action || event.type;
+  const labels: Record<string, string> = {
+    DECISION_TEST: "Lệnh giả lập",
+    MOUSE_CLICK: "Nhấp chuột",
+    DRAWING: "Vẽ biểu đồ",
+    REJECTED_SETUP: "Từ chối",
+    REJECT: "Từ chối",
+    TRADE_OPEN: "Mở lệnh",
+    TRADE_CLOSE: "Đóng lệnh",
+    TRADE_MANUAL: "Lệnh thủ công",
+  };
+  return labels[value] || value.replaceAll("_", " ");
+}
 
 export async function auditorRequest<T>(path: string, body?: unknown, method = body === undefined ? "GET" : "POST", signal?: AbortSignal): Promise<T> {
   const controller = new AbortController();
@@ -69,12 +86,12 @@ export async function auditorRequest<T>(path: string, body?: unknown, method = b
     const data = await response.json();
     if (!response.ok || data.status === "error") {
       const detail = typeof data.detail === "string" ? data.detail : data.message;
-      throw new Error(detail || `Request failed (${response.status})`);
+      throw new Error(detail || `Yêu cầu thất bại (${response.status})`);
     }
     return data as T;
   } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError" && !signal?.aborted) throw new Error("The request timed out. Check the audit feed before repeating a recording action.");
-    if (error instanceof TypeError) throw new Error("Cannot reach the Python engine at " + engineUrl + ". Start tools/quant-strategy-auditor/run.py.");
+    if (error instanceof DOMException && error.name === "AbortError" && !signal?.aborted) throw new Error("Yêu cầu đã hết thời gian chờ. Kiểm tra nhật ký trước khi lặp lại thao tác ghi.");
+    if (error instanceof TypeError) throw new Error("Không thể kết nối bộ máy phân tích. Hãy thử kết nối lại hoặc kiểm tra Terminal đang chạy ứng dụng.");
     throw error;
   } finally {
     clearTimeout(timer);

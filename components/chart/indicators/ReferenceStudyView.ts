@@ -5,6 +5,7 @@ export class ReferenceStudyView implements ICustomSeriesPaneView<Time, Reference
   private data: PaneRendererCustomData<Time, ReferencePoint> | null = null;
   graphics: ReferenceGraphics[] = [];
   selected = false;
+  marksHidden = false;
 
   constructor(readonly definition: ReferenceDefinition, public settings: ReferenceSettings) {}
 
@@ -106,7 +107,7 @@ export class ReferenceStudyView implements ICustomSeriesPaneView<Time, Reference
             if (kind === 4 || kind === 8) { ctx.lineTo(bar.x, base); ctx.lineTo(previous.x, base); ctx.closePath(); ctx.fill(); }
             if (kind === 10) { ctx.beginPath(); ctx.moveTo(bar.x, position - 3); ctx.lineTo(bar.x + 3, position); ctx.lineTo(bar.x, position + 3); ctx.lineTo(bar.x - 3, position); ctx.closePath(); ctx.fill(); }
           }
-          if ((this.selected || hovered) && index % Math.max(1, Math.floor(visible.length / 7)) === 0) {
+          if (!this.marksHidden && (this.selected || hovered) && index % Math.max(1, Math.floor(visible.length / 7)) === 0) {
             ctx.save(); ctx.setLineDash([]); ctx.lineWidth = 1; ctx.strokeStyle = "#2962ff"; ctx.fillStyle = "#131722"; ctx.beginPath(); ctx.arc(bar.x, position, 3, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); ctx.restore();
           }
           previous = { x: bar.x, y: position };

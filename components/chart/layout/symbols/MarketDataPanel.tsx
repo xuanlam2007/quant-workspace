@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type MouseEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent } from "react";
 import { createPortal } from "react-dom";
 import type { Bar, SymbolInfo } from "@/lib/dchart-api";
 import { RESOLUTIONS, type MaType } from "../../config/chart-config";
@@ -19,7 +19,7 @@ const legendIcons = {
   open: <svg viewBox="0 0 18 18" width="18" height="18" fill="none" aria-hidden="true"><circle fill="currentColor" cx="9" cy="9" r="5"/></svg>,
 };
 
-const menuIcons = {
+export const menuIcons = {
   info: <svg viewBox="0 0 28 28" width="28" height="28" fill="none" aria-hidden="true"><g transform="translate(4 5)"><circle stroke="currentColor" cx="9.5" cy="9.5" r="9"/><path stroke="currentColor" d="M7 14.5h2.5v-5H7"/><path stroke="currentColor" strokeLinecap="square" d="M9.5 14.5h2"/><path fill="currentColor" d="M9.5 7a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z"/></g></svg>,
   order: <svg viewBox="0 0 28 28" width="28" height="28" aria-hidden="true"><path fill="currentColor" d="M13.39 3.84a1 1 0 0 1 1.22 0l8.19 6.37a1 1 0 0 1 0 1.58l-8.19 6.37a1 1 0 0 1-1.22 0L5.2 11.79a1 1 0 0 1 0-1.58l8.19-6.37zm.61.8L5.81 11 14 17.37 22.19 11 14 4.63zM5.3 13.6l8.7 6.76 8.7-6.76.6.78-8.69 6.77a1 1 0 0 1-1.22 0l-8.7-6.77.62-.78zm8.09 10.55l-8.7-6.77.62-.78L14 23.37l8.7-6.76.6.78-8.69 6.77a1 1 0 0 1-1.22 0z"/></svg>,
   pane: <svg viewBox="0 0 28 28" width="28" height="28" fill="none" aria-hidden="true"><path stroke="currentColor" strokeLinecap="square" d="M6.145 11.968L14 5.5l7.855 6.468a.3.3 0 0 1-.191.532H6.336a.3.3 0 0 1-.19-.532zm0 4.064L14 22.5l7.855-6.468a.3.3 0 0 0-.191-.532H6.336a.3.3 0 0 0-.19.532z"/></svg>,
@@ -55,6 +55,7 @@ export interface ComparisonQuote {
 }
 
 interface MarketDataPanelProps {
+  contextMenuTarget: HTMLElement | null;
   panePresentation: { hidden: number[]; collapsed: number[] };
   symbol: string;
   exchange: string;
@@ -106,7 +107,8 @@ interface MarketDataPanelProps {
   onPastePrice: () => void;
   onMoveToPane: (direction: "above" | "below" | "new-above" | "new-below") => void;
   canMoveToPane: boolean;
-  onMoveSeriesOrder: (direction: "front" | "back") => void;
+  mainOrder: { front: boolean; back: boolean };
+  onMoveSeriesOrder: (direction: "front" | "back" | "forward" | "backward") => void;
   onPinToScale: (side: "left" | "right") => void;
   onToggleSeriesValue: () => void;
   onTogglePriceLine: () => void;
@@ -124,6 +126,7 @@ interface MarketDataPanelProps {
 type MenuSubmenu = "order" | "pane" | "scale" | null;
 
 export function MarketDataPanel({
+  contextMenuTarget,
   panePresentation,
   symbol,
   exchange,
@@ -160,14 +163,11 @@ export function MarketDataPanel({
   volumePaneIndex,
   paneCount,
   currentVolumeMa,
-  maLength,
   maType,
   smoothingLength,
   volumeSettings,
   selectedLegend,
   onSelectLegend,
-  seriesValueVisible,
-  priceLineVisible,
   appearance,
   onOpenChartSettings,
   onToggleSeriesVisibility,
@@ -176,23 +176,20 @@ export function MarketDataPanel({
   onMoveToPane,
   canMoveToPane,
   onMoveSeriesOrder,
+  mainOrder,
   onPinToScale,
-  onToggleSeriesValue,
-  onTogglePriceLine,
   onRemoveVolume,
   onToggleVolumeVisibility,
   onMoveVolumeToPane,
   onMoveVolumeSeriesOrder,
   onPinVolumeToScale,
-  onMaLengthChange,
-  onMaTypeChange,
-  onSmoothingLengthChange,
   onVolumeSettingsApply,
 }: MarketDataPanelProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [submenu, setSubmenu] = useState<MenuSubmenu>(null);
   const [infoOpen, setInfoOpen] = useState(false);
   const [menuPosition, setMenuPosition] = useState({ left: 0, top: 0 });
+  const [menuPrice, setMenuPrice] = useState<number>();
   const [volumeSettingsOpen, setVolumeSettingsOpen] = useState(false);
   const [volumeMenuOpen, setVolumeMenuOpen] = useState(false);
   const [sourceMenuId, setSourceMenuId] = useState<string | null>(null);
@@ -281,6 +278,29 @@ export function MarketDataPanel({
       if (sourceMenuId && !sourceMenuRef.current?.contains(event.target)) setSourceMenuId(null);
     };
     const closeOnKey = (event: KeyboardEvent) => {
+      if (event.key === "Tab" && (menuOpen || volumeMenuOpen || sourceMenuId)) event.preventDefault();
+      if (menuOpen && (event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "v") {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        onPastePrice();
+        setMenuOpen(false);
+      }
+      if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key) && (menuOpen || volumeMenuOpen || sourceMenuId)) {
+        event.preventDefault();
+        const host = menuOpen ? menuRef.current : volumeMenuOpen ? volumeMenuRef.current : sourceMenuRef.current;
+        const focused = document.activeElement as HTMLElement;
+        const menu = focused?.closest('[role="menu"]') ?? host?.querySelector('[role="menu"]') ?? host;
+        const buttons = Array.from(menu?.querySelectorAll<HTMLButtonElement>(':scope > button:not(:disabled), :scope > .series-menu__submenu-wrap > button:not(:disabled)') ?? []);
+        const current = buttons.indexOf(focused as HTMLButtonElement);
+        const next = event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1
+          : (current + (event.key === "ArrowUp" ? -1 : 1) + buttons.length) % buttons.length;
+        buttons[next]?.focus();
+      }
+      if (event.key === "ArrowLeft") setSubmenu(null);
+      if (event.key === "ArrowRight" && document.activeElement instanceof HTMLButtonElement && document.activeElement.getAttribute("aria-haspopup") === "menu") {
+        event.preventDefault();
+        document.activeElement.click();
+      }
       if (event.key === "Escape") {
         setMenuOpen(false);
         setVolumeMenuOpen(false);
@@ -295,16 +315,47 @@ export function MarketDataPanel({
       document.removeEventListener("pointerdown", closeOnPointer, true);
       document.removeEventListener("keydown", closeOnKey, true);
     };
-  }, [infoOpen, menuOpen, volumeMenuOpen, sourceMenuId]);
+  }, [infoOpen, menuOpen, volumeMenuOpen, sourceMenuId, onPastePrice]);
+
+  useLayoutEffect(() => {
+    if (!menuOpen) return;
+    const place = () => {
+      const menu = menuRef.current?.querySelector<HTMLElement>(".series-menu");
+      if (!menu) return;
+      const rect = menu.getBoundingClientRect();
+      menu.style.left = `${Math.max(8, Math.min(menuPosition.left, window.innerWidth - rect.width - 8))}px`;
+      menu.style.top = `${Math.max(8, Math.min(menuPosition.top, window.innerHeight - rect.height - 8))}px`;
+      menu.dataset.submenuSide = window.innerWidth - menu.getBoundingClientRect().right < 240 ? "left" : "right";
+    };
+    place();
+    window.addEventListener("resize", place);
+    return () => window.removeEventListener("resize", place);
+  }, [menuOpen, menuPosition, canMoveToPane]);
 
   const openMenuAt = (x: number, y: number) => {
+    setMenuPrice(price);
     setMenuPosition({
-      left: Math.max(8, Math.min(x, window.innerWidth - 378)),
-      top: Math.max(8, Math.min(y, window.innerHeight - 430)),
+      left: x,
+      top: y,
     });
     setSubmenu(null);
     setMenuOpen(true);
   };
+
+  useEffect(() => {
+    if (!contextMenuTarget) return;
+    const open = (event: Event) => {
+      const { x, y, price } = (event as CustomEvent<{ x: number; y: number; price: number }>).detail;
+      setMenuPosition({ left: x, top: y });
+      setMenuPrice(price);
+      setSubmenu(null);
+      setSourceMenuId(null);
+      setVolumeMenuOpen(false);
+      setMenuOpen(true);
+    };
+    contextMenuTarget.addEventListener("chart-series-contextmenu", open);
+    return () => contextMenuTarget.removeEventListener("chart-series-contextmenu", open);
+  }, [contextMenuTarget]);
 
   const openMenu = (target: HTMLButtonElement) => {
     const rect = target.getBoundingClientRect();
@@ -458,9 +509,10 @@ export function MarketDataPanel({
 
       {menuOpen && createPortal(
         <div className="market-data__popover-host" ref={menuRef}>
-          <div className="series-menu" role="menu" aria-label="Tùy chọn mã giao dịch" style={{ left: menuPosition.left, top: menuPosition.top }}>
+          <div className="series-menu" role="menu" aria-label="Tùy chọn mã giao dịch" style={{ left: menuPosition.left, top: menuPosition.top }} onContextMenu={(event) => event.preventDefault()}>
             {renderMenuButton("Thông tin Mã giao dịch…", () => setInfoOpen(true), false, "info")}
-            {renderMenuButton(`Sao chép giá ${formatPrice(price)}`, () => price !== undefined && onCopyPrice(price), price === undefined)}
+            <div className="series-menu__divider" />
+            {renderMenuButton(`Sao chép giá ${formatPrice(menuPrice)}`, () => menuPrice !== undefined && onCopyPrice(menuPrice), menuPrice === undefined)}
             {renderMenuButton("Dán", onPastePrice, false, undefined, "Ctrl + V")}
             <div className="series-menu__divider" />
             {([
@@ -468,15 +520,17 @@ export function MarketDataPanel({
               ...(canMoveToPane ? [["pane", "Chuyển tới"] as const] : []),
               ["scale", `Ghim theo Tỷ lệ (hiện tại bên ${scaleSide === "right" ? "phải" : "trái"})`],
             ] as const).map(([id, label]) => (
-              <div className="series-menu__submenu-wrap" key={id} onMouseEnter={() => setSubmenu(id)} onMouseLeave={() => setSubmenu(null)}>
+              <div className="series-menu__submenu-wrap" key={id} onMouseEnter={() => setSubmenu(id)} onMouseLeave={() => setSubmenu(null)} onKeyDown={(event) => { if (event.key === "ArrowRight") { event.preventDefault(); setSubmenu(id); } }}>
                 <button type="button" role="menuitem" tabIndex={-1} className="series-menu__item" aria-haspopup="menu" aria-expanded={submenu === id} onClick={() => setSubmenu(submenu === id ? null : id)}>
                   <span className="series-menu__icon">{menuIcons[id]}</span><span className="series-menu__label">{label}</span><span className="series-menu__chevron">{menuIcons.chevron}</span>
                 </button>
                 {submenu === id && (
                   <div className="series-menu__submenu" role="menu" aria-label={label}>
                     {id === "order" && <>
-                      {renderMenuButton("Đưa lên trước", () => onMoveSeriesOrder("front"))}
-                      {renderMenuButton("Đưa xuống sau", () => onMoveSeriesOrder("back"))}
+                      {renderMenuButton("Đưa lên trước", () => onMoveSeriesOrder("front"), !mainOrder.front)}
+                      {renderMenuButton("Đưa xuống sau", () => onMoveSeriesOrder("back"), !mainOrder.back)}
+                      {renderMenuButton("Đưa về phía trước", () => onMoveSeriesOrder("forward"), !mainOrder.front)}
+                      {renderMenuButton("Đưa về phía sau", () => onMoveSeriesOrder("backward"), !mainOrder.back)}
                     </>}
                     {id === "pane" && <>
                       {mainPaneIndex > 0 && renderMenuButton("Cửa sổ hiện có bên trên", () => onMoveToPane("above"))}{mainPaneShared && renderMenuButton("Cửa sổ mới bên trên", () => onMoveToPane("new-above"))}
@@ -490,13 +544,12 @@ export function MarketDataPanel({
                 )}
               </div>
             ))}
-            <div className="series-menu__divider" />
             {renderMenuButton(seriesVisible ? "Ẩn" : "Hiện", onToggleSeriesVisibility, false, seriesVisible ? "hide" : "show")}
             <div className="series-menu__divider" />
             {renderMenuButton("Cài đặt…", onOpenChartSettings, false, "settings")}
           </div>
         </div>,
-        document.body,
+        document.fullscreenElement ?? document.body,
       )}
 
       {visibilityTooltip && createPortal(<div className="series-visibility-tooltip" style={{ left: visibilityTooltip.left, top: visibilityTooltip.top }}>{visibilityTooltip.text}</div>, document.body)}

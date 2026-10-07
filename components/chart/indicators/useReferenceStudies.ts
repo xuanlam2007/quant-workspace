@@ -3,6 +3,7 @@ import { LineStyle, type IChartApi, type IPriceLine, type ISeriesApi, type Time,
 import type { Bar, SymbolInfo } from "@/lib/dchart-api";
 import { calculateReferenceStudy, loadReferenceStudies, referenceDefaults, type ReferenceDefinition, type ReferencePoint, type ReferenceSettings } from "@/lib/reference-studies";
 import { ReferenceStudyView } from "./ReferenceStudyView";
+import { updateReferenceSeries } from "./reference-series-update";
 import { chartStudyBars, type ChartStyle } from "../config/chart-styles";
 import { mergeSaved, overlaySaved, readSaved, writeSaved } from "../config/saved-state";
 
@@ -22,10 +23,15 @@ export interface ReferenceStudyInstance {
   error?: string;
   visible: boolean;
   priceLines?: IPriceLine[];
+  priceLinePlots?: string[];
   request?: AbortController;
 }
 
-export function useReferenceStudies(chartRef: RefObject<IChartApi | null>, barsRef: RefObject<Map<number, Bar>>, symbol: string, resolution: string, symbolInfo?: SymbolInfo, chartStyle: ChartStyle = 1) {
+export function useReferenceStudies(chartRef: RefObject<IChartApi | null>, barsRef: RefObject<Map<number, Bar>>, symbol: string, resolution: string, symbolInfo?: SymbolInfo, chartStyle: ChartStyle = 1, labelsVisible?: (series: ReferenceSeries) => boolean, onData?: () => void) {
+  const dataListener = useRef(onData);
+  dataListener.current = onData;
+  const labelsPolicy = useRef(labelsVisible);
+  labelsPolicy.current = labelsVisible;
   const instances = useRef(new Map<string, ReferenceStudyInstance>());
   const [revision, setRevision] = useState(0);
   const [settingsId, setSettingsId] = useState<string | null>(null);
@@ -42,7 +48,7 @@ export function useReferenceStudies(chartRef: RefObject<IChartApi | null>, barsR
     }
     setRevision((value) => value + 1);
   }, []);
-  const calculate = useCallback(async (instance: ReferenceStudyInstance, bars?: Bar[]) => {
+  const calculate = useCallback(async (instance: ReferenceStudyInstance, bars?: Bar[], realtime = false) => {
     if (!instance.definition || !instance.settings || !instance.series || !instance.view) return;
     instance.request?.abort();
     const request = new AbortController();
@@ -51,17 +57,24 @@ export function useReferenceStudies(chartRef: RefObject<IChartApi | null>, barsR
     const group = /M$/.test(current.resolution) ? 4 : /W$/.test(current.resolution) ? 3 : /D$/.test(current.resolution) ? 2 : Number(current.resolution) >= 60 ? 1 : 0;
     const multiple = group === 1 ? Number(current.resolution) / 60 : Number(current.resolution.replace(/[DWM]$/, "")) || 1;
     const interval = instance.settings.intervals[group];
-    instance.series.applyOptions({ visible: instance.visible && interval.enabled && multiple >= interval.from && multiple <= interval.to, lastValueVisible: false, baseLineVisible: false });
+    const wasLoading = instance.loading, previousError = instance.error;
+    const visible = instance.visible && interval.enabled && multiple >= interval.from && multiple <= interval.to;
+    if (instance.series.options().visible !== visible || !realtime) instance.series.applyOptions({ visible, lastValueVisible: false, baseLineVisible: false });
     try {
       const inputBars = bars ?? [...(barsRef.current?.values() ?? [])].sort((a, b) => Number(a.time) - Number(b.time));
       const result = await calculateReferenceStudy(instance.definition, instance.settings, chartStudyBars(inputBars, current.chartStyle), current.symbol, current.resolution, current.symbolInfo, request.signal);
       if (request.signal.aborted || !instances.current.has(instance.id)) return;
+      const previousPoints = instance.points;
+      const hadGraphics = instance.view.graphics.length > 0;
       instance.points = result.points;
       instance.view.settings = instance.settings;
       instance.view.graphics = result.graphics;
-      instance.series.setData(result.points);
-      instance.priceLines?.forEach((line) => instance.series!.removePriceLine(line));
-      instance.priceLines = [];
+      if (realtime && !hadGraphics && !result.graphics.length && !previousPoints.some((point) => point.isProjection)) updateReferenceSeries(instance.series, previousPoints, result.points);
+      else instance.series.setData(result.points);
+      if (!instance.priceLinePlots) instance.priceLines?.forEach((line) => instance.series!.removePriceLine(line));
+      const existingLines = new Map((instance.priceLinePlots ?? []).map((id, index) => [id, instance.priceLines![index]]));
+      const nextLines: IPriceLine[] = [];
+      const nextPlots: string[] = [];
       const latestPoints = [...result.points].reverse();
       for (const plot of instance.definition.metainfo.plots) {
         const style = instance.settings.styles[plot.id];
@@ -69,12 +82,25 @@ export function useReferenceStudies(chartRef: RefObject<IChartApi | null>, barsR
         const value = last?.values[plot.id];
         if (plot.type !== "line" || !style || style.visible === false || style.display === 0 || value === undefined || !Number.isFinite(value)) continue;
         if (!style.trackPrice && !instance.settings.scaleLabels) continue;
-        instance.priceLines.push(instance.series.createPriceLine({
+        const options = {
           price: value, color: last?.colors[plot.id] ?? style.color ?? "#2196f3",
-          lineVisible: Boolean(style.trackPrice), axisLabelVisible: instance.settings.scaleLabels,
-          lineStyle: LineStyle.Dashed, lineWidth: 1, title: "",
-        }));
+          lineVisible: Boolean(style.trackPrice),
+          axisLabelVisible: instance.settings.scaleLabels && (labelsPolicy.current?.(instance.series) ?? true),
+          lineStyle: LineStyle.Dashed, lineWidth: 1 as const, title: "",
+        };
+        let line = existingLines.get(plot.id);
+        if (line) {
+          const old = line.options();
+          if (Object.entries(options).some(([key, value]) => old[key as keyof typeof old] !== value)) line.applyOptions(options);
+          existingLines.delete(plot.id);
+        }
+        else line = instance.series.createPriceLine(options);
+        nextLines.push(line);
+        nextPlots.push(plot.id);
       }
+      existingLines.forEach((line) => instance.series!.removePriceLine(line));
+      instance.priceLines = nextLines;
+      instance.priceLinePlots = nextPlots;
       instance.error = undefined;
     } catch (error) {
       if (request.signal.aborted) return;
@@ -83,8 +109,13 @@ export function useReferenceStudies(chartRef: RefObject<IChartApi | null>, barsR
       instance.series.setData([]);
       instance.priceLines?.forEach((line) => instance.series!.removePriceLine(line));
       instance.priceLines = [];
+      instance.priceLinePlots = [];
     } finally {
-      if (!request.signal.aborted) { instance.loading = false; refresh(); }
+      if (!request.signal.aborted) {
+        instance.loading = false;
+        if (!realtime || wasLoading || previousError !== instance.error) refresh();
+        else dataListener.current?.();
+      }
     }
   }, [barsRef, refresh]);
 
@@ -105,7 +136,7 @@ export function useReferenceStudies(chartRef: RefObject<IChartApi | null>, barsR
       instance.settings.precision = typeof instance.settings.precision === "number" && Number.isInteger(instance.settings.precision) && instance.settings.precision >= 0 && instance.settings.precision <= 12 ? instance.settings.precision : defaults.precision;
       instance.view = new ReferenceStudyView(definition, instance.settings);
       instance.series = chart.addCustomSeries(instance.view, {
-        priceScaleId: "right", priceLineVisible: false, lastValueVisible: instance.settings.scaleLabels,
+        priceScaleId: "right", priceLineVisible: false, lastValueVisible: false,
         priceFormat: definition.metainfo.format?.type === "volume" ? { type: "volume" } : { type: "price", precision: instance.settings.precision ?? 2, minMove: 10 ** -(instance.settings.precision ?? 2) },
       }, chart.panes().length);
       instance.series.getPane().setStretchFactor(1);
@@ -141,7 +172,7 @@ export function useReferenceStudies(chartRef: RefObject<IChartApi | null>, barsR
     refresh();
   }, [chartRef, refresh]);
   const clear = useCallback(() => { [...instances.current.keys()].forEach(remove); }, [remove]);
-  const update = useCallback((bars?: Bar[]) => { instances.current.forEach((instance) => { void calculate(instance, bars); }); }, [calculate]);
+  const update = useCallback((bars?: Bar[], realtime = false) => { instances.current.forEach((instance) => { void calculate(instance, bars, realtime); }); }, [calculate]);
   const apply = useCallback((id: string, settings: ReferenceSettings) => {
     const instance = instances.current.get(id);
     if (!instance) return;

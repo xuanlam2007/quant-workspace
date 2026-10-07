@@ -122,9 +122,27 @@ export function activateNamedLayout(id: string) {
   }
 }
 
+function signatureValue(value: unknown, path = ""): unknown {
+  if (Array.isArray(value)) return value.map((item) => signatureValue(item, `${path}[]`));
+  if (value === null || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b))
+    .filter(([key]) => !(path === "layout" && key === "time")
+      && !(/^layout\.panes\[\]\.(left|right)$/.test(path) && key === "range"))
+    .map(([key, item]) => [key, signatureValue(item, `${path}.${key}`)]));
+}
+
 export function workspaceSignature(snapshot: WorkspaceSnapshot) {
-  // Lịch sử hoàn tác không làm thay đổi nội dung của bố cục đã lưu.
-  return JSON.stringify(Object.entries(snapshot.values).filter(([key]) => !key.endsWith(":history")).sort(([a], [b]) => a.localeCompare(b)));
+  // Vùng nhìn và lịch sử hoàn tác vẫn được lưu nhưng không đánh dấu sửa bố cục.
+  return JSON.stringify(Object.entries(snapshot.values)
+    .filter(([key]) => !key.endsWith(":history") && key !== "chart.manualAxisRanges.v2")
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, value]) => {
+      try {
+        return [key, signatureValue(JSON.parse(value), key === "chart.workspaceLayout.v1" ? "layout" : "")];
+      } catch {
+        return [key, value];
+      }
+    }));
 }
 
 export function layoutStorageError(error: unknown) {

@@ -72,7 +72,7 @@ export function LayoutSaveLoad({ symbol, resolution, ready, capture, onLoad, onO
   const [library, setLibrary] = useState<LayoutLibrary>(emptyLibrary);
   const [initialized, setInitialized] = useState(false);
   const [error, setError] = useState("");
-  const [dirty, setDirty] = useState(true);
+  const [dirty, setDirty] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [dialog, setDialog] = useState<Dialog>(null);
   const [name, setName] = useState("");
@@ -124,13 +124,15 @@ export function LayoutSaveLoad({ symbol, resolution, ready, capture, onLoad, onO
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout>;
+    let retries = 0;
     const update = () => {
-      if (!active) { setDirty(true); return; }
+      if (!active) return;
       if (!current.current.ready || busyRef.current) return;
       try { setDirty(workspaceSignature(current.current.capture()) !== workspaceSignature(active.workspace)); }
-      catch { setDirty(true); }
+      // Khôi phục chưa hoàn tất không phải là thay đổi chưa lưu.
+      catch { if (retries++ < 4) timer = setTimeout(update, 350); }
     };
-    const schedule = () => { clearTimeout(timer); timer = setTimeout(update, 350); };
+    const schedule = () => { clearTimeout(timer); retries = 0; timer = setTimeout(update, 350); };
     schedule();
     window.addEventListener("pointerup", schedule, true);
     window.addEventListener("keyup", schedule, true);

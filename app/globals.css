@@ -1926,6 +1926,16 @@ main#chart.chart--tool-active canvas {
   cursor: crosshair !important;
 }
 
+main#chart[data-axis-cursor="price"],
+main#chart[data-axis-cursor="price"] canvas {
+  cursor: ns-resize !important;
+}
+
+main#chart[data-axis-cursor="time"],
+main#chart[data-axis-cursor="time"] canvas {
+  cursor: ew-resize !important;
+}
+
 main#chart.chart--zoom {
   touch-action: none;
 }
@@ -2078,6 +2088,13 @@ main#chart.chart--zoom {
   color: #d1d4dc;
   font: 14px/1.3 Arial, sans-serif;
   pointer-events: auto;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+}
+
+.series-menu[data-submenu-side="left"] .series-menu__submenu {
+  left: auto;
+  right: calc(100% - 3px);
 }
 
 .series-menu__item {
@@ -2129,7 +2146,8 @@ main#chart.chart--zoom {
   color: #b2b5be;
 }
 
-.series-menu__item:hover:not(:disabled) {
+.series-menu__item:hover:not(:disabled),
+.series-menu__item:focus-visible:not(:disabled) {
   background: #2a2e39;
   color: #fff;
 }
@@ -2143,6 +2161,18 @@ main#chart.chart--zoom {
   height: 1px;
   margin: 5px 0;
   background: #343a48;
+}
+
+.chart-context-menu {
+  width: max-content;
+  min-width: min(365px, calc(100vw - 16px));
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  overflow: auto;
+}
+
+.chart-context-menu .series-menu__label {
+  white-space: normal;
 }
 
 .series-menu__submenu-wrap {
@@ -6306,7 +6336,10 @@ html input[type="checkbox"]:focus-visible {
 .favorite-drawing-toolbar {
   display: flex;
   position: fixed;
-  z-index: 180;
+  inset: auto;
+  width: max-content;
+  height: max-content;
+  z-index: 20;
   align-items: stretch;
   max-width: 100vw;
   max-height: 100dvh;
@@ -6462,7 +6495,7 @@ html input[type="checkbox"]:focus-visible {
 
 .favorite-drawing-toolbar__menu {
   position: fixed;
-  z-index: 1210;
+  z-index: 21;
   width: 160px;
   padding: 6px 0;
   border-radius: 4px;
@@ -7206,4 +7239,109 @@ html input[type="checkbox"]:focus-visible {
     --app-header-height: 116px;
   }
 
+}
+
+
+.chart-workspace {
+  position: fixed;
+  inset: 0;
+}
+
+.chart-workspace[data-active="false"] {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.chart-header-placeholder {
+  flex: 0 0 var(--app-header-height);
+}
+
+.chart-controls-placeholder {
+  flex: 0 0 38px;
+}
+
+.chart-toolbar-placeholder {
+  flex: 0 0 48px;
+}
+
+.indicator-menu__panel {
+  position: fixed;
+  top: calc(var(--app-header-height) + 44px);
+  left: clamp(12px, 10vw, max(12px, calc(100vw - 423.36px)));
+  width: min(410.4px, calc(100vw - 24px));
+  max-height: calc(100dvh - var(--app-header-height) - 56px);
+  display: flex;
+  flex-direction: column;
+}
+
+.indicator-menu__title {
+  flex: 0 0 72.576px;
+  height: 72.576px;
+  padding: 0 20.736px;
+}
+
+.indicator-menu__title strong {
+  font-size: 20.736px;
+}
+
+.indicator-menu__title button {
+  width: 24px;
+  height: 24px;
+  font-size: 20.736px;
+}
+
+.indicator-menu__title button svg {
+  width: 15.552px;
+  height: 15.552px;
+}
+
+.indicator-menu__search {
+  flex: 0 0 43.2px;
+  height: 43.2px;
+  padding: 0 13.824px 0 46.656px;
+}
+
+.indicator-menu__search input {
+  height: 20.736px;
+  font-size: 13.824px;
+  line-height: 20.736px;
+}
+
+.indicator-search-icon {
+  left: 20.736px;
+}
+
+.indicator-menu__search svg {
+  width: 15.552px;
+  height: 15.552px;
+  flex-basis: 15.552px;
+}
+
+.indicator-menu__list {
+  min-height: 0;
+  max-height: 440.64px;
+  overflow-y: auto;
+  padding: 0 0 6.912px;
+}
+
+.indicator-menu__option {
+  min-height: 34.56px;
+  padding: 0 6.912px;
+  font-size: 13.824px;
+}
+
+.indicator-menu__favorite {
+  width: 20.736px;
+  height: 24.192px;
+}
+
+.indicator-menu__favorite svg {
+  width: 20.736px;
+  height: 20.736px;
+}
+
+.indicator-menu__study {
+  height: 34.56px;
+  padding-left: 6.912px;
+  font-size: 13.824px;
 }

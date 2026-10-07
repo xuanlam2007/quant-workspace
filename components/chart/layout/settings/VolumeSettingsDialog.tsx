@@ -118,7 +118,6 @@ export function VolumeSettingsDialog({ settings, onApply, onClose }: Props) {
           <div className="volume-dialog__check volume-dialog__plot-row"><label><input type="checkbox" tabIndex={-1} checked={draft.smoothedVisible} onChange={(event) => set("smoothedVisible", event.target.checked)}/>Smoothed MA</label><ChartColorPicker label="Màu Smoothed MA" value={draft.smoothedColor} onChange={(value) => set("smoothedColor", value)} preview="line"/><PlotStylePicker value={draft.smoothedPlotStyle} onChange={(value) => set("smoothedPlotStyle", value)} priceLineVisible={draft.smoothedPriceLineVisible} onPriceLineChange={(value) => set("smoothedPriceLineVisible", value)}/></div>
           <h3>ĐẦU RA</h3>
           <label className="volume-dialog__row"><span>Độ chính xác</span><select tabIndex={-1} defaultValue="default"><option value="default">Mặc định</option><option value="0">0</option><option value="1">1</option><option value="2">2</option></select></label>
-          <label className="volume-dialog__check"><input type="checkbox" tabIndex={-1} checked={draft.scaleLabelVisible} onChange={(event) => set("scaleLabelVisible", event.target.checked)}/>Nhãn trên thang giá</label>
           <label className="volume-dialog__check"><input type="checkbox" tabIndex={-1} checked={draft.statusValueVisible} onChange={(event) => set("statusValueVisible", event.target.checked)}/>Giá trị trong dòng trạng thái</label>
         </>}
         {tab === "visibility" && intervals.map(([label, min, max], index) =>

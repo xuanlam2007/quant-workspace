@@ -1,6 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createChartRenderScheduler } from "@/lib/chart-render-scheduler";
+import { createQuoteStore, LiveMarketData } from "./chart/layout/symbols/LiveMarketData";
+import { StreamingIndicators } from "./chart/indicators/streaming-indicators";
 import {
   createChart,
   createSeriesMarkers,
@@ -51,6 +54,7 @@ import { ChangeIntervalDialog } from "./chart/layout/navigation/ChangeIntervalDi
 import { GoToDateDialog } from "./chart/layout/navigation/GoToDateDialog";
 import { ChartFooter } from "./chart/layout/navigation/ChartFooter";
 import { PriceAxisContextMenu, type PriceAxisMenuAction, type PriceAxisMenuState } from "./chart/layout/panes/PriceAxisContextMenu";
+import { ChartContextMenu, type ChartMenuAction, type ChartMenuPosition } from "./chart/layout/panes/ChartContextMenu";
 import { PriceAxisScaleButton, type ScaleButtonTarget } from "./chart/layout/panes/PriceAxisScaleButton";
 import { ScrollToLatestButton } from "./chart/layout/navigation/ScrollToLatestButton";
 import { AppHeader } from "./AppHeader";
@@ -62,6 +66,7 @@ import { MarketDataPanel, type ComparisonQuote, type SourceLegend } from "./char
 import type { VolumeSettings } from "./chart/layout/settings/VolumeSettingsDialog";
 import { ChartSettingsDialog, DEFAULT_CHART_APPEARANCE, type ChartAppearance } from "./chart/layout/settings/ChartSettingsDialog";
 import { DrawingToolbar } from "./chart/drawing/DrawingToolbar";
+import { DRAWING_HISTORY_VERSION, MAX_DRAWING_HISTORY_STATES, drawingHistoryDay, restoreDrawingHistory, type StoredDrawingHistory } from "./chart/drawing/drawing-history";
 import { DrawingPropertiesToolbar } from "./chart/drawing/DrawingPropertiesToolbar";
 import { DrawingAxisRangeHighlight } from "./chart/drawing/DrawingAxisRangeHighlight";
 import { PriceRangeStats } from "./chart/drawing/PriceRangeStats";
@@ -79,6 +84,7 @@ import {
   DEFAULT_RESOLUTION,
   DEFAULT_SYMBOL,
   DEFAULT_VISIBLE_BARS,
+  DRAWING_TOOL_GROUPS,
   COMPARE_SYMBOLS_STORAGE_KEY,
   RECENT_COMPARE_SYMBOLS_STORAGE_KEY,
   PRICE_INDICATORS,
@@ -97,6 +103,8 @@ import { bollingerData, macdData, priceIndicatorData, rsiData, volumeMa } from "
 import {
   barCloseCountdown,
   comparisonSeriesPoints,
+  alignComparisonPoints,
+  comparisonValueAt,
   drawingStorageKey,
   formatChartTime,
   futureTimelinePoints,
@@ -114,8 +122,6 @@ import { OutsideDragSelectionGuard } from "./chart/ui/OutsideDragSelectionGuard"
 import { readAxisSettings, writeAxisSettings, readManualAxisRange, writeManualAxisRange } from "./chart/config/axis-settings";
 
 const tickFormatters = new Map<string, Intl.DateTimeFormat>();
-const DRAWING_HISTORY_VERSION = 1;
-const MAX_DRAWING_HISTORY_STATES = 100;
 const COMPARE_COLORS = ["#F57C00", "#2962ff", "#ab47bc", "#26a69a", "#ef5350"];
 
 function safePriceScaleWidth(chart: IChartApi, side: "left" | "right", paneIndex: number) {
@@ -193,21 +199,6 @@ function installVisibleCandleOpenAsPercentReference(series: ISeriesApi<"Candlest
   };
 }
 
-type StoredDrawingHistory = {
-  version: typeof DRAWING_HISTORY_VERSION;
-  undo: string[];
-  redo: string[];
-};
-
-function isDrawingState(value: unknown): value is string {
-  if (typeof value !== "string") return false;
-  try {
-    return Array.isArray(JSON.parse(value));
-  } catch {
-    return false;
-  }
-}
-
 function formatTick(time: Time, resolution: string, timezone: string) {
   const isDaily = ["D", "W", "M"].includes(resolution);
   const key = `${timezone}:${isDaily ? "daily" : "intraday"}`;
@@ -225,25 +216,29 @@ function drawingHistoryStorageKey(drawingKey: string) {
   return `${drawingKey}:history`;
 }
 
-function latestVolumeMaPoint(
-  bars: Bar[],
-  length: number,
-  type: MaType,
-  smoothingLength: number,
-) {
-  return volumeMa(bars, length, type, smoothingLength).at(-1);
-}
-
-export default function Chart() {
+export default function Chart({ active = true }: { active?: boolean }) {
   const [generation, setGeneration] = useState(0);
   const loadLayout = useCallback((id: string) => {
     activateNamedLayout(id);
     setGeneration((value) => value + 1);
   }, []);
-  return <div id="app"><ChartInstance key={generation} onLoadLayout={loadLayout}/></div>;
+  return <div id="app"><ChartInstance key={generation} active={active} onLoadLayout={loadLayout}/></div>;
 }
 
-function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void }) {
+function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout: (id: string) => void }) {
+  const [documentVisible, setDocumentVisible] = useState(true);
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  const renderingRef = useRef(active && documentVisible);
+  renderingRef.current = active && documentVisible;
+  const suspendRealtimeRef = useRef<() => void>(() => undefined);
+  const pendingComparisonQuotesRef = useRef(new Map<string, ComparisonQuote>());
+  useEffect(() => {
+    const update = () => setDocumentVisible(document.visibilityState === "visible");
+    update();
+    document.addEventListener("visibilitychange", update);
+    return () => document.removeEventListener("visibilitychange", update);
+  }, []);
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -270,7 +265,7 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
   } | null>(null);
   const timelineSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const highLowLinesRef = useRef<{ high: IPriceLine; low: IPriceLine } | null>(null);
-  const refreshHighLowRef = useRef<() => void>(() => undefined);
+  const refreshHighLowRef = useRef<(bar?: Bar) => void>(() => undefined);
   const mainScaleSideRef = useRef<"left" | "right">("right");
   const mainPaneIndexRef = useRef(0);
   const previousMainScaleSideRef = useRef<"left" | "right">("right");
@@ -279,11 +274,19 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
   const scaleLockedRef = useRef(false);
   const lineToolsRef = useRef<ILineToolsPlugin | null>(null);
   const currentBarRef = useRef<Bar | undefined>(undefined);
+  const hoveredMainSeriesRef = useRef<{ x: number; y: number; paneIndex: number } | null>(null);
   const barsByTimeRef = useRef(new Map<number, Bar>());
   const previousCloseByTimeRef = useRef(new Map<number, number>());
   const syncCompareSeries = useCallback(() => {
+    const mainTimes = [...barsByTimeRef.current.keys()].sort((a, b) => a - b) as Bar["time"][];
     compareSeriesRef.current.forEach((series, compareSymbol) => {
-      series.setData(compareBarsRef.current.get(compareSymbol) ?? []);
+      series.setData(alignComparisonPoints(compareBarsRef.current.get(compareSymbol) ?? [], mainTimes));
+    });
+  }, []);
+  const updateCompareSeries = useCallback((time: Bar["time"]) => {
+    compareSeriesRef.current.forEach((series, compareSymbol) => {
+      const value = comparisonValueAt(compareBarsRef.current.get(compareSymbol) ?? [], time);
+      series.update(value === undefined ? { time } : { time, value });
     });
   }, []);
   const feedRef = useRef<ReturnType<typeof connectPriceFeed> | null>(null);
@@ -292,6 +295,8 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
   const drawingKeyRef = useRef("");
   const drawingHistoryRef = useRef<string[]>(["[]"]);
   const drawingRedoHistoryRef = useRef<string[]>([]);
+  const drawingHistoryDayRef = useRef("");
+  const exchangeTimezoneRef = useRef("Asia/Bangkok");
   const resolutionRef = useRef("D");
   const symbolTimezoneRef = useRef("Asia/Bangkok");
   const maSettingsRef = useRef<{ length: number; type: MaType; smoothingLength: number }>({ length: 20, type: "SMA", smoothingLength: 9 });
@@ -348,14 +353,22 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
   const [resolution, setResolution] = useState(DEFAULT_RESOLUTION);
   const [resolutionRestored, setResolutionRestored] = useState(false);
   const [intervalQuery, setIntervalQuery] = useState<string | null>(null);
-  const [goToDateOpen, setGoToDateOpen] = useState(false);
+  const [goToDateRange, setGoToDateRange] = useState<{ from: number; to: number } | null>(null);
   const dateNavigationControllerRef = useRef<AbortController | null>(null);
   const navigateHistoryRef = useRef<(from: number, to?: number) => Promise<void>>(async () => { throw new Error("Dữ liệu đang tải, vui lòng thử lại"); });
   const crosshairDrawingPointRef = useRef<{ timestamp: number; price: number } | null>(null);
+  const openGoToDate = useCallback(() => {
+    const range = chartRef.current?.timeScale().getVisibleRange();
+    const bars = [...barsByTimeRef.current.values()];
+    const from = bars.find((bar) => !range || Number(bar.time) >= Number(range.from));
+    const to = bars.findLast((bar) => !range || Number(bar.time) <= Number(range.to));
+    const now = Date.now() / 1000;
+    setGoToDateRange({ from: Number(from?.time ?? now), to: Number(to?.time ?? now) });
+  }, []);
   const closeGoToDate = useCallback(() => {
     dateNavigationControllerRef.current?.abort();
     dateNavigationControllerRef.current = null;
-    setGoToDateOpen(false);
+    setGoToDateRange(null);
   }, []);
   useEffect(() => {
     closeGoToDate();
@@ -377,7 +390,8 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
   const textDialogOpenRef = useRef(false);
   textDialogOpenRef.current = textDialogOpen;
   const [drawingViewportVersion, setDrawingViewportVersion] = useState(0);
-  const [visibleBar, setVisibleBar] = useState<Bar | undefined>(undefined);
+  const [quoteStore] = useState(createQuoteStore);
+  const setVisibleBar = quoteStore.set;
   const [comparisonQuotes, setComparisonQuotes] = useState<ComparisonQuote[]>([]);
   const [mainSeriesVisible, setMainSeriesVisible] = useSavedState("chart.mainVisible.v1", true);
   const [rangeDays, setRangeDays] = useState<number | undefined>(undefined);
@@ -393,10 +407,14 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
   const [countdownVisible, setCountdownVisible] = useState(false);
   const [countdown, setCountdown] = useState<{ text: string; top: number } | null>(null);
   const [axisMenu, setAxisMenu] = useState<PriceAxisMenuState | null>(null);
+  const [chartMenu, setChartMenu] = useState<ChartMenuPosition | null>(null);
+  const [crosshairLocked, setCrosshairLocked] = useState(false);
+  const lockedCrosshairRef = useRef<{ time: Bar["time"]; price: number; series: ISeriesApi<"Candlestick"> | ISeriesApi<"Histogram"> | ISeriesApi<"Line"> } | null>(null);
+  const [marksHidden, setMarksHidden] = useSavedState("chart.hideMarksOnBars", false);
   const [hoverAxis, setHoverAxis] = useState<{ side: "left" | "right"; paneIndex: number; left: number; top: number; width: number } | null>(null);
   const [footerAxis, setFooterAxis] = useState<{ side: "left" | "right"; paneIndex: number } | null>(null);
   const [autoScale, setAutoScale] = useState(true);
-  const copiedPriceRef = useRef<number | null>(null);
+  const drawingClipboardRef = useRef<string | null>(null);
   const [zoomMode, setZoomMode] = useState(false);
   const [zoomHistoryCount, setZoomHistoryCount] = useState(0);
   const [zoomSelection, setZoomSelection] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
@@ -421,7 +439,7 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
   const [volumeVisualSettings, setVolumeVisualSettings, volumeSettingsRestored] = useSavedState("chart.volumeAppearance.v1", {
     colorByPreviousClose: false,
     histogramVisible: true,
-    upColor: "#54ba88",
+    upColor: "#53B987",
     downColor: "#eb4d5c",
     maColor: "#2196f3",
     smoothedColor: "#2196f3",
@@ -429,7 +447,7 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
     smoothedPlotStyle: "line" as VolumeSettings["smoothedPlotStyle"],
     maPriceLineVisible: false,
     smoothedPriceLineVisible: false,
-    scaleLabelVisible: true,
+    scaleLabelVisible: false,
     statusValueVisible: true,
     visibleIntervals: [true, true, true, true, true],
   });
@@ -528,6 +546,7 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
 
   useEffect(() => {
     const disableTabNavigation = (event: KeyboardEvent) => {
+      if (!activeRef.current) return;
       if (event.key !== "Tab") return;
       event.preventDefault();
       if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
@@ -614,6 +633,7 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
     if (!drawingKeyRef.current) return;
     const history: StoredDrawingHistory = {
       version: DRAWING_HISTORY_VERSION,
+      day: drawingHistoryDayRef.current,
       undo: drawingHistoryRef.current.slice(-MAX_DRAWING_HISTORY_STATES),
       redo: drawingRedoHistoryRef.current.slice(-MAX_DRAWING_HISTORY_STATES),
     };
@@ -623,7 +643,44 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
     );
   }, []);
 
+  const resetChartView = useCallback(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    setScaleLocked(false);
+    autoScaleRef.current = true;
+    setAutoScale(true);
+    chart.timeScale().resetTimeScale();
+    chart.panes().forEach((pane) => {
+      for (const side of ["left", "right"] as const) chart.priceScale(side, pane.paneIndex()).setAutoScale(true);
+    });
+    followLatestRef.current = true;
+  }, []);
+
+  const ensureDrawingHistoryDay = useCallback(() => {
+    const day = drawingHistoryDay(exchangeTimezoneRef.current);
+    if (drawingHistoryDayRef.current === day) return;
+    drawingHistoryDayRef.current = day;
+    drawingHistoryRef.current = [drawingHistoryRef.current.at(-1) ?? "[]"];
+    drawingRedoHistoryRef.current = [];
+    zoomHistoryRef.current = [];
+    setZoomHistoryCount(0);
+    persistDrawingHistory();
+    syncDrawingHistoryAvailability();
+  }, [persistDrawingHistory, syncDrawingHistoryAvailability]);
+
+  useEffect(() => {
+    exchangeTimezoneRef.current = symbolInfo?.timezone ?? "Asia/Bangkok";
+    ensureDrawingHistoryDay();
+    const timer = window.setInterval(ensureDrawingHistoryDay, 30_000);
+    document.addEventListener("visibilitychange", ensureDrawingHistoryDay);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", ensureDrawingHistoryDay);
+    };
+  }, [symbolInfo?.timezone, ensureDrawingHistoryDay]);
+
   const recordDrawingState = useCallback((drawingState: string) => {
+    ensureDrawingHistoryDay();
     if (drawingHistoryRef.current.at(-1) !== drawingState) {
       drawingHistoryRef.current.push(drawingState);
       drawingHistoryRef.current = drawingHistoryRef.current.slice(-MAX_DRAWING_HISTORY_STATES);
@@ -634,7 +691,7 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
     }
     persistDrawingHistory();
     syncDrawingHistoryAvailability();
-  }, [persistDrawingHistory, syncDrawingHistoryAvailability]);
+  }, [ensureDrawingHistoryDay, persistDrawingHistory, syncDrawingHistoryAvailability]);
 
   const restoreDrawingState = useCallback((drawingState: string) => {
     const lineTools = lineToolsRef.current;
@@ -651,6 +708,7 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (!activeRef.current) return;
       if (e.defaultPrevented || document.querySelector('[role="dialog"]')) return;
       const target = e.target as HTMLElement | null;
       if (
@@ -690,7 +748,14 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
     smoothingLength,
     setSmoothingLength,
   } = useIndicatorSettings();
-  const referenceStudies = useReferenceStudies(chartRef, barsByTimeRef, symbol, resolution, symbolInfo, chartStyle);
+  const studyLabelsVisible = useCallback((studySeries: ReferenceSeries) => {
+    const pane = studySeries.getPane();
+    const volumePane = volumeSeriesRef.current?.getPane();
+    return axisLabelsRef.current.studyValues && studySeries.options().priceFormat.type !== "volume"
+      && (pane !== volumePane || pane === seriesRef.current?.getPane());
+  }, []);
+  const referenceStudies = useReferenceStudies(chartRef, barsByTimeRef, symbol, resolution, symbolInfo, chartStyle, studyLabelsVisible,
+    () => setVisibleBar((bar) => bar ? { ...bar } : currentBarRef.current));
   const secondaryLeftVisible = (activeStudies.includes("macd") && indicatorScaleSides.macd === "left")
     || (activeStudies.includes("rsi") && indicatorScaleSides.rsi === "left");
   const secondaryRightVisible = (activeStudies.includes("macd") && indicatorScaleSides.macd === "right")
@@ -719,8 +784,8 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
       const bars = [...barsByTimeRef.current.values()].filter((bar) => !range || (Number(bar.time) >= Number(range.from) && Number(bar.time) <= Number(range.to)));
       const step = Math.max(1, Math.ceil(bars.length / 10));
       const selectedBars = bars.filter((_bar, index) => index % step === 0 || index === bars.length - 1);
-      const mainMarkers: SeriesMarker<Time>[] = selectedLegend === "instrument" ? selectedBars.map((bar) => ({ time: bar.time, price: chartStyleRendererRef.current?.displayPrice(bar) ?? bar.close, position: "atPriceMiddle", shape: "circle", color: "#2962ff", size: 1 })) : [];
-      const volumeMarkers: SeriesMarker<Time>[] = selectedLegend === "volume" ? selectedBars.map((bar) => ({ time: bar.time, price: bar.volume, position: "atPriceTop", shape: "circle", color: "#2962ff", size: 1 })) : [];
+      const mainMarkers: SeriesMarker<Time>[] = !marksHidden && selectedLegend === "instrument" ? selectedBars.map((bar) => ({ time: bar.time, price: chartStyleRendererRef.current?.displayPrice(bar) ?? bar.close, position: "atPriceMiddle", shape: "circle", color: "#2962ff", size: 1 })) : [];
+      const volumeMarkers: SeriesMarker<Time>[] = !marksHidden && selectedLegend === "volume" ? selectedBars.map((bar) => ({ time: bar.time, price: bar.volume, position: "atPriceTop", shape: "circle", color: "#2962ff", size: 1 })) : [];
       mainSelectionMarkersRef.current?.setMarkers(mainMarkers);
       volumeSelectionMarkersRef.current?.setMarkers(volumeMarkers);
     };
@@ -731,7 +796,7 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
       chart.timeScale().unsubscribeVisibleTimeRangeChange(refresh);
       refreshSelectionMarkersRef.current = () => undefined;
     };
-  }, [selectedLegend, symbol, resolution]);
+  }, [selectedLegend, symbol, resolution, marksHidden]);
   autoScaleRef.current = autoScale;
   activeDrawingToolRef.current = activeDrawingTool;
   stayInDrawingModeRef.current = stayInDrawingMode;
@@ -762,6 +827,9 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
     setDataError(undefined);
     setVisibleBar(undefined);
     currentBarRef.current = undefined;
+    lockedCrosshairRef.current = null;
+    setCrosshairLocked(false);
+    setChartMenu(null);
     barsByTimeRef.current.clear();
     previousCloseByTimeRef.current.clear();
     chartStyleRendererRef.current?.setBars([]);
@@ -789,11 +857,15 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
     setTextDialogOpen(true);
   }, []);
 
-  const [lastPrice, setLastPrice] = useState<string>("N/A");
+  const streamingStudies = useRef(new StreamingIndicators());
+  const streamingVolume = useRef(new StreamingIndicators());
+  const volumeHistory = useRef<Map<number, Bar> | null>(null);
 
   const updateStudySeries = (rawBars: Bar[]) => {
+    volumeHistory.current = null;
     referenceStudies.update(rawBars);
     const bars = chartStudyBars(rawBars, chartStyleRef.current);
+    streamingStudies.current.reset(bars);
     PRICE_INDICATORS.forEach((indicator) => {
       priceIndicatorSeriesRef.current.get(indicator.id)?.setData(
         priceIndicatorData(bars, indicator.length, indicator.type)
@@ -915,10 +987,10 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
     const series = chart.addSeries(CandlestickSeries, {
       title: symbol,
       priceScaleId: "right",
-      upColor: "#54BA88",
+      upColor: "#53B987",
       downColor: "#EB4D5C",
       borderVisible: false,
-      wickUpColor: "#54BA88",
+      wickUpColor: "#53B987",
       wickDownColor: "#EB4D5C",
       priceLineVisible: true,
       priceLineColor: "#EB4D5C",
@@ -954,12 +1026,35 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
     volumeSelectionMarkersRef.current = createSeriesMarkers(volumeSeries, [], { zOrder: "top" });
     timelineSeriesRef.current = timelineSeries;
 
+    let crosshairLabelVisible = true;
     chart.subscribeCrosshairMove((param) => {
-      crosshairDrawingPointRef.current = param.point && param.time && param.paneIndex === mainPaneIndexRef.current
-        ? { timestamp: Number(param.time), price: series.coordinateToPrice(param.point.y) ?? NaN } : null;
+      if (!renderingRef.current) return;
+      hoveredMainSeriesRef.current = param.hoveredSeries === series && param.point
+        ? { x: param.point.x, y: param.point.y, paneIndex: param.paneIndex ?? mainPaneIndexRef.current } : null;
+      const locked = lockedCrosshairRef.current;
+      if (locked) {
+        const paneSeries = chart.panes()[param.paneIndex ?? mainPaneIndexRef.current]?.getSeries()
+          .find((item) => item.options().visible && item.data().length > 0);
+        if (param.point && paneSeries) {
+          const price = paneSeries.coordinateToPrice(param.point.y);
+          if (price !== null) {
+            locked.price = price;
+            locked.series = paneSeries as typeof locked.series;
+          }
+        }
+        chart.setCrosshairPosition(locked.price, locked.time, locked.series);
+      }
+      const volumePane = volumeSeriesRef.current?.getPane().paneIndex();
+      const showLabel = param.paneIndex !== volumePane || volumePane === mainPaneIndexRef.current;
+      if (showLabel !== crosshairLabelVisible) {
+        crosshairLabelVisible = showLabel;
+        chart.applyOptions({ crosshair: { horzLine: { labelVisible: showLabel } } });
+      }
+      const time = locked?.time ?? param.time;
+      crosshairDrawingPointRef.current = param.point && time && param.paneIndex === mainPaneIndexRef.current
+        ? { timestamp: Number(time), price: series.coordinateToPrice(param.point.y) ?? NaN } : null;
       if (panGestureRef.current?.active) return;
-      const time = param.time ? Number(param.time) : undefined;
-      setVisibleBar(time ? barsByTimeRef.current.get(time) : currentBarRef.current);
+      setVisibleBar(time ? barsByTimeRef.current.get(Number(time)) : currentBarRef.current);
     });
 
     const lineTools = createDrawingTools(chart, series, () => resolutionRef.current);
@@ -1017,6 +1112,7 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
       if (event.selectedLineTool.toolType === "Text" || event.selectedLineTool.toolType === "Callout" || event.selectedLineTool.toolType === "PriceNote") openTextDialog(event.selectedLineTool);
     });
     const refreshDrawingOverlays = (range?: { from: number; to: number } | null) => {
+      if (!renderingRef.current) return;
       setDrawingViewportVersion((current) => current + 1);
       if (range && Number(range.from) <= 20) loadOlderHistoryRef.current();
     };
@@ -1119,6 +1215,7 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
     };
 
     const cancelZoomOnEscape = (event: KeyboardEvent) => {
+      if (!activeRef.current) return;
       if (event.key !== "Escape" || !zoomModeRef.current) return;
       zoomStartRef.current = null;
       setZoomSelection(null);
@@ -1175,7 +1272,7 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
         active: false,
         captureTarget,
       };
-      captureTarget.setPointerCapture(event.pointerId);
+      try { captureTarget.setPointerCapture(event.pointerId); } catch { panGestureRef.current = null; }
     };
 
     const onPointerMove = (event: PointerEvent) => {
@@ -1197,6 +1294,11 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
         flushRealtimeRef.current();
       }
       if (gesture.captureTarget.hasPointerCapture(event.pointerId)) gesture.captureTarget.releasePointerCapture(event.pointerId);
+    };
+    const cancelPan = () => {
+      const gesture = panGestureRef.current;
+      if (gesture) finishPan({ pointerId: gesture.pointerId } as PointerEvent);
+      userGesture = null;
     };
 
     let plotWheelState: WheelState = { totalX: 0, totalY: 0, lastTime: 0 };
@@ -1285,6 +1387,8 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
     element.addEventListener("pointermove", onPointerMove);
     element.addEventListener("pointerup", finishPan);
     element.addEventListener("pointercancel", finishPan);
+    element.addEventListener("lostpointercapture", finishPan);
+    window.addEventListener("blur", cancelPan);
     element.addEventListener("pointerdown", onZoomPointerDown, true);
     element.addEventListener("pointermove", onZoomPointerMove, true);
     element.addEventListener("pointerup", onZoomPointerEnd, true);
@@ -1306,11 +1410,13 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
     resizeFrame = requestAnimationFrame(() => refreshDrawingOverlays());
 
     return () => {
-      panGestureRef.current = null;
+      cancelPan();
       element.removeEventListener("pointerdown", onPointerDown);
       element.removeEventListener("pointermove", onPointerMove);
       element.removeEventListener("pointerup", finishPan);
       element.removeEventListener("pointercancel", finishPan);
+      element.removeEventListener("lostpointercapture", finishPan);
+      window.removeEventListener("blur", cancelPan);
       element.removeEventListener("pointerdown", onZoomPointerDown, true);
       element.removeEventListener("pointermove", onZoomPointerMove, true);
       element.removeEventListener("pointerup", onZoomPointerEnd, true);
@@ -1357,7 +1463,6 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
 
     let cancelled = false;
     const loadGeneration = ++historyLoadGenerationRef.current;
-    let realtimeRenderFrame: number | undefined;
     const interactionAtLoad = viewportInteractionRef.current;
     followLatestRef.current = true;
     loadedAxisContextRef.current = null;
@@ -1519,6 +1624,7 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
       };
 
       loadOlderHistoryRef.current = () => {
+        if (!renderingRef.current) return;
         if (cancelled || dateNavigationControllerRef.current || loadingOlderHistory || olderHistoryExhausted || earliestHistoryTime === undefined) return;
         loadingOlderHistory = true;
         const pageTo = earliestHistoryTime - 1;
@@ -1630,43 +1736,18 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
           localStorage.setItem(drawingKeyRef.current, normalizedDrawings);
         }
       }
-      const fallbackUndo = normalizedDrawings === "[]"
-        ? ["[]"]
-        : ["[]", normalizedDrawings];
-      let restoredUndo = fallbackUndo;
-      let restoredRedo: string[] = [];
-      const storedHistory = localStorage.getItem(
-        drawingHistoryStorageKey(drawingKeyRef.current),
+      const day = drawingHistoryDay(activeTimezone);
+      const restoredHistory = restoreDrawingHistory(
+        localStorage.getItem(drawingHistoryStorageKey(drawingKeyRef.current)), normalizedDrawings, day, normalizeDrawingState,
       );
-      if (storedHistory) {
-        try {
-          const parsedHistory = JSON.parse(storedHistory) as Partial<StoredDrawingHistory>;
-          const undo = Array.isArray(parsedHistory.undo)
-            ? parsedHistory.undo.filter(isDrawingState).map(normalizeDrawingState)
-            : [];
-          const redo = Array.isArray(parsedHistory.redo)
-            ? parsedHistory.redo.filter(isDrawingState).map(normalizeDrawingState)
-            : [];
-          if (
-            parsedHistory.version === DRAWING_HISTORY_VERSION
-            && undo.length > 0
-            && undo.at(-1) === normalizedDrawings
-          ) {
-            restoredUndo = undo.slice(-MAX_DRAWING_HISTORY_STATES);
-            restoredRedo = redo.slice(-MAX_DRAWING_HISTORY_STATES);
-          }
-        } catch {
-          localStorage.removeItem(drawingHistoryStorageKey(drawingKeyRef.current));
-        }
-      }
-      drawingHistoryRef.current = restoredUndo;
-      drawingRedoHistoryRef.current = restoredRedo;
+      drawingHistoryDayRef.current = day;
+      drawingHistoryRef.current = restoredHistory.undo;
+      drawingRedoHistoryRef.current = restoredHistory.redo;
       persistDrawingHistory();
       syncDrawingHistoryAvailability();
       if (chartBars.length) {
         currentBarRef.current = chartBars[chartBars.length - 1];
         lastRealtimeBucketRef.current = Number(currentBarRef.current.time);
-        setLastPrice(currentBarRef.current.close.toFixed(activePriceFormat.precision));
         setVisibleBar(currentBarRef.current);
       }
       setHistoryLoading(false);
@@ -1707,27 +1788,60 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
       if (isNewRenderedBucket) timelineSeriesRef.current?.setData(futureTimelinePoints(bucketNumber, resolution));
 
       chartStyleRendererRef.current?.update(bar);
+      if (isNewRenderedBucket) updateCompareSeries(bar.time);
       refreshSelectionMarkersRef.current();
-      refreshHighLowRef.current();
+      refreshHighLowRef.current(bar);
       volumeSeriesRef.current?.update({
         time: bar.time,
         value: bar.volume,
         color: volumeColorForBar(bar, previousCloseByTimeRef.current.get(bucketNumber)),
       });
 
-      const allBars = [...barsByTimeRef.current.values()];
+      if (volumeHistory.current !== barsByTimeRef.current) {
+        streamingVolume.current.reset([...barsByTimeRef.current.values()]);
+        volumeHistory.current = barsByTimeRef.current;
+      } else streamingVolume.current.update(bar);
       const currentSettings = maSettingsRef.current;
-      const latestVolumeSma = latestVolumeMaPoint(
-        allBars,
+      const latestVolumeSma = streamingVolume.current.volume(
         currentSettings.length,
         currentSettings.type,
         currentSettings.smoothingLength,
       );
       if (latestVolumeSma) volumeSmaSeriesRef.current?.update(latestVolumeSma);
-      const latestVolumeMa = latestVolumeMaPoint(allBars, currentSettings.length, "SMA", 1);
+      const latestVolumeMa = streamingVolume.current.volume(currentSettings.length, "SMA", 1);
       if (latestVolumeMa) volumeMaSeriesRef.current?.update(latestVolumeMa);
       if (referenceStudies.instances.current.size > 0 || priceIndicatorSeriesRef.current.size > 0 || macdSeriesRef.current || rsiSeriesRef.current) {
-        updateStudySeries(allBars);
+        const stream = streamingStudies.current;
+        stream.update(chartStyleRendererRef.current?.displayBar(bar) ?? bar);
+        if (referenceStudies.instances.current.size) referenceStudies.update([...barsByTimeRef.current.values()], true);
+        PRICE_INDICATORS.forEach(({ id, length, type }) => {
+          const series = priceIndicatorSeriesRef.current.get(id);
+          if (!series) return;
+          const point = stream.price(length, type);
+          if (point) series.update(point);
+        });
+        if (["BOLL_UPPER", "BOLL_MIDDLE", "BOLL_LOWER"].some((id) => priceIndicatorSeriesRef.current.has(id))) {
+          const bands = stream.bollinger();
+          for (const band of ["upper", "middle", "lower"]) {
+            const point = bands.get(band);
+            if (point) priceIndicatorSeriesRef.current.get(`BOLL_${band.toUpperCase()}`)?.update(point);
+          }
+        }
+        if (macdSeriesRef.current) {
+          const values = stream.macd();
+          const macd = values.get("macd"), signal = values.get("signal"), histogram = values.get("histogram");
+          if (macd) macdSeriesRef.current.macd.update(macd);
+          if (signal) macdSeriesRef.current.signal.update(signal);
+          if (histogram) macdSeriesRef.current.histogram.update({ ...histogram, color: histogram.value >= 0 ? "rgba(83,185,135,.65)" : "rgba(235,77,92,.65)" });
+        }
+        if (rsiSeriesRef.current) {
+          const point = stream.rsi();
+          if (point) {
+            rsiSeriesRef.current.rsi.update(point);
+            rsiSeriesRef.current.upper.update({ time: point.time, value: 70 });
+            rsiSeriesRef.current.lower.update({ time: point.time, value: 30 });
+          }
+        }
       }
 
       if (isNewRenderedBucket && timeScale) {
@@ -1746,31 +1860,54 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
       if (visiblePrice && manualPriceScale) setVisiblePriceRange(manualPriceScale, visiblePrice);
 
       lastRenderedRealtimeBucketRef.current = bucketNumber;
-      setLastPrice(bar.close.toFixed(activePriceFormat.precision));
       setVisibleBar(bar);
     };
 
-    flushRealtimeRef.current = () => {
-      if (realtimeRenderFrame !== undefined) {
-        window.cancelAnimationFrame(realtimeRenderFrame);
-        realtimeRenderFrame = undefined;
-      }
-      const bar = currentBarRef.current;
-      if (bar && !cancelled) renderRealtimeBar(bar);
-    };
+    const realtimeScheduler = createChartRenderScheduler(
+      () => renderingRef.current,
+      (rebuild) => {
+        const bar = currentBarRef.current;
+        if (!bar || cancelled) return;
+        if (rebuild) {
+          const allBars = [...barsByTimeRef.current.values()].sort((a, b) => Number(a.time) - Number(b.time));
+          const timeScale = chart.timeScale();
+          const range = timeScale.getVisibleLogicalRange();
+          const priceScale = !autoScaleRef.current
+            ? chart.priceScale(mainScaleSideRef.current, mainPaneIndexRef.current) : null;
+          const priceRange = priceScale?.getVisibleRange();
+          const oldIndex = allBars.findIndex((item) => Number(item.time) === lastRenderedRealtimeBucketRef.current);
+          chartStyleRendererRef.current?.setBars(allBars);
+          syncCompareSeries();
+          volumeSeriesRef.current?.setData(allBars.map((item, index) => ({
+            time: item.time, value: item.volume, color: volumeColorForBar(item, allBars[index - 1]?.close),
+          })));
+          refreshVolumeMa();
+          updateStudySeries(allBars);
+          timelineSeriesRef.current?.setData(futureTimelinePoints(Number(bar.time), resolution));
+          if (range) {
+            const shift = followLatestRef.current && oldIndex >= 0 ? allBars.length - 1 - oldIndex : 0;
+            timeScale.setVisibleLogicalRange({ from: range.from + shift, to: range.to + shift });
+          }
+          if (priceRange && priceScale) setVisiblePriceRange(priceScale, priceRange);
+          lastRenderedRealtimeBucketRef.current = Number(bar.time);
+        }
+        renderRealtimeBar(bar);
+      },
+    );
+    flushRealtimeRef.current = realtimeScheduler.flush;
+    suspendRealtimeRef.current = realtimeScheduler.suspend;
 
     function processRealtimeTick(tick: PriceTick) {
       const bucket = bucketStart(tick.time, resolution);
       const bucketNumber = Number(bucket);
       if (!isTradingSessionTime(bucket, resolution, activeSession, activeTimezone)) {
-        if (!panGestureRef.current?.active) setLastPrice(tick.price.toFixed(activePriceFormat.precision));
         return;
       }
       const isNewBucket = lastRealtimeBucketRef.current !== bucketNumber;
       const previousBar = currentBarRef.current;
       if (previousBar && bucketNumber < Number(previousBar.time)) return;
       // Vẽ nến cũ trước khi sang nến mới để giữ đủ dữ liệu OHLCV.
-      if (isNewBucket && realtimeRenderFrame !== undefined) flushRealtimeRef.current();
+      if (isNewBucket) realtimeScheduler.flush();
       if (isNewBucket && previousBar) {
         previousCloseByTimeRef.current.set(bucketNumber, previousBar.close);
       }
@@ -1778,12 +1915,7 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
       lastRealtimeBucketRef.current = bucketNumber;
       barsByTimeRef.current.set(bucketNumber, currentBarRef.current);
       // Gộp các lần vẽ trong cùng một khung hình, vẫn xử lý đầy đủ từng giao dịch.
-      if (realtimeRenderFrame === undefined) {
-        realtimeRenderFrame = window.requestAnimationFrame(() => {
-          realtimeRenderFrame = undefined;
-          flushRealtimeRef.current();
-        });
-      }
+      realtimeScheduler.schedule();
     }
 
     realtimeTickHandlerRef.current = (tick) => {
@@ -1793,13 +1925,14 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
     return () => {
       cancelled = true;
       historyAbortController.abort();
-      if (realtimeRenderFrame !== undefined) window.cancelAnimationFrame(realtimeRenderFrame);
+      realtimeScheduler.dispose();
       realtimeTickBuffer.dispose();
       loadOlderHistoryRef.current = () => undefined;
       realtimeTickHandlerRef.current = () => undefined;
       flushRealtimeRef.current = () => undefined;
+      suspendRealtimeRef.current = () => undefined;
     };
-  }, [axisSettingsRestored, persistDrawingHistory, rangeDays, resolution, resolutionRestored, symbol, symbolInfo, syncCompareSeries, syncDrawingHistoryAvailability]);
+  }, [axisSettingsRestored, persistDrawingHistory, rangeDays, resolution, resolutionRestored, symbol, symbolInfo, syncCompareSeries, updateCompareSeries, syncDrawingHistoryAvailability]);
 
   useEffect(() => {
     const chart = chartRef.current;
@@ -1882,8 +2015,18 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
             if (lastPoint && Number(bucket) < Number(lastPoint.time)) return;
             if (lastPoint && Number(bucket) === Number(lastPoint.time)) lastPoint.value = tick.price;
             else points.push({ time: bucket, value: tick.price });
-            series?.update({ time: bucket, value: tick.price });
             const change = tick.price - comparePreviousClose;
+            const pendingQuote: ComparisonQuote = {
+              symbol: compareSymbol, description: info.description, exchange: info.exchange,
+              price: tick.price, change, changePercent: comparePreviousClose ? change / comparePreviousClose * 100 : 0,
+              color: COMPARE_COLORS[index % COMPARE_COLORS.length],
+            };
+            if (!renderingRef.current) {
+              pendingComparisonQuotesRef.current.set(compareSymbol, pendingQuote);
+              return;
+            }
+            const mainTime = currentBarRef.current?.time;
+            if (mainTime !== undefined) updateCompareSeries(mainTime);
             setComparisonQuotes((current) => current.map((quote) => quote.symbol === compareSymbol
               ? {
                   ...quote,
@@ -1909,7 +2052,7 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
       controller.abort();
       feeds.forEach((feed) => feed.close());
     };
-  }, [compareSymbols, rangeDays, resolution, syncCompareSeries]);
+  }, [compareSymbols, rangeDays, resolution, syncCompareSeries, updateCompareSeries]);
 
   useEffect(() => {
     const feed = connectPriceFeed(
@@ -1924,6 +2067,20 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
       if (feedRef.current === feed) feedRef.current = null;
     };
   }, [symbol]);
+
+  useEffect(() => {
+    if (!active || !documentVisible) {
+      suspendRealtimeRef.current();
+      return;
+    }
+    flushRealtimeRef.current();
+    if (pendingComparisonQuotesRef.current.size) {
+      syncCompareSeries();
+      const pending = new Map(pendingComparisonQuotesRef.current);
+      pendingComparisonQuotesRef.current.clear();
+      setComparisonQuotes((current) => current.map((quote) => pending.get(quote.symbol) ?? quote));
+    }
+  }, [active, documentVisible, syncCompareSeries]);
 
   useEffect(() => {
     const bars = [...barsByTimeRef.current.values()]
@@ -1950,16 +2107,16 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
       lineType: volumeVisualSettings.maPlotStyle === "step" ? LineType.WithSteps : volumeVisualSettings.maPlotStyle === "curved" ? LineType.Curved : LineType.Simple,
       lineStyle: volumeVisualSettings.maPlotStyle === "dashed" ? LineStyle.Dashed : LineStyle.Solid,
       priceLineVisible: volumeVisualSettings.maPriceLineVisible,
-      lastValueVisible: axisLabelsRef.current.studyValues && volumeVisualSettings.scaleLabelVisible,
+      lastValueVisible: false,
     });
     volumeSmaSeriesRef.current?.applyOptions({
       color: volumeVisualSettings.smoothedColor,
       lineType: volumeVisualSettings.smoothedPlotStyle === "step" ? LineType.WithSteps : volumeVisualSettings.smoothedPlotStyle === "curved" ? LineType.Curved : LineType.Simple,
       lineStyle: volumeVisualSettings.smoothedPlotStyle === "dashed" ? LineStyle.Dashed : LineStyle.Solid,
       priceLineVisible: volumeVisualSettings.smoothedPriceLineVisible,
-      lastValueVisible: axisLabelsRef.current.studyValues && volumeVisualSettings.scaleLabelVisible,
+      lastValueVisible: false,
     });
-    volumeSeriesRef.current?.applyOptions({ lastValueVisible: axisLabelsRef.current.studyValues && volumeVisualSettings.scaleLabelVisible });
+    volumeSeriesRef.current?.applyOptions({ lastValueVisible: false });
   }, [volumeVisualSettings, volumeColorForBar]);
 
   type MovableSeries = ISeriesApi<"Candlestick"> | ISeriesApi<"Histogram"> | ISeriesApi<"Line"> | ReferenceSeries;
@@ -2148,7 +2305,12 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
 
   useEffect(() => {
     const chart = chartRef.current;
-    if (!chart) return;
+    const mainSeries = seriesRef.current;
+    const volumeSeries = volumeSeriesRef.current;
+    if (!chart || !mainSeries || !volumeSeries) return;
+    // Chỉ số pane trong state có thể chưa đồng bộ sau khi chuyển chuỗi.
+    const currentMainPaneIndex = mainSeries.getPane().paneIndex();
+    const currentVolumePaneIndex = volumeSeries.getPane().paneIndex();
     const priceScaleId = mainScaleSide;
     const scaleSideChanged = previousMainScaleSideRef.current !== mainScaleSide;
     const visibleTime = scaleSideChanged ? chart.timeScale().getVisibleRange() : null;
@@ -2159,7 +2321,7 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
         : effectiveScaleMode === "log"
         ? PriceScaleMode.Logarithmic
         : PriceScaleMode.Normal;
-    const previousScale = chart.priceScale(previousMainScaleSideRef.current, mainPaneIndex);
+    const previousScale = chart.priceScale(previousMainScaleSideRef.current, currentMainPaneIndex);
     const previousMode = previousScale.options().mode;
     const modeChanged = previousMode !== mode;
     const previousPriceRange = scaleSideChanged && !modeChanged && !autoScale
@@ -2182,7 +2344,7 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
       const { rsi, upper, lower } = rsiSeriesRef.current;
       [rsi, upper, lower].forEach((item) => item.applyOptions({ priceScaleId: indicatorScaleSides.rsi, baseLineVisible: false }));
     }
-    const volumeScaleId = volumeScaleSideOverride ?? (volumePaneIndex !== mainPaneIndex ? mainScaleSide : comparisonActive ? "volume" : mainScaleSide === "right" ? "left" : "right");
+    const volumeScaleId = volumeScaleSideOverride ?? (currentVolumePaneIndex !== currentMainPaneIndex ? mainScaleSide : comparisonActive ? "volume" : mainScaleSide === "right" ? "left" : "right");
     [volumeSeriesRef.current, volumeMaSeriesRef.current, volumeSmaSeriesRef.current].forEach((series) => series?.applyOptions({ baseLineVisible: false }));
     volumeSeriesRef.current?.applyOptions({
       priceScaleId: volumeScaleId,
@@ -2219,17 +2381,17 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
       },
     });
 
-    if (volumeScaleId === "volume") chart.priceScale("volume", volumePaneIndex).applyOptions({ scaleMargins: { top: 0.8, bottom: 0 }, visible: false });
-    else if (volumePaneIndex !== mainPaneIndex) chart.priceScale(volumeScaleId, volumePaneIndex).applyOptions({ scaleMargins: { top: 0.08, bottom: 0.05 }, visible: true });
+    if (volumeScaleId === "volume") volumeSeries.priceScale().applyOptions({ scaleMargins: { top: 0.8, bottom: 0 }, visible: false });
+    else if (currentVolumePaneIndex !== currentMainPaneIndex) volumeSeries.priceScale().applyOptions({ scaleMargins: { top: 0.08, bottom: 0.05 }, visible: true });
 
-    const priceScale = chart.priceScale(priceScaleId, mainPaneIndex);
+    const priceScale = mainSeries.priceScale();
     applyPriceScaleMode(chart, priceScale, mode);
     priceScale.applyOptions({
       invertScale: mainScaleInverted,
     });
     priceScale.setAutoScale(mode === PriceScaleMode.Percentage || mode === PriceScaleMode.IndexedTo100 || (autoScale && !scaleLocked));
     if (scaleSideChanged) {
-      const oldScale = chart.priceScale(previousMainScaleSideRef.current, mainPaneIndex);
+      const oldScale = chart.priceScale(previousMainScaleSideRef.current, currentMainPaneIndex);
       applyPriceScaleMode(chart, oldScale, PriceScaleMode.Normal);
       oldScale.applyOptions({ invertScale: false });
       previousMainScaleSideRef.current = mainScaleSide;
@@ -2371,21 +2533,21 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
     macd?.signal.applyOptions({ title: axisLabels.studyNames ? "Signal" : "", lastValueVisible: axisLabels.studyValues });
     const rsi = rsiSeriesRef.current;
     rsi?.rsi.applyOptions({ title: axisLabels.studyNames ? "RSI" : "", lastValueVisible: axisLabels.studyValues });
-    volumeSeriesRef.current?.applyOptions({ title: axisLabels.studyNames ? "Volume" : "", lastValueVisible: axisLabels.studyValues && volumeVisualSettings.scaleLabelVisible });
-    volumeMaSeriesRef.current?.applyOptions({ title: axisLabels.studyNames ? "Volume MA" : "", lastValueVisible: axisLabels.studyValues && volumeVisualSettings.scaleLabelVisible });
-    volumeSmaSeriesRef.current?.applyOptions({ title: axisLabels.studyNames ? "Smoothed MA" : "", lastValueVisible: axisLabels.studyValues && volumeVisualSettings.scaleLabelVisible });
+    volumeSeriesRef.current?.applyOptions({ title: axisLabels.studyNames ? "Volume" : "", lastValueVisible: false });
+    volumeMaSeriesRef.current?.applyOptions({ title: axisLabels.studyNames ? "Volume MA" : "", lastValueVisible: false });
+    volumeSmaSeriesRef.current?.applyOptions({ title: axisLabels.studyNames ? "Smoothed MA" : "", lastValueVisible: false });
     referenceStudies.instances.current.forEach((study) => {
       const plots = study.definition?.metainfo.plots.filter((plot) => {
         const style = study.settings?.styles[plot.id];
         return plot.type === "line" && style && style.visible !== false && style.display !== 0 && (style.trackPrice || study.settings?.scaleLabels) && study.points.some((point) => Number.isFinite(point.values[plot.id]));
       }) ?? [];
       study.priceLines?.forEach((line, index) => line.applyOptions({
-        axisLabelVisible: Boolean(axisLabels.studyValues && study.settings?.scaleLabels),
+        axisLabelVisible: Boolean(study.settings?.scaleLabels && study.series && studyLabelsVisible(study.series)),
         title: axisLabels.studyNames && plots[index] ? study.definition?.metainfo.styles[plots[index].id]?.title ?? study.name : "",
       }));
     });
     chartRef.current?.priceScale(mainScaleSide, mainPaneIndex).applyOptions({ alignLabels: axisLabels.align });
-  }, [axisLabels, axisLines.price, chartAppearance.lastPriceVisible, mainScaleSide, mainPaneIndex, symbol, volumeVisualSettings.scaleLabelVisible, referenceStudies.revision]);
+  }, [axisLabels, axisLines.price, chartAppearance.lastPriceVisible, mainScaleSide, mainPaneIndex, symbol, volumeVisualSettings.scaleLabelVisible, referenceStudies.revision, studyLabelsVisible]);
 
   useEffect(() => {
     const main = seriesRef.current;
@@ -2401,32 +2563,52 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
     const chart = chartRef.current;
     const series = seriesRef.current;
     if (!chart || !series) return;
-    const update = () => {
+    let cached: { from: number; to: number; high: number; low: number; bar?: Bar } | undefined;
+    const update = (tickBar?: Bar) => {
+      if (!axisLabels.highLow && !axisLines.highLow) {
+        if (highLowLinesRef.current && (highLowLinesRef.current.high.options().axisLabelVisible || highLowLinesRef.current.high.options().lineVisible)) {
+          highLowLinesRef.current.high.applyOptions({ axisLabelVisible: false, lineVisible: false });
+          highLowLinesRef.current.low.applyOptions({ axisLabelVisible: false, lineVisible: false });
+        }
+        return;
+      }
       const visible = chart.timeScale().getVisibleRange();
-      const bars = [...barsByTimeRef.current.values()].filter((bar) => !visible || (
-        Number(bar.time) >= Number(visible.from) && Number(bar.time) <= Number(visible.to)
-      ));
-      if (!bars.length) {
+      const from = visible ? Number(visible.from) : -Infinity;
+      const to = visible ? Number(visible.to) : Infinity;
+      let high = -Infinity, low = Infinity;
+      if (tickBar && cached && cached.from === from && cached.to === to
+        && cached.bar?.time === tickBar.time && tickBar.high >= cached.bar.high && tickBar.low <= cached.bar.low) {
+        high = cached.high; low = cached.low;
+        if (Number(tickBar.time) >= from && Number(tickBar.time) <= to) {
+          high = Math.max(high, tickBar.high); low = Math.min(low, tickBar.low);
+        }
+      } else {
+        for (const bar of barsByTimeRef.current.values()) {
+          if (Number(bar.time) < from || Number(bar.time) > to) continue;
+          high = Math.max(high, bar.high); low = Math.min(low, bar.low);
+        }
+      }
+      cached = { from, to, high, low, bar: tickBar };
+      if (!Number.isFinite(high) || !Number.isFinite(low)) {
         highLowLinesRef.current?.high.applyOptions({ axisLabelVisible: false, lineVisible: false });
         highLowLinesRef.current?.low.applyOptions({ axisLabelVisible: false, lineVisible: false });
         return;
       }
-      const high = Math.max(...bars.map((bar) => bar.high));
-      const low = Math.min(...bars.map((bar) => bar.low));
       if (!highLowLinesRef.current) {
         highLowLinesRef.current = {
           high: series.createPriceLine({ price: high, color: "#142E61", lineWidth: 1, lineStyle: 2, lineVisible: false, axisLabelVisible: false, title: "Đỉnh" }),
           low: series.createPriceLine({ price: low, color: "#142E61", lineWidth: 1, lineStyle: 2, lineVisible: false, axisLabelVisible: false, title: "Đáy" }),
         };
       }
-      highLowLinesRef.current.high.applyOptions({ price: high, axisLabelVisible: axisLabels.highLow, lineVisible: axisLines.highLow });
-      highLowLinesRef.current.low.applyOptions({ price: low, axisLabelVisible: axisLabels.highLow, lineVisible: axisLines.highLow });
+      if (highLowLinesRef.current.high.options().price !== high || highLowLinesRef.current.high.options().axisLabelVisible !== axisLabels.highLow || highLowLinesRef.current.high.options().lineVisible !== axisLines.highLow) highLowLinesRef.current.high.applyOptions({ price: high, axisLabelVisible: axisLabels.highLow, lineVisible: axisLines.highLow });
+      if (highLowLinesRef.current.low.options().price !== low || highLowLinesRef.current.low.options().axisLabelVisible !== axisLabels.highLow || highLowLinesRef.current.low.options().lineVisible !== axisLines.highLow) highLowLinesRef.current.low.applyOptions({ price: low, axisLabelVisible: axisLabels.highLow, lineVisible: axisLines.highLow });
     };
     refreshHighLowRef.current = update;
-    chart.timeScale().subscribeVisibleTimeRangeChange(update);
+    const onRange = () => update();
+    chart.timeScale().subscribeVisibleTimeRangeChange(onRange);
     update();
     return () => {
-      chart.timeScale().unsubscribeVisibleTimeRangeChange(update);
+      chart.timeScale().unsubscribeVisibleTimeRangeChange(onRange);
       refreshHighLowRef.current = () => undefined;
     };
   }, [axisLabels.highLow, axisLines.highLow, resolution, symbol]);
@@ -2443,6 +2625,7 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
     const internalHeight = () => Math.max(1, chart.panes()[mainPaneIndex].getHeight() * (1 - scale.options().scaleMargins.top - scale.options().scaleMargins.bottom));
     scaleRatioRef.current = chart.timeScale().options().barSpacing * (initialRange.to - initialRange.from) / internalHeight();
     const preserveRatio = () => {
+      if (!renderingRef.current) return;
       const range = scale.getVisibleRange();
       const ratio = scaleRatioRef.current;
       if (!range || ratio === null) return;
@@ -2468,6 +2651,7 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (!activeRef.current) return;
       if (event.defaultPrevented || document.querySelector('[role="dialog"]')) return;
       const target = event.target as HTMLElement | null;
       if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
@@ -2479,14 +2663,7 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
         if (scale && ["r", "p", "l", "i"].includes(key)) {
           event.preventDefault();
           if (key === "r") {
-            setScaleLocked(false);
-            setAutoScale(true);
-            chartRef.current?.timeScale().resetTimeScale();
-            chartRef.current?.panes().forEach((pane) => {
-              chartRef.current?.priceScale("left", pane.paneIndex()).setAutoScale(true);
-              chartRef.current?.priceScale("right", pane.paneIndex()).setAutoScale(true);
-            });
-            followLatestRef.current = true;
+            resetChartView();
           } else if (key === "i") {
             setMainScaleInverted((current) => !current);
           } else {
@@ -2511,6 +2688,7 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
       const key = event.key.toLowerCase();
       if (modifierPressed && key === "z" && !event.shiftKey) {
         event.preventDefault();
+        ensureDrawingHistoryDay();
         if (drawingHistoryRef.current.length > 1) {
           const currentState = drawingHistoryRef.current.pop()!;
           drawingRedoHistoryRef.current.push(currentState);
@@ -2521,6 +2699,7 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
       }
       if (modifierPressed && key === "y" && !event.shiftKey) {
         event.preventDefault();
+        ensureDrawingHistoryDay();
         const nextState = drawingRedoHistoryRef.current.pop();
         if (nextState) {
           drawingHistoryRef.current.push(nextState);
@@ -2532,9 +2711,10 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [effectiveScaleMode, mainScaleSide, mainPaneIndex, recordDrawingState, restoreDrawingState, setMainScaleMode, syncDrawingHistoryAvailability]);
+  }, [effectiveScaleMode, mainScaleSide, mainPaneIndex, recordDrawingState, restoreDrawingState, setMainScaleMode, syncDrawingHistoryAvailability, ensureDrawingHistoryDay, resetChartView]);
 
   const closeAxisMenu = useCallback(() => setAxisMenu(null), []);
+  const closeChartMenu = useCallback(() => setChartMenu(null), []);
   const axisAtPoint = (clientX: number, clientY: number) => {
     const chart = chartRef.current;
     const element = containerRef.current;
@@ -2562,6 +2742,15 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
   };
   const onAxisHover = (event: React.MouseEvent<HTMLElement>) => {
     const axis = axisAtPoint(event.clientX, event.clientY);
+    const element = containerRef.current;
+    const chart = chartRef.current;
+    if (element && chart) {
+      const rect = element.getBoundingClientRect();
+      const onCanvas = event.target instanceof HTMLCanvasElement;
+      const onTimeAxis = event.clientY >= rect.bottom - chart.timeScale().height() && event.clientY < rect.bottom;
+      const cursor = onCanvas && axis ? "price" : onCanvas && onTimeAxis ? "time" : "";
+      if (element.dataset.axisCursor !== cursor) element.dataset.axisCursor = cursor;
+    }
     if (!axis) {
       setHoverAxis((current) => current ? null : current);
       return;
@@ -2585,11 +2774,43 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
   };
   const onAxisContextMenu = (event: React.MouseEvent<HTMLElement>) => {
     const axis = axisAtPoint(event.clientX, event.clientY);
-    if (!axis) return;
     event.preventDefault();
     event.stopPropagation();
-    setFooterAxis({ side: axis.side, paneIndex: axis.paneIndex });
-    setAxisMenu({ x: event.clientX, y: event.clientY, side: axis.side, paneIndex: axis.paneIndex });
+    setChartMenu(null);
+    setAxisMenu(null);
+    if (axis) {
+      setFooterAxis({ side: axis.side, paneIndex: axis.paneIndex });
+      setAxisMenu({ x: event.clientX, y: event.clientY, side: axis.side, paneIndex: axis.paneIndex });
+      return;
+    }
+    const chart = chartRef.current;
+    const element = containerRef.current;
+    const mainSeries = seriesRef.current;
+    if (!chart || !element || !mainSeries) return;
+    const pane = chart.panes().find((pane) => {
+      const rect = pane.getHTMLElement()?.getBoundingClientRect();
+      return rect && event.clientY >= rect.top && event.clientY < rect.bottom;
+    });
+    const rect = pane?.getHTMLElement()?.getBoundingClientRect();
+    if (!pane || !rect) return;
+    const paneIndex = pane.paneIndex();
+    const source = paneIndex === mainPaneIndexRef.current ? mainSeries : pane.getSeries().find((series) => series.options().visible && series.data().length > 0);
+    const localY = event.clientY - rect.top;
+    const coordinatePrice = source?.coordinateToPrice(localY);
+    const price = coordinatePrice != null && Number.isFinite(coordinatePrice) ? coordinatePrice : null;
+    const leftWidth = safePriceScaleWidth(chart, "left", paneIndex);
+    const time = chart.timeScale().coordinateToTime(event.clientX - element.getBoundingClientRect().left - leftWidth);
+    const current = currentBarRef.current;
+    const priceLineY = current && mainSeries.priceToCoordinate(chartStyleRendererRef.current?.displayPrice(current) ?? current.close);
+    const hovered = hoveredMainSeriesRef.current;
+    const localX = event.clientX - element.getBoundingClientRect().left - leftWidth;
+    const hitMainSeries = hovered?.paneIndex === paneIndex && Math.abs(hovered.x - localX) <= 2 && Math.abs(hovered.y - localY) <= 2;
+    if (price !== null && paneIndex === mainPaneIndexRef.current && mainSeriesVisible && (hitMainSeries || (axisLines.price && priceLineY != null && Math.abs(localY - priceLineY) <= 5))) {
+      setSelectedLegend("instrument");
+      element.dispatchEvent(new CustomEvent("chart-series-contextmenu", { detail: { x: event.clientX, y: event.clientY, price } }));
+      return;
+    }
+    setChartMenu({ x: event.clientX, y: event.clientY, price, time: typeof time === "number" ? time : null, paneIndex });
   };
 
   const toggleHoverAxisMode = (mode: "auto" | "log") => {
@@ -2719,7 +2940,7 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
   };
 
   useEffect(() => {
-    if (!countdownVisible) {
+    if (!active || !documentVisible || !countdownVisible) {
       setCountdown(null);
       return;
     }
@@ -2745,7 +2966,7 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
     update();
     const timer = window.setInterval(update, 1000);
     return () => window.clearInterval(timer);
-  }, [countdownVisible, resolution, symbolInfo?.session, symbolInfo?.timezone]);
+  }, [active, documentVisible, countdownVisible, resolution, symbolInfo?.session, symbolInfo?.timezone]);
 
   const startDrawing = (type: LineToolType) => {
     if (drawingsLocked || !lineToolsRef.current) return;
@@ -2829,6 +3050,7 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
   };
 
   const undoZoom = () => {
+    ensureDrawingHistoryDay();
     const previous = zoomHistoryRef.current.pop();
     const chart = chartRef.current;
     if (!previous || !chart) return;
@@ -2864,7 +3086,7 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
     if (drawingKeyRef.current) localStorage.removeItem(drawingKeyRef.current);
   };
 
-  const clearIndicators = () => { setActiveStudies([]); referenceStudies.clear(); };
+  const clearIndicators = () => { setActiveStudies([]); setCompareSymbols([]); referenceStudies.clear(); setSelectedLegend(null); };
 
   const clearChartObjects = () => {
     clearDrawings();
@@ -2901,20 +3123,18 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
     persistCurrentDrawings();
   };
 
-  const quoteBar = visibleBar ?? currentBarRef.current;
-  const previousClose = quoteBar ? previousCloseByTimeRef.current.get(Number(quoteBar.time)) : undefined;
   const currentPriceFormat = symbolInfo
     ? symbolPriceFormat(symbolInfo)
     : { type: "price" as const, precision: 2, minMove: 0.01 };
-  const sortedBars = [...barsByTimeRef.current.values()]
-    .filter((bar) => isTradingSessionTime(
-      bar.time,
-      resolution,
-      symbolInfo?.session,
-      symbolInfo?.timezone,
-    ))
-    .sort((a, b) => Number(a.time) - Number(b.time));
-  const currentVolumeMa = volumeMa(sortedBars, maLength, maType, smoothingLength).at(-1)?.value;
+  const latestVolumeValue = () => {
+    if (volumeHistory.current !== barsByTimeRef.current) {
+      streamingVolume.current.reset([...barsByTimeRef.current.values()].filter((bar) =>
+        isTradingSessionTime(bar.time, resolution, symbolInfo?.session, symbolInfo?.timezone)
+      ).sort((a, b) => Number(a.time) - Number(b.time)));
+      volumeHistory.current = barsByTimeRef.current;
+    }
+    return streamingVolume.current.volume(maLength, maType, smoothingLength)?.value;
+  };
   const drawingToolbarAnchor = (() => {
     const chart = chartRef.current;
     const series = seriesRef.current;
@@ -3004,6 +3224,7 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
   };
 
   const handleUndo = useCallback(() => {
+    ensureDrawingHistoryDay();
     if (drawingHistoryRef.current.length <= 1 || !lineToolsRef.current) return;
     const currentState = drawingHistoryRef.current.pop()!;
     drawingRedoHistoryRef.current.push(currentState);
@@ -3011,30 +3232,67 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
     const prevState = drawingHistoryRef.current.at(-1) ?? "[]";
     restoreDrawingState(prevState);
     syncDrawingHistoryAvailability();
-  }, [restoreDrawingState, syncDrawingHistoryAvailability]);
+  }, [restoreDrawingState, syncDrawingHistoryAvailability, ensureDrawingHistoryDay]);
 
   const handleRedo = useCallback(() => {
+    ensureDrawingHistoryDay();
     if (drawingRedoHistoryRef.current.length === 0 || !lineToolsRef.current) return;
     const nextState = drawingRedoHistoryRef.current.pop()!;
     drawingHistoryRef.current.push(nextState);
     drawingHistoryRef.current = drawingHistoryRef.current.slice(-MAX_DRAWING_HISTORY_STATES);
     restoreDrawingState(nextState);
     syncDrawingHistoryAvailability();
-  }, [restoreDrawingState, syncDrawingHistoryAvailability]);
+  }, [restoreDrawingState, syncDrawingHistoryAvailability, ensureDrawingHistoryDay]);
+
+  const pasteMainPrice = async () => {
+    const plugin = lineToolsRef.current;
+    if (!plugin || drawingsLocked) return;
+    let serialized = drawingClipboardRef.current;
+    try {
+      serialized = await navigator.clipboard.readText();
+    } catch {}
+    if (!serialized) return;
+    try {
+      const drawings = JSON.parse(normalizeDrawingState(serialized)) as LineToolExport<LineToolType>[];
+      const supported = new Set(DRAWING_TOOL_GROUPS.flatMap((group) => group.tools.map((tool) => tool.id)));
+      if (!Array.isArray(drawings) || !drawings.length || drawings.some((drawing) => !drawing || !supported.has(drawing.toolType)
+        || !Array.isArray(drawing.points) || !drawing.points.every((point) => Number.isFinite(point.timestamp) && Number.isFinite(point.price)) || !drawing.options)) return;
+      selectCursor();
+      if (drawingsHiddenRef.current && hiddenDrawingsRef.current) {
+        plugin.importLineTools(hiddenDrawingsRef.current);
+        hiddenDrawingsRef.current = null;
+        setDrawingsHidden(false);
+      }
+      drawings.forEach((drawing) => plugin.addLineTool(drawing.toolType, drawing.points, drawing.options));
+      recordDrawingState(plugin.exportLineTools());
+    } catch {}
+  };
 
   useEffect(() => {
     const onShortcut = (event: KeyboardEvent) => {
+      if (!activeRef.current) return;
       const target = event.target instanceof HTMLElement ? event.target : null;
       if (event.defaultPrevented || target?.closest('input, textarea, select, [contenteditable=true], [role="menu"]') || document.querySelector('[role="dialog"]')) return;
       const key = event.key.toLowerCase();
       const mod = event.ctrlKey || event.metaKey;
       const alt = event.altKey && !mod && !event.shiftKey;
       const claim = () => { event.preventDefault(); event.stopImmediatePropagation(); };
-      if (alt && key === "g") { claim(); setGoToDateOpen(true); return; }
+      if (alt && key === "g") { claim(); openGoToDate(); return; }
       if ((alt && key === "enter") || (!mod && !event.altKey && event.shiftKey && key === "f")) { claim(); void toggleFullscreen(); return; }
       if (mod && event.altKey && !event.shiftKey && key === "q") { claim(); chartRef.current?.timeScale().resetTimeScale(); followLatestRef.current = true; return; }
       if (mod && event.altKey && !event.shiftKey && key === "h") { claim(); toggleDrawingsVisibility(); return; }
       if (mod && event.altKey && !event.shiftKey && key === "s") { claim(); downloadSnapshot(); return; }
+      if (mod && !event.altKey && !event.shiftKey && key === "c" && selectedDrawing) {
+        claim();
+        const serialized = JSON.stringify([selectedDrawing]);
+        drawingClipboardRef.current = serialized;
+        void navigator.clipboard?.writeText(serialized).catch(() => undefined);
+        return;
+      }
+      if (mod && !event.altKey && !event.shiftKey && key === "v") {
+        if (document.querySelector('[role="menu"]')) return;
+        claim(); void pasteMainPrice(); return;
+      }
       if (mod && event.shiftKey && !event.altKey && key === "s") {
         claim();
         const canvas = chartRef.current?.takeScreenshot();
@@ -3062,6 +3320,7 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
         setSelectedDrawing(null);
         setSelectedLegend(null);
         setAxisMenu(null);
+        setChartMenu(null);
       }
     };
     window.addEventListener("keydown", onShortcut, true);
@@ -3069,30 +3328,40 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
   });
 
   const copyMainPrice = async (price: number) => {
-    copiedPriceRef.current = price;
+    drawingClipboardRef.current = null;
     try {
-      await navigator.clipboard.writeText(String(price));
+      await navigator.clipboard.writeText(price.toFixed(currentPriceFormat.precision));
     } catch {}
   };
 
-  const pasteMainPrice = async () => {
-    let price = copiedPriceRef.current;
-    try {
-      const clipboardText = (await navigator.clipboard.readText()).trim();
-      if (clipboardText) {
-        const parsedPrice = Number(clipboardText.replaceAll(",", ""));
-        if (Number.isFinite(parsedPrice)) price = parsedPrice;
+  const onChartMenuAction = (action: ChartMenuAction) => {
+    if (!chartMenu) return;
+    if (action === "reset") resetChartView();
+    else if (action === "copy" && chartMenu.price !== null) void copyMainPrice(chartMenu.price);
+    else if (action === "paste") void pasteMainPrice();
+    else if (action === "drawings") clearDrawings();
+    else if (action === "indicators") clearIndicators();
+    else if (action === "marks") setMarksHidden((hidden) => !hidden);
+    else if (action === "settings") setChartSettingsOpen(true);
+    else if (action === "lock") {
+      const chart = chartRef.current;
+      if (!chart) return;
+      if (lockedCrosshairRef.current) {
+        lockedCrosshairRef.current = null;
+        setCrosshairLocked(false);
+        chart.clearCrosshairPosition();
+        setVisibleBar(currentBarRef.current);
+      } else if (chartMenu.time !== null && chartMenu.price !== null) {
+        const series = chartMenu.paneIndex === mainPaneIndexRef.current ? seriesRef.current
+          : chart.panes()[chartMenu.paneIndex]?.getSeries().find((series) => series.options().visible && series.data().length > 0);
+        if (!series) return;
+        const time = chartMenu.time as Bar["time"];
+        lockedCrosshairRef.current = { time, price: chartMenu.price, series: series as NonNullable<typeof lockedCrosshairRef.current>["series"] };
+        setCrosshairLocked(true);
+        chart.setCrosshairPosition(chartMenu.price, time, series);
+        setVisibleBar(barsByTimeRef.current.get(time));
       }
-    } catch {}
-    if (price === null || !Number.isFinite(price)) return;
-    seriesRef.current?.createPriceLine({
-      price,
-      color: "#8b92a5",
-      lineWidth: 1,
-      lineStyle: LineStyle.Dashed,
-      axisLabelVisible: true,
-      title: "Pasted price",
-    });
+    }
   };
 
   const sourceSharesPane = (group: MovableSeries[]) => group.length > 0 && group[0].getPane().getSeries()
@@ -3121,11 +3390,16 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
     if (series) moveSeriesGroup(timelineSeriesRef.current ? [series, timelineSeriesRef.current] : [series], direction);
   };
 
-  const moveMainSeriesOrder = (direction: "front" | "back") => {
+  const moveMainSeriesOrder = (direction: "front" | "back" | "forward" | "backward") => {
     const series = seriesRef.current;
     if (!series) return;
     const lastOrder = Math.max(0, series.getPane().getSeries().length - 1);
-    series.setSeriesOrder(direction === "front" ? lastOrder : 0);
+    const order = series.seriesOrder();
+    const others = series.getPane().getSeries().filter((item) => item !== series && item !== timelineSeriesRef.current).map((item) => item.seriesOrder());
+    const next = direction === "front" ? lastOrder : direction === "back" ? 0
+      : direction === "forward" ? Math.min(...others.filter((value) => value > order)) : Math.max(...others.filter((value) => value < order));
+    if (Number.isFinite(next)) series.setSeriesOrder(next);
+    setPaneRevision((revision) => revision + 1);
   };
 
   const moveVolumeToPane = (direction: "above" | "below" | "new-above" | "new-below") => {
@@ -3239,6 +3513,7 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
         : footerScaleOptions?.mode === PriceScaleMode.Logarithmic ? "log" : "normal";
   const footerAutoScale = footerIsMainAxis ? autoScale && !scaleLocked : footerScaleOptions?.autoScale ?? autoScale;
 
+  const getSourceLegends = (quoteBar?: Bar) => {
   const sourceLegends: SourceLegend[] = [];
   const paneRows = new Map<number, number>([[mainPaneIndex, 1]]);
   const addSourceLegend = (id: string, label: string, color: string, value?: string) => {
@@ -3290,11 +3565,35 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
     }
     legend.hasSettings = Boolean(study.settings);
     if (study.error) legend.color = "#f23645";
-    if (study.view && study.view.selected !== (selectedLegend === study.id)) {
-      study.view.selected = selectedLegend === study.id;
+      if (study.view && (study.view.selected !== (selectedLegend === study.id) || study.view.marksHidden !== marksHidden)) {
+        study.view.selected = selectedLegend === study.id;
+        study.view.marksHidden = marksHidden;
       study.series?.applyOptions({});
     }
   });
+    return { sourceLegends, volumeRowTop };
+  };
+  const { sourceLegends } = getSourceLegends(quoteStore.getSnapshot() ?? currentBarRef.current);
+  useEffect(() => {
+    if (active) return;
+    setIndicatorMenuOpen(false);
+    setTimeframeMenuOpen(false);
+    setIsSymbolModalOpen(false);
+    setChartMenu(null);
+    setIsCompareModalOpen(false);
+    setIntervalQuery(null);
+    closeGoToDate();
+    setChartSettingsOpen(false);
+    setTextDialogOpen(false);
+    referenceStudies.setSettingsId(null);
+    setAxisMenu(null);
+    setHoverAxis(null);
+    panGestureRef.current = null;
+    zoomStartRef.current = null;
+    setZoomSelection(null);
+    if (document.fullscreenElement?.id === "app") void document.exitFullscreen();
+  }, [active, closeGoToDate, referenceStudies.setSettingsId]);
+
   const referenceSettings = referenceStudies.settingsId ? referenceStudies.instances.current.get(referenceStudies.settingsId) : undefined;
   const scaleButtonTargets: ScaleButtonTarget[] = (["left", "right"] as const).flatMap((side) => {
     const panes = chartRef.current?.panes() ?? [];
@@ -3318,11 +3617,11 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
     : undefined;
   return (
     <>
-      <DelayedTooltip />
-      <OutsideDragSelectionGuard />
-      {referenceSettings?.definition && referenceSettings.settings && <ReferenceStudySettingsDialog key={referenceSettings.id} definition={referenceSettings.definition} settings={referenceSettings.settings} onApply={(settings) => referenceStudies.apply(referenceSettings.id, settings)} onClose={() => referenceStudies.setSettingsId(null)}/> }
-      <AppHeader connectionStatus={status} timezone={chartTimezone} exchangeTimezone={symbolInfo?.timezone} onTimezoneChange={handleTimezoneChange} />
-      <ChartHeader
+      {active && (<DelayedTooltip />)}
+      {active && (<OutsideDragSelectionGuard />)}
+      {referenceSettings?.definition && referenceSettings.settings && (active && (<ReferenceStudySettingsDialog key={referenceSettings.id} definition={referenceSettings.definition} settings={referenceSettings.settings} onApply={(settings) => referenceStudies.apply(referenceSettings.id, settings)} onClose={() => referenceStudies.setSettingsId(null)}/>)) }
+      {active ? (<AppHeader connectionStatus={status} timezone={chartTimezone} exchangeTimezone={symbolInfo?.timezone} onTimezoneChange={handleTimezoneChange} />) : <div className="chart-header-placeholder" />}
+      {active ? (<ChartHeader
         layoutReady={layoutReady}
         captureLayout={() => { flushLayout(); return captureWorkspace(); }}
         onLoadLayout={onLoadLayout}
@@ -3388,9 +3687,9 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
         onUndo={handleUndo}
         onRedo={handleRedo}
         onOpenSettings={() => setChartSettingsOpen(true)}
-      />
+      />) : <div className="chart-controls-placeholder" />}
       <div className="chart-shell">
-        <DrawingToolbar
+        {active ? (<DrawingToolbar
           activeTool={activeDrawingTool}
           zoomActive={zoomMode}
           canUndoZoom={zoomHistoryCount > 0}
@@ -3411,8 +3710,8 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
           onClear={clearDrawings}
           onClearIndicators={clearIndicators}
           onClearAll={clearChartObjects}
-        />
-        <div className="chart-stage" onMouseMoveCapture={onAxisHover} onMouseLeave={() => setHoverAxis(null)}>
+        />) : <div className="chart-toolbar-placeholder" />}
+        <div className="chart-stage" onMouseMoveCapture={onAxisHover} onMouseLeave={() => { setHoverAxis(null); if (containerRef.current) containerRef.current.dataset.axisCursor = ""; }}>
           <PaneControls chart={chartRef.current} revision={paneRevision + referenceStudies.revision} onLayoutChange={syncPaneLayout} onPresentationChange={updatePanePresentation} mainPane={seriesRef.current?.getPane() ?? null} allowDoubleClick={!selectedDrawing} onRemovePane={(pane) => {
             const ids = sourceLegends.filter((source) => source.paneIndex === pane.paneIndex()).map((source) => source.id);
             const containsVolume = volumeSeriesRef.current?.getPane() === pane;
@@ -3420,7 +3719,12 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
             if (containsVolume) setActiveStudies((current) => current.filter((study) => study !== "volume"));
             syncPaneLayout();
           }}/>
-          <MarketDataPanel
+          {active && (<LiveMarketData store={quoteStore}>{(visibleBar) => {
+            const quoteBar = visibleBar ?? currentBarRef.current;
+            const previousClose = quoteBar ? previousCloseByTimeRef.current.get(Number(quoteBar.time)) : undefined;
+            const { sourceLegends, volumeRowTop } = getSourceLegends(quoteBar);
+            return <MarketDataPanel
+            contextMenuTarget={containerRef.current}
             panePresentation={panePresentation}
             symbol={symbol}
             exchange={symbolInfo?.exchange ?? ""}
@@ -3456,7 +3760,7 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
             paneCount={chartRef.current?.panes().length ?? 1}
             volumeHidden={volumeHidden}
             volumeScaleSide={volumeScaleSideOverride ?? (volumePaneIndex !== mainPaneIndex ? mainScaleSide : mainScaleSide === "right" ? "left" : "right")}
-            currentVolumeMa={currentVolumeMa}
+            currentVolumeMa={latestVolumeValue()}
             maLength={maLength}
             maType={maType}
             smoothingLength={smoothingLength}
@@ -3483,6 +3787,10 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
             onMoveToPane={moveMainSeriesToPane}
             canMoveToPane={mainPaneShared || (chartRef.current?.panes().length ?? 0) > 1}
             onMoveSeriesOrder={moveMainSeriesOrder}
+            mainOrder={{
+              front: seriesRef.current?.getPane().getSeries().some((item) => item !== timelineSeriesRef.current && item.seriesOrder() > seriesRef.current!.seriesOrder()) ?? false,
+              back: seriesRef.current?.getPane().getSeries().some((item) => item !== timelineSeriesRef.current && item.seriesOrder() < seriesRef.current!.seriesOrder()) ?? false,
+            }}
             onPinToScale={setScaleSideOverride}
             onToggleSeriesValue={() => setAxisLabels((current) => ({ ...current, seriesValue: !current.seriesValue }))}
             onTogglePriceLine={() => setAxisLines((current) => ({ ...current, price: !current.price }))}
@@ -3518,18 +3826,23 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
                 smoothedPlotStyle: settings.smoothedPlotStyle,
                 maPriceLineVisible: settings.maPriceLineVisible,
                 smoothedPriceLineVisible: settings.smoothedPriceLineVisible,
-                scaleLabelVisible: settings.scaleLabelVisible,
+                scaleLabelVisible: false,
                 statusValueVisible: settings.statusValueVisible,
                 visibleIntervals: settings.visibleIntervals,
               });
             }}
-          />
+          />;
+          }}</LiveMarketData>)}
           <main
             id="chart"
             ref={containerRef}
             className={zoomMode ? "chart--tool-active chart--zoom" : activeDrawingTool || eraserMode ? "chart--tool-active" : "chart--pan"}
             onContextMenuCapture={onAxisContextMenu}
           />
+          {active && chartMenu && <ChartContextMenu position={chartMenu} precision={currentPriceFormat.precision}
+            locked={crosshairLocked} marksHidden={marksHidden}
+            hasDrawings={(hiddenDrawingsRef.current ?? drawingHistoryRef.current.at(-1) ?? "[]") !== "[]"}
+            onAction={onChartMenuAction} onClose={closeChartMenu} />}
           {zoomSelection && (
             <div className="chart-zoom-selection" style={zoomSelection} aria-hidden="true" />
           )}
@@ -3560,8 +3873,8 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
               >L</button>
             </div>
           )}
-          <PriceAxisScaleButton chart={chartRef.current} targets={scaleButtonTargets} active={axisMenu} onOpen={(position) => { setHoverAxis(null); setFooterAxis({ side: position.side, paneIndex: position.paneIndex }); setAxisMenu(position); }} onClose={closeAxisMenu}/>
-          <ScrollToLatestButton chart={chartRef.current} series={seriesRef.current}
+          {active && (<PriceAxisScaleButton chart={chartRef.current} targets={scaleButtonTargets} active={axisMenu} onOpen={(position) => { setHoverAxis(null); setFooterAxis({ side: position.side, paneIndex: position.paneIndex }); setAxisMenu(position); }} onClose={closeAxisMenu}/>)}
+          {active && (<ScrollToLatestButton chart={chartRef.current} series={seriesRef.current}
             latestTime={currentBarRef.current?.time} rightOffset={chartAppearance.rightMargin}
             paneRevision={paneRevision} onNavigate={(phase) => {
               followLatestRef.current = phase === "complete";
@@ -3569,7 +3882,7 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
                 viewportInteractionRef.current += 1;
                 dateNavigationControllerRef.current?.abort();
               }
-            }} />
+            }} />)}
           {mainPanePlotVisible && countdown && countdownVisible && (
             <div className="price-axis-countdown" style={{ top: countdown.top, ...(mainScaleSide === "right" ? { right: 0 } : { left: 0 }) }}>
               {countdown.text}
@@ -3586,7 +3899,7 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
             />
           )}
           {mainPanePlotVisible && selectedDrawing && (
-            <DrawingPropertiesToolbar
+            (active && (<DrawingPropertiesToolbar
               drawing={selectedDrawing}
               anchor={drawingToolbarAnchor}
               onChange={updateSelectedDrawing}
@@ -3595,7 +3908,7 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
               }}
               onToggleLock={toggleSelectedDrawingLock}
               onDelete={deleteSelectedDrawingById}
-            />
+            />))
           )}
           {mainPanePlotVisible && selectedDrawing?.toolType === "PriceRange" && chartRef.current && seriesRef.current && (
             <PriceRangeStats
@@ -3603,7 +3916,9 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
               chart={chartRef.current}
               series={seriesRef.current}
               chartTop={containerRef.current?.offsetTop ?? 40}
-              bars={sortedBars}
+              bars={[...barsByTimeRef.current.values()]
+                .filter((bar) => isTradingSessionTime(bar.time, resolution, symbolInfo?.session, symbolInfo?.timezone))
+                .sort((a, b) => Number(a.time) - Number(b.time))}
               viewportVersion={drawingViewportVersion}
             />
           )}
@@ -3612,7 +3927,7 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
             scaleMode={footerScaleMode}
             autoScale={footerAutoScale}
             onRangeChange={applyRangePreset}
-            onGoToDate={() => setGoToDateOpen(true)}
+            onGoToDate={openGoToDate}
             onScaleModeChange={(mode) => {
               if (footerIsMainAxis) setMainScaleMode(mode);
               else {
@@ -3636,7 +3951,7 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
         </div>
       </div>
       {axisMenu && menuScaleOptions && (
-        <PriceAxisContextMenu
+        (active && (<PriceAxisContextMenu
           position={axisMenu}
           mode={menuScaleOptions.mode}
           autoScale={menuScaleOptions.autoScale}
@@ -3650,28 +3965,22 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
           scaleRatio={menuScaleRatio}
           onAction={runAxisMenuAction}
           onClose={closeAxisMenu}
-        />
+        />))
       )}
-      {intervalQuery !== null && <ChangeIntervalDialog
+      {intervalQuery !== null && (active && (<ChangeIntervalDialog
         initial={intervalQuery}
         supported={symbolInfo?.supportedResolutions.length ? symbolInfo.supportedResolutions : ["1", "5", "15", "30", "60", "D", "W", "M"]}
         onClose={() => setIntervalQuery(null)}
         onChange={(value) => { setRangeDays(undefined); setResolution(value); }}
-      />}
-      {goToDateOpen && <GoToDateDialog
+      />))}
+      {goToDateRange && (active && (<GoToDateDialog
         timezone={effectiveChartTimezone}
         daily={["D", "W", "M"].includes(resolution)}
-        initialRange={(() => {
-          const range = chartRef.current?.timeScale().getVisibleRange();
-          const bars = [...barsByTimeRef.current.values()];
-          const from = bars.find((bar) => !range || Number(bar.time) >= Number(range.from));
-          const to = bars.findLast((bar) => !range || Number(bar.time) <= Number(range.to));
-          return { from: Number(from?.time ?? Date.now() / 1000), to: Number(to?.time ?? Date.now() / 1000) };
-        })()}
+        initialRange={goToDateRange}
         onClose={closeGoToDate}
         onNavigate={(from, to) => navigateHistoryRef.current(from, to)}
-      />}
-      <ChartSettingsDialog
+      />))}
+      {active && (<ChartSettingsDialog
         open={chartSettingsOpen}
         chartStyle={chartStyle}
         styleSettings={activeStyleSettings}
@@ -3695,9 +4004,9 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
         onAxisLabelChange={(key, value) => setAxisLabels((current) => ({ ...current, [key]: value }))}
         onCountdownChange={setCountdownVisible}
         onClose={() => setChartSettingsOpen(false)}
-      />
+      />)}
       {editingTextDrawing?.toolType === "PriceNote" && textDialogOpen && chartRef.current && seriesRef.current && (
-        <PriceNoteDialog
+        (active && (<PriceNoteDialog
           drawing={editingTextDrawing as LineToolExport<"PriceNote">}
           chart={chartRef.current}
           series={seriesRef.current}
@@ -3716,10 +4025,10 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
             setTextDialogOpen(false);
             setEditingTextDrawing(null);
           }}
-        />
+        />))
       )}
       {editingTextDrawing && (editingTextDrawing.toolType === "Text" || editingTextDrawing.toolType === "Callout") && textDialogOpen && (
-        <TextToolDialog
+        (active && (<TextToolDialog
           title={editingTextDrawing.toolType === "Callout" ? "Chú thích" : "Văn bản"}
           text={editingTextDrawing.options.text}
           onCancel={() => {
@@ -3735,7 +4044,7 @@ function ChartInstance({ onLoadLayout }: { onLoadLayout: (id: string) => void })
             setTextDialogOpen(false);
             setEditingTextDrawing(null);
           }}
-        />
+        />))
       )}
     </>
   );

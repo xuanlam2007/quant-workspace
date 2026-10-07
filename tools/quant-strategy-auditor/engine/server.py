@@ -53,7 +53,7 @@ class ModePayload(BaseModel):
 
 
 class RecordingPayload(BaseModel):
-    action: Literal["start", "pause", "resume"]
+    action: Literal["start", "pause", "resume", "stop"]
     source_id: str = ""
     browser_only: bool = False
     capture_generation: Optional[int] = None
@@ -74,6 +74,11 @@ class StrategyModePayload(BaseModel):
     enabled: bool
 
 
+class StrategyPayload(BaseModel):
+    notes: str = Field(default="", max_length=20000)
+    enabled: bool = True
+
+
 class SwitchSessionPayload(BaseModel):
     date: str
     session_id: str
@@ -86,11 +91,16 @@ def create_app(config_path: str = "config.json") -> FastAPI:
         with open(config_path, encoding="utf-8-sig") as file:
             config = json.load(file)
     config.pop("gemini_api_key", None)
+    # Không kích hoạt các giả định cũ trước khi người dùng lưu chiến lược.
+    if not config.get("strategy_configured"):
+        config["strategy_notes"] = ""
+        config["strategy_guardrails"] = {key: value for key, value in config.get("strategy_guardrails", {}).items() if key == "fee_per_closed_pair"}
+    config["strategy_mode"] = bool(config.get("strategy_mode", False) and config.get("strategy_notes", "").strip())
     app = FastAPI(title="Quant Strategy Auditor Bridge")
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
     guardrails = config.get("strategy_guardrails", {})
     pair_manager = TradePairManager(fee_per_pair=guardrails.get("fee_per_closed_pair", 0.45))
-    auditor = StrategyConflictAuditor(guardrails, enabled=config.get("strategy_mode", True))
+    auditor = StrategyConflictAuditor(guardrails, enabled=config["strategy_mode"])
     logger = SessionLogger(os.path.join(os.path.dirname(config_path), config.get("storage", {}).get("sessions_dir", "sessions")))
     analyzer = GeminiMultimodalAnalyzer()
     state = {"mode": config.get("mode", "DESKTOP"), "target_window_title": "", "target_window_id": 0, "browser_source_id": "", "strategy_mode": auditor.enabled, "recording_status": "stopped", "recording_error": "", "auto_start_recording": config.get("auto_start_recording", True), "capture_generation": 0}
@@ -117,6 +127,9 @@ def create_app(config_path: str = "config.json") -> FastAPI:
     def snapshot():
         return {**state, "protocol_version": 3, "current_date": logger.current_date, "date": logger.current_date, "session_id": logger.session_id, "is_recording": state["recording_status"] == "recording", "summary": pair_manager.get_summary(), "recent_events": logger.events[-200:], "gemini_status": analyzer.status(), "config": config}
 
+    def strategy_context():
+        return {"enabled": auditor.enabled, "notes": config.get("strategy_notes", ""), "rules": copy.deepcopy({key: value for key, value in auditor.guardrails.items() if key != "fee_per_closed_pair"})}
+
     async def broadcast(message):
         message.setdefault("date", logger.current_date)
         message.setdefault("session_id", logger.session_id)
@@ -128,11 +141,19 @@ def create_app(config_path: str = "config.json") -> FastAPI:
                     clients.remove(client)
 
     def save_config():
+        temporary_path = f"{config_path}.{uuid4().hex}.tmp"
         try:
-            with open(config_path, "w", encoding="utf-8") as file:
+            # Thay thế nguyên tử để lỗi ghi không làm mất cấu hình đã lưu.
+            with open(temporary_path, "w", encoding="utf-8") as file:
                 json.dump(config, file, indent=2, ensure_ascii=False)
+            os.replace(temporary_path, config_path)
         except OSError as error:
             raise HTTPException(500, f"Cannot save preference: {error}") from error
+        finally:
+            try:
+                os.remove(temporary_path)
+            except OSError:
+                pass
 
     def require_session(session_id=None, session_date=None):
         if not logger.session_id:
@@ -159,6 +180,7 @@ def create_app(config_path: str = "config.json") -> FastAPI:
         if state["recording_status"] != "recording" or event.get("capture_generation") != state["capture_generation"] or not logger.session_id or event.get("session_id") != logger.session_id or event.get("date") != logger.current_date:
             return
         event["warnings"] = auditor.audit(event_type=event["type"])
+        event["strategy"] = strategy_context()
         logger.log_event(event)
         await broadcast({"type": "EVENT_LOGGED", "event": event, "summary": pair_manager.get_summary()})
 
@@ -278,8 +300,8 @@ def create_app(config_path: str = "config.json") -> FastAPI:
             return state
         if state["mode"] == "IN_APP" and state["browser_source_id"] and payload.source_id != state["browser_source_id"]:
             raise HTTPException(409, "Use the browser that owns the capture source")
-        if payload.action == "pause":
-            stop_recording()
+        if payload.action in ("pause", "stop"):
+            stop_recording("stopped" if payload.action == "stop" else "paused")
         else:
             try:
                 start_recording(payload.source_id)
@@ -388,7 +410,9 @@ def create_app(config_path: str = "config.json") -> FastAPI:
 
     @app.post("/api/strategy-mode")
     async def strategy_mode(payload: StrategyModePayload):
-        previous = config.get("strategy_mode", True)
+        if payload.enabled and not config.get("strategy_notes", "").strip():
+            raise HTTPException(409, "Save your strategy before enabling strategy review.")
+        previous = config.get("strategy_mode", False)
         config["strategy_mode"] = payload.enabled
         try:
             save_config()
@@ -398,6 +422,25 @@ def create_app(config_path: str = "config.json") -> FastAPI:
         state["strategy_mode"] = auditor.enabled = payload.enabled
         await broadcast({"type": "STRATEGY_MODE_CHANGED", "enabled": payload.enabled})
         return {"status": "ok", "strategy_mode": payload.enabled}
+
+    @app.post("/api/strategy")
+    async def strategy(payload: StrategyPayload):
+        previous = copy.deepcopy(config)
+        notes = payload.notes.strip()
+        enabled = bool(notes and payload.enabled)
+        config.update(strategy_notes=notes, strategy_configured=bool(notes), strategy_mode=enabled)
+        config["strategy_guardrails"] = {key: value for key, value in auditor.guardrails.items() if key == "fee_per_closed_pair"}
+        try:
+            save_config()
+        except HTTPException:
+            config.clear()
+            config.update(previous)
+            raise
+        state["strategy_mode"] = auditor.enabled = enabled
+        auditor.guardrails = config["strategy_guardrails"]
+        result = {"strategy_mode": enabled, "config": copy.deepcopy(config)}
+        await broadcast({"type": "STRATEGY_CHANGED", **result})
+        return {"status": "ok", **result}
 
     @app.post("/api/mode")
     async def mode(payload: ModePayload):
@@ -468,6 +511,7 @@ def create_app(config_path: str = "config.json") -> FastAPI:
         warnings = auditor.audit(payload.type, payload.action, payload.price)
         result = pair_manager.register_trade(payload.action, payload.price, timestamp, payload.contracts)
         event = {"type": payload.type, "action": payload.action, "price": payload.price, "contracts": payload.contracts, "timestamp": timestamp, "voice_transcript": payload.voice_transcript, "drawing_data": payload.drawing_data, "warnings": warnings, "trade_result": result, "frame_path": frame_path, "ai_pending": True}
+        event["strategy"] = strategy_context()
         logger.log_event(event)
         summary = pair_manager.get_summary()
         await broadcast({"type": "TRADE_LOGGED", "event": event, "summary": summary})
@@ -483,6 +527,7 @@ def create_app(config_path: str = "config.json") -> FastAPI:
         require_session(payload.session_id, payload.session_date)
         require_recording(payload.source_id)
         event = {"type": "REJECTED_SETUP", "action": "REJECT", "reason": payload.reason, "voice_transcript": payload.voice_transcript, "timestamp": datetime.now().strftime("%H:%M:%S"), "warnings": [], "frame_path": capture(payload.frame_base64), "ai_pending": True}
+        event["strategy"] = strategy_context()
         logger.log_event(event)
         await broadcast({"type": "REJECT_LOGGED", "event": event, "summary": pair_manager.get_summary()})
         queue_analysis(event)
@@ -498,6 +543,7 @@ def create_app(config_path: str = "config.json") -> FastAPI:
         require_session(payload.session_id, payload.session_date)
         require_recording(payload.source_id)
         event = {"type": "DECISION_TEST", "action": payload.direction, "price": payload.price, "contracts": payload.contracts, "voice_transcript": payload.voice_transcript, "timestamp": datetime.now().strftime("%H:%M:%S"), "warnings": warnings, "frame_path": capture(payload.frame_base64), "ai_pending": True}
+        event["strategy"] = strategy_context()
         logger.log_event(event)
         await broadcast({"type": "EVENT_LOGGED", "event": event, "summary": pair_manager.get_summary()})
         queue_analysis(event)
@@ -532,6 +578,7 @@ def create_app(config_path: str = "config.json") -> FastAPI:
                         await websocket.send_json({"type": "ERROR", "message": error.detail})
                         continue
                     event = {"type": "DRAWING", "drawing_data": message.get("drawing_data", {}), "timestamp": datetime.now().strftime("%H:%M:%S"), "warnings": auditor.audit("DRAWING")}
+                    event["strategy"] = strategy_context()
                     logger.log_event(event)
                     await broadcast({"type": "EVENT_LOGGED", "event": event, "summary": pair_manager.get_summary()})
         except WebSocketDisconnect:

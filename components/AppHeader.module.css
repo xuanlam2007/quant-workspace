@@ -13,7 +13,7 @@
   border-bottom: 1px solid #2a303c;
   background: #11151d;
   color: #eef1f6;
-  font: 13px/1.4 var(--font-ui);
+  font: 13px/20px var(--font-ui);
   color-scheme: dark;
 }
 
@@ -36,6 +36,7 @@
 }
 
 .wordmark {
+  line-height: 20px;
   font-size: 14px;
   font-weight: 650;
   letter-spacing: -.35px;
@@ -64,6 +65,7 @@
   color: var(--header-muted);
   text-decoration: none;
   white-space: nowrap;
+  line-height: 20px;
   transition: color 140ms ease, background-color 140ms ease;
 }
 
@@ -83,6 +85,7 @@
 .connection {
   display: flex;
   align-items: center;
+  min-height: 34px;
   gap: 8px;
 }
 
@@ -90,7 +93,7 @@
   display: inline-flex;
   align-items: center;
   font-size: 12px;
-  line-height: 18px;
+  line-height: 20px;
   letter-spacing: .3px;
   color: var(--header-muted);
 }
@@ -125,6 +128,8 @@
 }
 
 .clock {
+  display: flex;
+  align-items: center;
   padding-right: 12px;
   border-right: 1px solid #303644;
 }
@@ -132,9 +137,21 @@
 .clock :global(.chart-footer__timezone) {
   height: 34px;
   padding: 0 6px;
-  font-family: Helvetica, Arial, sans-serif;
+  font-family: var(--font-ui);
   font-size: 12px;
+  line-height: 20px;
+  font-weight: 400;
   color: #d8dfeb;
+}
+
+.clock :global(.workspace-clock__text) {
+  white-space: pre;
+  font-variant-numeric: tabular-nums;
+}
+
+.clock :global(.workspace-clock__parenthesis) {
+  position: relative;
+  top: -.08em;
 }
 
 .clock :global(.chart-footer__timezone-menu) {
@@ -319,10 +336,10 @@
   display: flex;
   align-items: center;
   overflow: hidden;
-  height: 18px;
+  height: 20px;
   width: 10ch;
   font-size: 12px;
-  line-height: 18px;
+  line-height: 20px;
 }
 
 .statusReveal {
@@ -396,16 +413,16 @@
 
 @media (max-width: 700px) {
   .source {
-    display: inline-flex;
+    display: none;
     font-size: 10px;
     line-height: 16px;
     letter-spacing: 0;
   }
 
   .services {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 0;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
   }
 
   .connection {
@@ -414,8 +431,8 @@
 
   .statusWindow {
     font-size: 10px;
-    height: 16px;
-    line-height: 16px;
+    height: 20px;
+    line-height: 20px;
   }
 
   .clock {

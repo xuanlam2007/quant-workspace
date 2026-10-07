@@ -67,7 +67,13 @@ export function WorkspaceClock({ timezone = "Asia/Bangkok", exchangeTimezone = "
             aria-haspopup="menu"
             onClick={() => setMenuOpen((open) => !open)}
           >
-            {timeText || `--:--:-- (${currentOffset})`}
+            <span className="workspace-clock__text">
+              {(timeText || `--:--:-- (${currentOffset})`).split(/([()])/).map((part, index) =>
+                part === "(" || part === ")"
+                  ? <span className="workspace-clock__parenthesis" key={index}>{part}</span>
+                  : part,
+              )}
+            </span>
           </button>
           {menuOpen && (
             <div className="chart-footer__timezone-menu" role="menu">
