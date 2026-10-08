@@ -1434,6 +1434,11 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
     resizeObserver.observe(containerRef.current);
     resizeFrame = requestAnimationFrame(() => refreshDrawingOverlays());
 
+    const compareViews = compareViewsRef.current;
+    const compareIntervalAllowed = compareIntervalAllowedRef.current;
+    const compareRawBars = compareRawBarsRef.current;
+    const compareInfo = compareInfoRef.current;
+
     return () => {
       cancelPan();
       element.removeEventListener("pointerdown", onPointerDown);
@@ -1468,10 +1473,10 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
       volumeMaSeriesRef.current = null;
       volumeSmaSeriesRef.current = null;
       compareSeriesRef.current.clear();
-      compareViewsRef.current.clear();
-      compareIntervalAllowedRef.current.clear();
-      compareRawBarsRef.current.clear();
-      compareInfoRef.current.clear();
+      compareViews.clear();
+      compareIntervalAllowed.clear();
+      compareRawBars.clear();
+      compareInfo.clear();
       compareBarsRef.current.clear();
       priceIndicatorSeriesRef.current.clear();
       macdSeriesRef.current = null;
