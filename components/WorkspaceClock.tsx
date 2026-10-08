@@ -1,12 +1,46 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { LoadingNumber } from "./ui/Loading";
 import { sortedTimezoneOptions } from "./chart/config/chart-timezones";
 import { PRICE_AXIS_ICONS } from "./chart/layout/panes/price-axis-icons";
 import { formatTimeInTimezone, getTimezoneOffsetString, millisecondsUntilNextSecond } from "./chart/core/chart-utils";
 
+let clockTimestamp = 0;
+let clockTimeout = 0;
+const clockListeners = new Set<() => void>();
+const clockSnapshot = () => clockTimestamp;
+const serverClockSnapshot = () => 0;
+
+// Giữ thời gian khi header được gắn lại và dùng chung một bộ hẹn giờ.
+function updateClock() {
+  window.clearTimeout(clockTimeout);
+  clockTimestamp = Date.now();
+  clockListeners.forEach(listener => listener());
+  clockTimeout = window.setTimeout(updateClock, millisecondsUntilNextSecond(Date.now()) + 10);
+}
+
+function visibleClock() {
+  if (document.visibilityState === "visible") updateClock();
+}
+
+function subscribeClock(listener: () => void) {
+  clockListeners.add(listener);
+  if (clockListeners.size === 1) {
+    updateClock();
+    document.addEventListener("visibilitychange", visibleClock);
+  }
+  return () => {
+    clockListeners.delete(listener);
+    if (!clockListeners.size) {
+      window.clearTimeout(clockTimeout);
+      document.removeEventListener("visibilitychange", visibleClock);
+    }
+  };
+}
+
 export function WorkspaceClock({ timezone = "Asia/Bangkok", exchangeTimezone = "Asia/Bangkok", onTimezoneChange }: { timezone?: string; exchangeTimezone?: string; onTimezoneChange?: (timezone: string) => void }) {
-  const [timeText, setTimeText] = useState("");
+  const timestamp = useSyncExternalStore(subscribeClock, clockSnapshot, serverClockSnapshot);
   const [menuOpen, setMenuOpen] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const effectiveTimezone = timezone === "exchange" ? exchangeTimezone : timezone;
@@ -15,28 +49,7 @@ export function WorkspaceClock({ timezone = "Asia/Bangkok", exchangeTimezone = "
     [exchangeTimezone, menuOpen],
   );
 
-  useEffect(() => {
-    let timeoutId = 0;
-    const updateTime = () => {
-      const now = new Date();
-      const time = formatTimeInTimezone(now, effectiveTimezone);
-      const { string: offsetStr } = getTimezoneOffsetString(effectiveTimezone, now);
-      setTimeText(`${time} (${offsetStr})`);
-      timeoutId = window.setTimeout(updateTime, millisecondsUntilNextSecond(Date.now()) + 10);
-    };
-    const handleVisibilityChange = () => {
-      if (document.visibilityState !== "visible") return;
-      window.clearTimeout(timeoutId);
-      updateTime();
-    };
-
-    updateTime();
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-    return () => {
-      window.clearTimeout(timeoutId);
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-    };
-  }, [effectiveTimezone]);
+  const timeText = timestamp ? formatTimeInTimezone(new Date(timestamp), effectiveTimezone) : "";
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -68,11 +81,8 @@ export function WorkspaceClock({ timezone = "Asia/Bangkok", exchangeTimezone = "
             onClick={() => setMenuOpen((open) => !open)}
           >
             <span className="workspace-clock__text">
-              {(timeText || `--:--:-- (${currentOffset})`).split(/([()])/).map((part, index) =>
-                part === "(" || part === ")"
-                  ? <span className="workspace-clock__parenthesis" key={index}>{part}</span>
-                  : part,
-              )}
+              <LoadingNumber loading={!timeText} template="00:00:00" label="Đang tải thời gian">{timeText}</LoadingNumber>{" "}
+              <span className="workspace-clock__parenthesis">(</span>{currentOffset}<span className="workspace-clock__parenthesis">)</span>
             </span>
           </button>
           {menuOpen && (

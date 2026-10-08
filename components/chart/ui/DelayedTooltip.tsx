@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 const DEFAULT_TOOLTIP_DELAY_MS = 500;
 const TOOLTIP_SESSION_GRACE_MS = 250;
@@ -228,6 +229,7 @@ export function DelayedTooltip() {
     document.addEventListener("keydown", handleKeyDown, true);
     document.addEventListener("scroll", handleViewportChange, true);
     window.addEventListener("resize", handleViewportChange);
+    document.addEventListener("fullscreenchange", handleViewportChange);
 
     return () => {
       document.removeEventListener("pointerover", handlePointerOver, true);
@@ -241,6 +243,7 @@ export function DelayedTooltip() {
       document.removeEventListener("keydown", handleKeyDown, true);
       document.removeEventListener("scroll", handleViewportChange, true);
       window.removeEventListener("resize", handleViewportChange);
+      document.removeEventListener("fullscreenchange", handleViewportChange);
       clearTimer();
       clearSessionTimer();
       removeDescription();
@@ -250,7 +253,7 @@ export function DelayedTooltip() {
 
   useLayoutEffect(() => {
     const element = tooltipRef.current;
-    if (!element || (tooltip?.variant !== "axis" && tooltip?.variant !== "navigation" && tooltip?.variant !== "layout-save")) return;
+    if (!element || !tooltip) return;
     const width = element.getBoundingClientRect().width;
     const viewportWidth = document.documentElement.clientWidth;
     const left = Math.max(4, Math.min(tooltip.x - width / 2, viewportWidth - width - 4));
@@ -261,7 +264,7 @@ export function DelayedTooltip() {
 
   if (!tooltip) return null;
 
-  return (
+  return createPortal(
     <div
       ref={tooltipRef}
       id={TOOLTIP_ID}
@@ -290,6 +293,7 @@ export function DelayedTooltip() {
           <span className="delayed-tooltip__description">- {tooltip.description}</span>
         )}
       </span>
-    </div>
+    </div>,
+    document.fullscreenElement ?? document.body,
   );
 }

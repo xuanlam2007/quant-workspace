@@ -238,6 +238,10 @@
   gap: 8px;
 }
 
+.sessionButtons > .button {
+  width: 144px;
+}
+
 .eyebrow {
   font-size: 12px;
   color: var(--audit-muted);
@@ -250,6 +254,10 @@
   gap: 8px;
 }
 
+.terminalControls > .select {
+  width: 220px;
+}
+
 .select {
   position: relative;
   min-width: 0;
@@ -260,7 +268,7 @@
   justify-content: flex-start;
 }
 
-.select > button span {
+.select > button > span {
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -455,7 +463,13 @@
 }
 
 .terminalButton {
-  min-width: 112px;
+  width: 160px;
+  flex-shrink: 0;
+}
+
+.terminalControls > .select > button {
+  width: 100%;
+  min-width: 0;
 }
 
 .selectionIndicator {
@@ -539,6 +553,11 @@
 
 .inputAction > .select {
   flex: 1;
+}
+
+.inputAction > [role="status"] {
+  flex: 1;
+  min-width: 0;
 }
 
 .inputAction .select > button {
@@ -1007,6 +1026,8 @@
 
 .table {
   border-collapse: collapse;
+  table-layout: fixed;
+  min-width: 800px;
   width: 100%;
   white-space: nowrap;
 }
@@ -1459,4 +1480,73 @@
     transition: none !important;
     scroll-behavior: auto !important;
   }
+}
+
+.evidenceImage {
+  position: relative;
+  min-height: 180px;
+  width: 100%;
+  max-width: 540px;
+  aspect-ratio: 16 / 9;
+  margin-top: 8px;
+}
+
+.evidenceImage > div {
+  position: absolute;
+  inset: 0;
+}
+
+.evidenceLoading {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.evidenceImage > a {
+  position: absolute;
+  inset: 0;
+  display: block;
+  transition: opacity 180ms ease-out;
+}
+
+.evidenceImage img {
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+  object-fit: contain;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .evidenceImage > a { transition: none; }
+}
+
+.loadingLines {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.loadingControlRow {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.loadingTextarea {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  padding: 14px 12px;
+  border: 1px solid var(--audit-border);
+  border-radius: 6px;
+  background: var(--audit-bg);
+}
+
+.strategyEditor { position: relative; }
+.strategyEditor > textarea { display: block; transition: opacity 180ms ease-out; }
+.strategyEditor[data-loading="true"] > textarea { opacity: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .strategyEditor > textarea { transition: none; }
 }

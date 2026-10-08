@@ -26,6 +26,7 @@ export const LAYOUT_SORT_KEY = "loadChartDialog.viewState";
 
 const workspaceKeys = new Set([
   "chart.lastUsedSymbol", "chart.lastUsedTimeBasedResolution", "chart.comparedSymbols",
+  "chart.comparisonSettings.v1",
   "chart.axisSettings.v1", "chart.manualAxisRanges.v2", "chart.styles.v1",
   "chart.workspaceLayout.v1", "chart.referenceStudies.v1", "vndirect-chart:indicator-settings",
   "chart.drawingsLocked.v1", "chart.drawingsHidden.v1", "chart.magnetMode.v1",

@@ -4,9 +4,11 @@ import dynamic from "next/dynamic";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { AppHeader } from "./AppHeader";
+import ChartLoading from "./ui/ChartLoading";
+import AuditorLoading from "./auditor/AuditorLoading";
 
-const Chart = dynamic(() => import("./Chart"), { ssr: false });
-const Auditor = dynamic(() => import("./auditor/AuditorWorkspace"), { ssr: false });
+const Chart = dynamic(() => import("./Chart"), { ssr: false, loading: () => <ChartLoading /> });
+const Auditor = dynamic(() => import("./auditor/AuditorWorkspace"), { ssr: false, loading: () => <AuditorLoading /> });
 
 export function WorkspaceTabs() {
   const pathname = usePathname();

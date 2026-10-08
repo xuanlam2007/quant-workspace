@@ -1,6 +1,7 @@
 "use client";
 
 import { useLayoutEffect, useRef } from "react";
+import { LoadingIndicator } from "../ui/Loading";
 import { Icon } from "./AuditorUi";
 import styles from "../../app/auditor/auditor.module.css";
 
@@ -58,7 +59,7 @@ export default function AuditorDeleteDialog({ title, description, confirmLabel, 
       {error && <p className={styles.error} role="alert">{error}</p>}
       <div className={styles.deleteDialogActions}>
         <button ref={cancel} type="button" className={styles.button} disabled={pending} onClick={onCancel}>Hủy</button>
-        <button type="button" className={`${styles.button} ${styles.sellButton}`} disabled={disabled} onClick={onConfirm}>{pending ? "Đang xóa..." : confirmLabel}</button>
+        <button type="button" className={`${styles.button} ${styles.sellButton}`} disabled={disabled} onClick={onConfirm}>{pending ? <LoadingIndicator label="Đang xóa" /> : confirmLabel}</button>
       </div>
     </dialog>
   );

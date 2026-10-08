@@ -2,6 +2,7 @@
 
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { TerminalHost } from "../../lib/auditor-client";
+import { LoadingText } from "../ui/Loading";
 import styles from "../../app/auditor/auditor.module.css";
 
 type IconName = "activity" | "terminal" | "history" | "plus" | "close" | "check" | "chevron" | "refresh" | "capture" | "export" | "back" | "warning" | "play" | "pause" | "stop";
@@ -28,21 +29,23 @@ export function Icon({ name }: { name: IconName }) {
 const hosts: { value: TerminalHost; label: string }[] = [
   { value: "ORCA", label: "Orca Terminal" }, { value: "WINDOWS", label: "Windows Console Host" }, { value: "WT", label: "Windows Terminal" }, { value: "NONE", label: "Không sử dụng" },
 ];
-export function TerminalSelect({ value, disabled, onChange }: { value: TerminalHost; disabled: boolean; onChange: (value: TerminalHost) => void }) {
-  return <AuditorSelect id="auditor-terminal" label="Loại Terminal" icon="terminal" value={value} options={hosts} disabled={disabled} onChange={onChange} />;
+export function TerminalSelect({ value, disabled, loading = false, onChange }: { value: TerminalHost; disabled: boolean; loading?: boolean; onChange: (value: TerminalHost) => void }) {
+  return <AuditorSelect id="auditor-terminal" label="Loại Terminal" icon="terminal" value={value} options={hosts} disabled={disabled || loading} loading={loading} onChange={onChange} />;
 }
 
 type SelectOption<T> = { value: T; label: string; disabled?: boolean };
 
-export function AuditorSelect<T extends string | number>({ id, label, icon, value, options, disabled, onChange }: {
+export function AuditorSelect<T extends string | number>({ id, label, icon, value, options, disabled: disabledProp, loading = false, onChange }: {
   id: string;
   label: string;
   icon: IconName;
   value: T;
   options: SelectOption<T>[];
   disabled: boolean;
+  loading?: boolean;
   onChange: (value: T) => void;
 }) {
+  const disabled = disabledProp || loading;
   const [open, setOpen] = useState(false);
   const [placement, setPlacement] = useState({ above: false, height: 280 });
   const container = useRef<HTMLDivElement>(null);
@@ -123,7 +126,7 @@ export function AuditorSelect<T extends string | number>({ id, label, icon, valu
         title={selected?.label}
         onClick={() => setOpen(previous => !previous)}
       >
-        <Icon name={icon} /><span>{selected?.label || "Chọn..."}</span><Icon name="chevron" />
+        <Icon name={icon} /><span><LoadingText width="100%" loading={loading} label={`Đang tải ${label}`}>{selected?.label || "Chọn..."}</LoadingText></span><Icon name="chevron" />
       </button>
       {open && !disabled && (
         <div className={styles.menu} id={`${id}-options`} role="listbox" aria-label={label} data-placement={placement.above ? "top" : "bottom"} style={{ maxHeight: placement.height }}>
@@ -141,4 +144,4 @@ export function AuditorSelect<T extends string | number>({ id, label, icon, valu
     </div>
   );
 }
-export const points = (value: number | undefined, signed = false) => value === undefined ? "..." : `${signed && value > 0 ? "+" : ""}${value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+export const points = (value: number | undefined, signed = false) => value === undefined ? "N/A" : `${signed && value > 0 ? "+" : ""}${value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;

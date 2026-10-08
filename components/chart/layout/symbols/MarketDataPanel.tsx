@@ -2,6 +2,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent } from "react";
 import { createPortal } from "react-dom";
+import { LoadingNumber } from "@/components/ui/Loading";
 import type { Bar, SymbolInfo } from "@/lib/dchart-api";
 import { RESOLUTIONS, type MaType } from "../../config/chart-config";
 import { formatVolume } from "../../core/chart-utils";
@@ -37,6 +38,7 @@ export interface SourceLegend {
   hasSettings?: boolean;
   color: string;
   value?: string;
+  loading?: boolean;
   values?: { text: string; color: string }[];
   top: number;
   paneIndex: number;
@@ -426,18 +428,18 @@ export function MarketDataPanel({
             <small>Múi giờ giao dịch: {timezone === "Asia/Bangkok" ? "Bangkok (UTC+7)" : timezone}</small>
           </div>}
         </div>}
-        {seriesVisible && (loading ? <span className="market-data__loader" role="status" aria-label="Đang tải dữ liệu biểu đồ"><i/><i/><i/></span> : <div className="ohlcv-strip" aria-label="Giá mở cửa, cao nhất, thấp nhất, đóng cửa và khối lượng">
+        {seriesVisible && <div className="ohlcv-strip" aria-label="Giá mở cửa, cao nhất, thấp nhất, đóng cửa và khối lượng">
           {appearance.ohlcVisible && <>
-          {singleValue ? <b style={{ color: chartStyleColor }}>{formatPrice(quoteBar ? sourceValue(quoteBar, chartStyleSettings.source) : undefined)}</b> : <>
-            {chartStyle !== 12 && chartStyle !== 16 && <span>O <b className={quoteClass} style={{ color: chartStyleColor }}>{formatPrice(quoteBar?.open)}</b></span>}
-            <span>H <b className={quoteClass} style={{ color: chartStyle === 16 ? chartStyleSettings.highColor : chartStyleColor }}>{formatPrice(quoteBar?.high)}</b></span>
-            <span>L <b className={quoteClass} style={{ color: chartStyle === 16 ? chartStyleSettings.lowColor : chartStyleColor }}>{formatPrice(quoteBar?.low)}</b></span>
-            {chartStyle !== 12 && <span>C <b className={quoteClass} style={{ color: chartStyle === 16 ? chartStyleSettings.color : chartStyleColor }}>{formatPrice(quoteBar?.close)}</b></span>}
+          {singleValue ? <b style={{ color: chartStyleColor }}><LoadingNumber loading={loading} digits={7} decimal label="Đang tải giá">{formatPrice(quoteBar ? sourceValue(quoteBar, chartStyleSettings.source) : undefined)}</LoadingNumber></b> : <>
+            {chartStyle !== 12 && chartStyle !== 16 && <span>O <b className={quoteClass} style={{ color: chartStyleColor }}><LoadingNumber loading={loading} digits={7} decimal label="Đang tải giá mở cửa">{formatPrice(quoteBar?.open)}</LoadingNumber></b></span>}
+            <span>H <b className={quoteClass} style={{ color: chartStyle === 16 ? chartStyleSettings.highColor : chartStyleColor }}><LoadingNumber loading={loading} digits={7} decimal label="Đang tải giá cao nhất">{formatPrice(quoteBar?.high)}</LoadingNumber></b></span>
+            <span>L <b className={quoteClass} style={{ color: chartStyle === 16 ? chartStyleSettings.lowColor : chartStyleColor }}><LoadingNumber loading={loading} digits={7} decimal label="Đang tải giá thấp nhất">{formatPrice(quoteBar?.low)}</LoadingNumber></b></span>
+            {chartStyle !== 12 && <span>C <b className={quoteClass} style={{ color: chartStyle === 16 ? chartStyleSettings.color : chartStyleColor }}><LoadingNumber loading={loading} digits={7} decimal label="Đang tải giá đóng cửa">{formatPrice(quoteBar?.close)}</LoadingNumber></b></span>}
           </>}
           </>}
-          {appearance.changeVisible && chartStyle !== 12 && previousClose !== undefined && <span className={quoteClass} style={{ color: chartStyleColor }}>{change >= 0 ? "+" : ""}{change.toFixed(pricePrecision)} ({changePercent.toFixed(2)}%)</span>}
-          {appearance.volumeVisible && <span className="ohlcv-strip__volume">Khối lượng <b>{quoteBar ? formatVolume(quoteBar.volume) : "N/A"}</b></span>}
-        </div>)}
+          {appearance.changeVisible && chartStyle !== 12 && (loading || previousClose !== undefined) && <span className={quoteClass} style={{ color: chartStyleColor }}><LoadingNumber loading={loading} decimal label="Đang tải thay đổi giá">{`${change >= 0 ? "+" : ""}${change.toFixed(pricePrecision)}`}</LoadingNumber> (<LoadingNumber loading={loading} decimal label="Đang tải phần trăm thay đổi">{changePercent.toFixed(2)}</LoadingNumber>%)</span>}
+          {appearance.volumeVisible && <span className="ohlcv-strip__volume">Khối lượng <b><LoadingNumber loading={loading} digits={4} label="Đang tải khối lượng">{quoteBar ? formatVolume(quoteBar.volume) : "N/A"}</LoadingNumber></b></span>}
+        </div>}
       </div>
 
       {sourceLegends.filter((source) => !panePresentation.hidden.includes(source.paneIndex) && (!panePresentation.collapsed.includes(source.paneIndex) || (source.paneIndex !== mainPaneIndex && source.top === Math.min(...sourceLegends.filter((item) => item.paneIndex === source.paneIndex).map((item) => item.top)) && (source.paneIndex !== volumePaneIndex || !volumeEnabled || source.top < volumeRowTop)))).map((source) => (
@@ -446,12 +448,12 @@ export function MarketDataPanel({
             <span className="indicator-data__name">{source.label}</span>{source.parameters && <span className="indicator-data__parameters">{source.parameters}</span>}
             <div className="indicator-data__actions">
               <button type="button" tabIndex={-1} aria-label={source.visible ? "Ẩn" : "Hiển thị"} onMouseEnter={(event) => showVisibilityTooltip(event, source.visible ? "Ẩn" : "Hiển thị")} onMouseLeave={() => setVisibilityTooltip(null)} onClick={() => { setVisibilityTooltip(null); onToggleSourceVisibility(source.id); }}>{source.visible ? legendIcons.eye : legendIcons.crossedEye}</button>
-              {source.hasSettings && <button type="button" tabIndex={-1} aria-label="Cài đặt" onClick={() => onOpenSourceSettings(source.id)}>{HEADER_SVGS.settings}</button>}
+              {source.hasSettings && <button type="button" tabIndex={-1} aria-label="Cài đặt" data-tooltip="Cài đặt" onClick={() => onOpenSourceSettings(source.id)}>{HEADER_SVGS.settings}</button>}
               <button type="button" tabIndex={-1} aria-label="Loại bỏ" onClick={() => onRemoveSource(source.id)}>{legendIcons.remove}</button>
               <button type="button" tabIndex={-1} aria-label="Thêm nữa" onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); setSubmenu(null); setSourceMenuId(source.id); setSourceMenuPosition({ left: Math.min(rect.left, window.innerWidth - 456), top: Math.min(rect.bottom + 5, window.innerHeight - 460) }); }}>{legendIcons.more}</button>
             </div>
           </div>
-          {appearance.studyValueVisible && (source.values ? <span className="indicator-data__values">{source.values.map((value, index) => <span key={index} style={{ color: value.color }}>{value.text}</span>)}</span> : source.value && <span className="source-legend-value" style={{ color: source.color }}>{source.value}</span>)}
+          {appearance.studyValueVisible && (source.loading ? <span className="indicator-data__values">{Array.from({ length: source.values?.length || 1 }, (_, index) => <LoadingNumber key={index} loading decimal label={`Đang tải ${source.label}`} />)}</span> : source.values ? <span className="indicator-data__values">{source.values.map((value, index) => <span key={index} style={{ color: value.color }}>{value.text}</span>)}</span> : source.value && <span className="source-legend-value" style={{ color: source.color }}>{source.value}</span>)}
         </div>
       ))}
 
@@ -462,7 +464,7 @@ export function MarketDataPanel({
           <button type="button" tabIndex={-1} aria-label="Loại bỏ" onClick={onRemoveVolume}>{legendIcons.remove}</button>
           <button type="button" tabIndex={-1} aria-label="Thêm nữa" onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); setVolumeMenuPosition({ left: Math.min(rect.left, window.innerWidth - 456), top: Math.min(rect.bottom + 5, window.innerHeight - 460) }); setVolumeMenuOpen(true); }}>{legendIcons.more}</button>
         </div></div>}
-        {!loading && appearance.studyValueVisible && volumeSettings.statusValueVisible && <div className="indicator-data__values"><span className="indicator-data__volume" style={{ color: volumeBar && volumeBar.close >= (volumeSettings.colorByPreviousClose && volumePreviousClose !== undefined ? volumePreviousClose : volumeBar.open) ? volumeSettings.upColor : volumeSettings.downColor }}>{volumeBar ? formatVolume(volumeBar.volume) : "N/A"}</span>{volumeSettings.smoothedVisible && <span className="indicator-data__ma">{currentVolumeMa !== undefined ? formatVolume(currentVolumeMa) : "N/A"}</span>}</div>}
+        {appearance.studyValueVisible && volumeSettings.statusValueVisible && <div className="indicator-data__values"><span className="indicator-data__volume" style={{ color: volumeBar && volumeBar.close >= (volumeSettings.colorByPreviousClose && volumePreviousClose !== undefined ? volumePreviousClose : volumeBar.open) ? volumeSettings.upColor : volumeSettings.downColor }}><LoadingNumber loading={loading} digits={4} label="Đang tải khối lượng">{volumeBar ? formatVolume(volumeBar.volume) : "N/A"}</LoadingNumber></span>{volumeSettings.smoothedVisible && <span className="indicator-data__ma"><LoadingNumber loading={loading} digits={4} label="Đang tải trung bình khối lượng">{currentVolumeMa !== undefined ? formatVolume(currentVolumeMa) : "N/A"}</LoadingNumber></span>}</div>}
       </div>}
 
       {activeSource && createPortal(<div ref={sourceMenuRef} className="series-menu source-series-menu" role="menu" aria-label={`Tùy chọn ${activeSource.label}`} style={{ left: sourceMenuPosition.left, top: sourceMenuPosition.top }}>

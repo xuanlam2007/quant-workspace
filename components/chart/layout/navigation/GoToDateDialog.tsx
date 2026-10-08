@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { LoadingIndicator } from "@/components/ui/Loading";
 import { createPortal } from "react-dom";
 import { getTimezoneOffsetString } from "../../core/chart-utils";
 import { useDraggablePanel } from "../../ui/useDraggablePanel";
@@ -199,7 +200,7 @@ export function GoToDateDialog({ timezone, daily, initialRange, onClose, onNavig
         </div>
         {(!valid || error) && <div className="go-to-date-error" role="alert">{error || "Vui lòng nhập đúng ngày và phạm vi thời gian"}</div>}
       </div>
-      <footer><button type="button" tabIndex={-1} onClick={onClose}>Hủy bỏ</button><button type="submit" tabIndex={-1} disabled={!valid || busy}>{busy ? "Đang tải…" : "Đi đến"}</button></footer>
+      <footer><button type="button" tabIndex={-1} onClick={onClose}>Hủy bỏ</button><button type="submit" tabIndex={-1} disabled={!valid || busy}>{busy ? <LoadingIndicator label="Đang tải" /> : "Đi đến"}</button></footer>
     </form>
   </div>;
 }

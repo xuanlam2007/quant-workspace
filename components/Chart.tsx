@@ -1,5 +1,6 @@
 "use client";
 
+import { LoadingIndicator } from "./ui/Loading";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createChartRenderScheduler } from "@/lib/chart-render-scheduler";
 import { createQuoteStore, LiveMarketData } from "./chart/layout/symbols/LiveMarketData";
@@ -102,7 +103,6 @@ import {
 import { bollingerData, macdData, priceIndicatorData, rsiData, volumeMa } from "./chart/indicators/chart-indicators";
 import {
   barCloseCountdown,
-  comparisonSeriesPoints,
   alignComparisonPoints,
   comparisonValueAt,
   drawingStorageKey,
@@ -113,9 +113,12 @@ import {
 } from "./chart/core/chart-utils";
 import { useReferenceStudies, type ReferenceSeries } from "./chart/indicators/useReferenceStudies";
 import { ReferenceStudySettingsDialog } from "./chart/layout/settings/ReferenceStudySettingsDialog";
+import { ComparisonSettingsDialog } from "./chart/layout/settings/ComparisonSettingsDialog";
+import { ReferenceStudyView } from "./chart/indicators/ReferenceStudyView";
+import { COMPARISON_DEFINITION, comparisonAllowed, comparisonPlotPoint, comparisonPoints, comparisonPriceFormat, comparisonReferenceSettings, normalizeComparisonSettings, type ComparisonSettings } from "./chart/config/comparison-settings";
 import { formatVolume } from "./chart/core/chart-utils";
 import { useIndicatorSettings } from "./chart/indicators/useIndicatorSettings";
-import { useSavedState } from "./chart/config/saved-state";
+import { readSaved, writeSaved, useSavedState } from "./chart/config/saved-state";
 import { useSavedLayout } from "./chart/layout/workspace/useSavedLayout";
 import { DelayedTooltip } from "./chart/ui/DelayedTooltip";
 import { OutsideDragSelectionGuard } from "./chart/ui/OutsideDragSelectionGuard";
@@ -249,7 +252,13 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
   const mainSelectionMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const volumeSelectionMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const refreshSelectionMarkersRef = useRef<() => void>(() => undefined);
-  const compareSeriesRef = useRef(new Map<string, ISeriesApi<"Line">>());
+  const compareSeriesRef = useRef(new Map<string, ReferenceSeries>());
+  const compareViewsRef = useRef(new Map<string, ReferenceStudyView>());
+  const compareRawBarsRef = useRef(new Map<string, Bar[]>());
+  const compareInfoRef = useRef(new Map<string, SymbolInfo>());
+  const compareHiddenRef = useRef(new Set<string>());
+  const compareIntervalAllowedRef = useRef(new Map<string, boolean>());
+  const comparisonSettingsRef = useRef<Record<string, ComparisonSettings>>({});
   const compareBarsRef = useRef(new Map<string, { time: Bar["time"]; value: number }[]>());
   const sourceScaleOverridesRef = useRef(new Map<string, "left" | "right">());
   const priceIndicatorSeriesRef = useRef(new Map<string, ISeriesApi<"Line">>());
@@ -280,13 +289,13 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
   const syncCompareSeries = useCallback(() => {
     const mainTimes = [...barsByTimeRef.current.keys()].sort((a, b) => a - b) as Bar["time"][];
     compareSeriesRef.current.forEach((series, compareSymbol) => {
-      series.setData(alignComparisonPoints(compareBarsRef.current.get(compareSymbol) ?? [], mainTimes));
+      series.setData(alignComparisonPoints(compareBarsRef.current.get(compareSymbol) ?? [], mainTimes).map(comparisonPlotPoint));
     });
   }, []);
   const updateCompareSeries = useCallback((time: Bar["time"]) => {
     compareSeriesRef.current.forEach((series, compareSymbol) => {
       const value = comparisonValueAt(compareBarsRef.current.get(compareSymbol) ?? [], time);
-      series.update(value === undefined ? { time } : { time, value });
+      series.update(comparisonPlotPoint({ time, value }));
     });
   }, []);
   const feedRef = useRef<ReturnType<typeof connectPriceFeed> | null>(null);
@@ -347,6 +356,20 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
 
   const [symbol, setSymbol] = useState(DEFAULT_SYMBOL);
   const [compareSymbols, setCompareSymbols] = useState<string[]>([]);
+  const [comparisonSettings, setComparisonSettings] = useState<Record<string, ComparisonSettings>>({});
+  const [comparisonSettingsRestored, setComparisonSettingsRestored] = useState(false);
+  useEffect(() => {
+    const saved = readSaved<Record<string, unknown>>("chart.comparisonSettings.v1");
+    if (saved && typeof saved === "object" && !Array.isArray(saved)) {
+      setComparisonSettings(Object.fromEntries(Object.entries(saved).map(([symbol, settings]) => [symbol, normalizeComparisonSettings(settings)])));
+    }
+    setComparisonSettingsRestored(true);
+  }, []);
+  useEffect(() => {
+    if (comparisonSettingsRestored) writeSaved("chart.comparisonSettings.v1", comparisonSettings);
+  }, [comparisonSettings, comparisonSettingsRestored]);
+  comparisonSettingsRef.current = comparisonSettings;
+  const [comparisonSettingsSymbol, setComparisonSettingsSymbol] = useState<string | null>(null);
   const [recentCompareSymbols, setRecentCompareSymbols] = useState<string[]>([]);
   const [resolvedSymbol, setResolvedSymbol] = useState<{ symbol: string; info: SymbolInfo }>();
   const [symbolRestored, setSymbolRestored] = useState(false);
@@ -428,6 +451,8 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
   const [symbolSearchInitialQuery, setSymbolSearchInitialQuery] = useState("");
   const [dataError, setDataError] = useState<string>();
   const [historyLoading, setHistoryLoading] = useState(true);
+  const [olderHistoryLoading, setOlderHistoryLoading] = useState(false);
+  const [comparisonStatus, setComparisonStatus] = useState<Record<string, "loading" | "ready" | "error">>({});
   const [chartTimezone, setChartTimezone] = useSavedState("chart.timezone.v1", "Asia/Bangkok");
   const [chartSettingsOpen, setChartSettingsOpen] = useState(false);
   const [volumeMaVisible, setVolumeMaVisible] = useSavedState("chart.volumeMaVisible.v1", false);
@@ -1443,6 +1468,10 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
       volumeMaSeriesRef.current = null;
       volumeSmaSeriesRef.current = null;
       compareSeriesRef.current.clear();
+      compareViewsRef.current.clear();
+      compareIntervalAllowedRef.current.clear();
+      compareRawBarsRef.current.clear();
+      compareInfoRef.current.clear();
       compareBarsRef.current.clear();
       priceIndicatorSeriesRef.current.clear();
       macdSeriesRef.current = null;
@@ -1467,6 +1496,7 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
     followLatestRef.current = true;
     loadedAxisContextRef.current = null;
     let loadingOlderHistory = false;
+    setOlderHistoryLoading(false);
     let olderHistoryExhausted = false;
     const historyAbortController = new AbortController();
     loadOlderHistoryRef.current = () => undefined;
@@ -1582,9 +1612,11 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
               const history = await fetchHistory(compareSymbol, resolution,
                 Math.floor(targetFrom - padding), Math.floor(Math.min(Date.now() / 1000, Math.max((targetTo ?? targetFrom) + padding, Number.isFinite(last) ? last : targetFrom))), controller.signal);
               if (cancelled || controller.signal.aborted || !compareSeriesRef.current.has(compareSymbol)) return;
-              const merged = new Map(comparisonSeriesPoints(history.filter((bar) => isTradingSessionTime(bar.time, resolution, info.session, info.timezone))).map((point) => [Number(point.time), point]));
-              compareBarsRef.current.get(compareSymbol)?.forEach((point) => merged.set(Number(point.time), point));
-              compareBarsRef.current.set(compareSymbol, [...merged.values()].sort((a, b) => Number(a.time) - Number(b.time)));
+              const merged = new Map(history.filter((bar) => isTradingSessionTime(bar.time, resolution, info.session, info.timezone)).map(bar => [Number(bar.time), bar]));
+              compareRawBarsRef.current.get(compareSymbol)?.forEach(bar => merged.set(Number(bar.time), bar));
+              const raw = [...merged.values()].sort((a, b) => Number(a.time) - Number(b.time));
+              compareRawBarsRef.current.set(compareSymbol, raw);
+              compareBarsRef.current.set(compareSymbol, comparisonPoints(raw, normalizeComparisonSettings(comparisonSettingsRef.current[compareSymbol])));
             }));
             if (cancelled || controller.signal.aborted) return;
             loaded = mergeBars([...barsByTimeRef.current.values()], filtered);
@@ -1627,6 +1659,7 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
         if (!renderingRef.current) return;
         if (cancelled || dateNavigationControllerRef.current || loadingOlderHistory || olderHistoryExhausted || earliestHistoryTime === undefined) return;
         loadingOlderHistory = true;
+        setOlderHistoryLoading(true);
         const pageTo = earliestHistoryTime - 1;
         const pageFrom = pageTo - historyWindowSeconds;
         void fetchHistory(symbol, resolution, pageFrom, pageTo, historyAbortController.signal)
@@ -1684,6 +1717,7 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
           })
           .finally(() => {
             loadingOlderHistory = false;
+            if (!cancelled) setOlderHistoryLoading(false);
           });
       };
       const visibleBars = DEFAULT_VISIBLE_BARS;
@@ -1939,11 +1973,17 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
     if (!chart) return;
 
     const activeSymbols = new Set(compareSymbols);
-    setComparisonQuotes((current) => current.filter((quote) => activeSymbols.has(quote.symbol)));
+    setComparisonStatus(Object.fromEntries(compareSymbols.map(item => [item, "loading" as const])));
+    setComparisonQuotes([]);
     compareSeriesRef.current.forEach((series, compareSymbol) => {
       if (activeSymbols.has(compareSymbol)) return;
       chart.removeSeries(series);
       compareSeriesRef.current.delete(compareSymbol);
+      compareViewsRef.current.delete(compareSymbol);
+      compareRawBarsRef.current.delete(compareSymbol);
+      compareInfoRef.current.delete(compareSymbol);
+      compareHiddenRef.current.delete(compareSymbol);
+      compareIntervalAllowedRef.current.delete(compareSymbol);
       compareBarsRef.current.delete(compareSymbol);
     });
 
@@ -1954,22 +1994,26 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
 
     compareSymbols.forEach((compareSymbol, index) => {
       let series = compareSeriesRef.current.get(compareSymbol);
+      const settings = normalizeComparisonSettings(comparisonSettingsRef.current[compareSymbol], COMPARE_COLORS[index % COMPARE_COLORS.length]);
       if (!series) {
-        series = chart.addSeries(LineSeries, {
+        const view = new ReferenceStudyView(COMPARISON_DEFINITION, comparisonReferenceSettings(settings));
+        compareViewsRef.current.set(compareSymbol, view);
+        compareIntervalAllowedRef.current.set(compareSymbol, comparisonAllowed(settings, resolution));
+        series = chart.addCustomSeries(view, {
           title: axisLabelsRef.current.symbol ? compareSymbol : "",
-          color: COMPARE_COLORS[index % COMPARE_COLORS.length],
-          lineWidth: 2,
+          color: settings.color,
           priceScaleId: sourceScaleOverridesRef.current.get(`compare:${compareSymbol}`) ?? mainScaleSideRef.current,
           lastValueVisible: axisLabelsRef.current.seriesValue,
-          priceLineVisible: false,
-          priceLineColor: COMPARE_COLORS[index % COMPARE_COLORS.length],
+          priceLineVisible: settings.priceLine,
+          priceLineColor: settings.color,
           baseLineVisible: false,
-          crosshairMarkerVisible: false,
+          visible: !compareHiddenRef.current.has(compareSymbol) && comparisonAllowed(settings, resolution),
           autoscaleInfoProvider: seriesOnlyRef.current ? () => null : undefined,
         }, mainPaneIndexRef.current);
         compareSeriesRef.current.set(compareSymbol, series);
       }
       compareBarsRef.current.delete(compareSymbol);
+      compareRawBarsRef.current.delete(compareSymbol);
       series.setData([]);
 
       void Promise.all([
@@ -1983,8 +2027,13 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
           info.session,
           info.timezone,
         ));
-        compareBarsRef.current.set(compareSymbol, comparisonSeriesPoints(compareBars));
+        compareInfoRef.current.set(compareSymbol, info);
+        compareRawBarsRef.current.set(compareSymbol, compareBars);
+        const currentSettings = normalizeComparisonSettings(comparisonSettingsRef.current[compareSymbol], settings.color);
+        compareBarsRef.current.set(compareSymbol, comparisonPoints(compareBars, currentSettings));
+        series!.applyOptions({ priceFormat: comparisonPriceFormat(currentSettings, info) });
         syncCompareSeries();
+        setComparisonStatus(current => ({ ...current, [compareSymbol]: "ready" }));
         const latestCompareBar = compareBars.at(-1);
         const comparePreviousClose = compareBars.at(-2)?.close ?? latestCompareBar?.close ?? 0;
         if (latestCompareBar) {
@@ -2010,11 +2059,20 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
             const bucket = bucketStart(tick.time, resolution);
             if (!isTradingSessionTime(bucket, resolution, info.session, info.timezone)) return;
             const points = compareBarsRef.current.get(compareSymbol);
-            if (!points) return;
+            const raw = compareRawBarsRef.current.get(compareSymbol);
+            if (!points || !raw) return;
             const lastPoint = points.at(-1);
             if (lastPoint && Number(bucket) < Number(lastPoint.time)) return;
-            if (lastPoint && Number(bucket) === Number(lastPoint.time)) lastPoint.value = tick.price;
-            else points.push({ time: bucket, value: tick.price });
+            const lastBar = raw.at(-1);
+            if (lastBar && Number(lastBar.time) === Number(bucket)) {
+              lastBar.high = Math.max(lastBar.high, tick.price);
+              lastBar.low = Math.min(lastBar.low, tick.price);
+              lastBar.close = tick.price;
+            } else raw.push({ time: bucket, open: tick.price, high: tick.price, low: tick.price, close: tick.price, volume: tick.volume ?? 0 });
+            const settings = normalizeComparisonSettings(comparisonSettingsRef.current[compareSymbol], COMPARE_COLORS[index % COMPARE_COLORS.length]);
+            const point = comparisonPoints([raw.at(-1)!], settings)[0];
+            if (lastPoint && Number(bucket) === Number(lastPoint.time)) lastPoint.value = point.value;
+            else points.push(point);
             const change = tick.price - comparePreviousClose;
             const pendingQuote: ComparisonQuote = {
               symbol: compareSymbol, description: info.description, exchange: info.exchange,
@@ -2027,21 +2085,16 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
             }
             const mainTime = currentBarRef.current?.time;
             if (mainTime !== undefined) updateCompareSeries(mainTime);
-            setComparisonQuotes((current) => current.map((quote) => quote.symbol === compareSymbol
-              ? {
-                  ...quote,
-                  price: tick.price,
-                  change,
-                  changePercent: comparePreviousClose ? change / comparePreviousClose * 100 : 0,
-                }
-              : quote));
+            setComparisonQuotes((current) => [...current.filter(quote => quote.symbol !== compareSymbol), pendingQuote]);
           },
           () => undefined,
         );
         feeds.push(feed);
       }).catch(() => {
         if (!cancelled) {
+          setComparisonStatus(current => ({ ...current, [compareSymbol]: "error" }));
           compareBarsRef.current.delete(compareSymbol);
+          compareRawBarsRef.current.delete(compareSymbol);
           series?.setData([]);
         }
       });
@@ -2053,6 +2106,25 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
       feeds.forEach((feed) => feed.close());
     };
   }, [compareSymbols, rangeDays, resolution, syncCompareSeries, updateCompareSeries]);
+
+  useEffect(() => {
+    compareSeriesRef.current.forEach((series, compareSymbol) => {
+      const view = compareViewsRef.current.get(compareSymbol);
+      const settings = normalizeComparisonSettings(comparisonSettings[compareSymbol], view?.settings.styles.compare.color);
+      if (view) view.settings = comparisonReferenceSettings(settings);
+      if (compareIntervalAllowedRef.current.get(compareSymbol) && series.options().visible === false) compareHiddenRef.current.add(compareSymbol);
+      const allowed = comparisonAllowed(settings, resolution);
+      compareIntervalAllowedRef.current.set(compareSymbol, allowed);
+      series.applyOptions({
+        color: settings.color, priceLineColor: settings.color, priceLineVisible: settings.priceLine,
+        priceFormat: comparisonPriceFormat(settings, compareInfoRef.current.get(compareSymbol)),
+        visible: !compareHiddenRef.current.has(compareSymbol) && allowed,
+      });
+      const bars = compareRawBarsRef.current.get(compareSymbol);
+      if (bars) compareBarsRef.current.set(compareSymbol, comparisonPoints(bars, settings));
+    });
+    syncCompareSeries();
+  }, [comparisonSettings, comparisonStatus, resolution, syncCompareSeries]);
 
   useEffect(() => {
     const feed = connectPriceFeed(
@@ -2521,7 +2593,7 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
     compareSeriesRef.current.forEach((compareSeries, compareSymbol) => compareSeries.applyOptions({
       title: axisLabels.symbol ? compareSymbol : "",
       lastValueVisible: axisLabels.seriesValue,
-      priceLineVisible: false,
+      priceLineVisible: comparisonSettingsRef.current[compareSymbol]?.priceLine ?? false,
     }));
     priceIndicatorSeriesRef.current.forEach((studySeries, id) => studySeries.applyOptions({
       title: axisLabels.studyNames ? id : "",
@@ -3463,16 +3535,24 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
   const toggleSourceVisibility = (id: string) => {
     const group = sourceGroupForId(id);
     const visible = group.some((item) => item.options().visible !== false);
+    if (id.startsWith("compare:")) {
+      if (visible) compareHiddenRef.current.add(id.slice(8));
+      else compareHiddenRef.current.delete(id.slice(8));
+    }
     const reference = referenceStudies.instances.current.get(id);
     if (reference) reference.visible = !visible;
     if (reference) referenceStudies.refresh();
-    group.forEach((item) => item.applyOptions({ visible: !visible }));
+    const allowed = !id.startsWith("compare:") || comparisonAllowed(normalizeComparisonSettings(comparisonSettingsRef.current[id.slice(8)]), resolution);
+    group.forEach((item) => item.applyOptions({ visible: !visible && allowed }));
     if (visible) setSelectedLegend((current) => current === id ? null : current);
     setPaneRevision((value) => value + 1);
   };
   const removeSource = (id: string) => {
     if (id.startsWith("reference:")) { referenceStudies.remove(id); syncPaneLayout(); }
-    else if (id.startsWith("compare:")) setCompareSymbols((current) => current.filter((symbol) => symbol !== id.slice(8)));
+    else if (id.startsWith("compare:")) {
+      if (comparisonSettingsSymbol === id.slice(8)) setComparisonSettingsSymbol(null);
+      setCompareSymbols((current) => current.filter((symbol) => symbol !== id.slice(8)));
+    }
     else {
       const name = id.slice(6);
       const study = name === "macd" || name === "rsi" ? name : name.startsWith("EMA") ? "ema" : name.startsWith("BOLL") ? "boll" : "ma";
@@ -3521,12 +3601,36 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
     if (group.length === 0) return;
     const paneIndex = group[0].getPane().paneIndex();
     const row = paneRows.get(paneIndex) ?? 0;
-    sourceLegends.push({ id, label, color, value, top: (legendBounds.sourceTops[id] ?? legendBounds.top) + row * 24, paneIndex, shared: sourceSharesPane(group), visible: group.some((item) => item.options().visible !== false), scaleSide: group[0].options().priceScaleId === "left" ? "left" : "right" });
+    sourceLegends.push({ id, label, color, value, top: (legendBounds.sourceTops[id] ?? legendBounds.top) + row * 24, paneIndex, shared: sourceSharesPane(group), visible: group.some((item) => item.options().visible !== false), scaleSide: group[0].options().priceScaleId === "left" ? "left" : "right", loading: historyLoading });
     paneRows.set(paneIndex, row + 1);
   };
-  compareSymbols.forEach((compareSymbol) => {
+  compareSymbols.forEach((compareSymbol, index) => {
     const quote = comparisonQuotes.find((item) => item.symbol === compareSymbol);
-    addSourceLegend(`compare:${compareSymbol}`, quote ? `${quote.description || compareSymbol}, ${quote.exchange}` : compareSymbol, quote?.color ?? "#2962ff", quote ? `${quote.price.toFixed(currentPriceFormat.precision)} ${quote.change >= 0 ? "+" : ""}${quote.change.toFixed(currentPriceFormat.precision)} (${quote.changePercent >= 0 ? "+" : ""}${quote.changePercent.toFixed(2)}%)` : undefined);
+    const settings = normalizeComparisonSettings(comparisonSettings[compareSymbol], COMPARE_COLORS[index % COMPARE_COLORS.length]);
+    const info = compareInfoRef.current.get(compareSymbol);
+    const points = compareBarsRef.current.get(compareSymbol) ?? [];
+    const at = quoteBar ? points.findLastIndex(point => Number(point.time) <= Number(quoteBar.time)) : points.length - 1;
+    const price = points[at]?.value;
+    const previous = points[at - 1]?.value ?? price;
+    const change = price !== undefined && previous !== undefined ? price - previous : 0;
+    const percent = previous ? change / previous * 100 : 0;
+    const precision = comparisonPriceFormat(settings, info).precision;
+    addSourceLegend(`compare:${compareSymbol}`, `${compareSymbol}${info?.exchange || quote?.exchange ? `, ${info?.exchange ?? quote?.exchange}` : ""}`, settings.color, price === undefined ? "N/A" : `${price.toFixed(precision)} ${change >= 0 ? "+" : ""}${change.toFixed(precision)} (${percent >= 0 ? "+" : ""}${percent.toFixed(2)}%)`);
+    const legend = sourceLegends.find(item => item.id === `compare:${compareSymbol}`);
+    if (legend) {
+      legend.hasSettings = true;
+      const view = compareViewsRef.current.get(compareSymbol);
+      if (view && (view.selected !== (selectedLegend === legend.id) || view.marksHidden !== marksHidden)) {
+        view.selected = selectedLegend === legend.id;
+        view.marksHidden = marksHidden;
+        compareSeriesRef.current.get(compareSymbol)?.applyOptions({});
+      }
+      legend.loading = (comparisonStatus[compareSymbol] ?? "loading") === "loading";
+      if (comparisonStatus[compareSymbol] === "error") {
+        legend.value = "Không tải được dữ liệu";
+        legend.color = "#f23645";
+      }
+    }
   });
   const volumeRowTop = (volumePaneIndex === mainPaneIndex ? legendBounds.top : legendBounds.volumeTop)
     + (paneRows.get(volumePaneIndex) ?? 0) * 24;
@@ -3549,6 +3653,7 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
     if (study.series) addSourceLegend(study.id, study.name === "Volume" ? "Khối lượng" : study.definition?.metainfo.shortDescription ?? study.name, color, value);
     else sourceLegends.push({ id: study.id, label: study.name, color: study.error ? "#f23645" : color, value, top: legendBounds.top + (paneRows.get(mainPaneIndex) ?? 1) * 24, paneIndex: mainPaneIndex, shared: false, visible: true, scaleSide: "right" });
     const legend = sourceLegends.at(-1)!;
+    legend.loading = !study.error && (study.loading || historyLoading);
     legend.parameters = study.definition?.metainfo.inputs.filter((input) => !input.isHidden && input.type !== "bool").map((input) => study.settings?.inputs[input.id]).filter((value) => value !== "").join(" ");
     if (study.name === "Volume" && study.settings) {
       const { inputs, styles } = study.settings;
@@ -3586,6 +3691,7 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
     setChartSettingsOpen(false);
     setTextDialogOpen(false);
     referenceStudies.setSettingsId(null);
+    setComparisonSettingsSymbol(null);
     setAxisMenu(null);
     setHoverAxis(null);
     panGestureRef.current = null;
@@ -3620,6 +3726,13 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
       {active && (<DelayedTooltip />)}
       {active && (<OutsideDragSelectionGuard />)}
       {referenceSettings?.definition && referenceSettings.settings && (active && (<ReferenceStudySettingsDialog key={referenceSettings.id} definition={referenceSettings.definition} settings={referenceSettings.settings} onApply={(settings) => referenceStudies.apply(referenceSettings.id, settings)} onClose={() => referenceStudies.setSettingsId(null)}/>)) }
+      {active && comparisonSettingsSymbol && compareSymbols.includes(comparisonSettingsSymbol) && <ComparisonSettingsDialog
+        key={comparisonSettingsSymbol}
+        title={`${comparisonSettingsSymbol}${compareInfoRef.current.get(comparisonSettingsSymbol)?.exchange ? `, ${compareInfoRef.current.get(comparisonSettingsSymbol)!.exchange}` : ""}`}
+        settings={normalizeComparisonSettings(comparisonSettings[comparisonSettingsSymbol], COMPARE_COLORS[compareSymbols.indexOf(comparisonSettingsSymbol) % COMPARE_COLORS.length])}
+        onApply={settings => setComparisonSettings(previous => ({ ...previous, [comparisonSettingsSymbol]: settings }))}
+        onClose={() => setComparisonSettingsSymbol(null)}
+      />}
       {active ? (<AppHeader connectionStatus={status} timezone={chartTimezone} exchangeTimezone={symbolInfo?.timezone} onTimezoneChange={handleTimezoneChange} />) : <div className="chart-header-placeholder" />}
       {active ? (<ChartHeader
         layoutReady={layoutReady}
@@ -3657,6 +3770,10 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
         }}
         onCompareSymbolAdd={(nextSymbol) => {
           if (nextSymbol !== symbol) {
+            if (!comparisonSettings[nextSymbol]) {
+              const defaults = normalizeComparisonSettings(readSaved("chart.comparisonDefaults.v1"), COMPARE_COLORS[compareSymbols.length % COMPARE_COLORS.length]);
+              setComparisonSettings(previous => ({ ...previous, [nextSymbol]: defaults }));
+            }
             setCompareSymbols((current) => current.includes(nextSymbol)
               ? current
               : [...current, nextSymbol]);
@@ -3667,6 +3784,7 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
           }
         }}
         onCompareSymbolRemove={(compareSymbol) => {
+          if (comparisonSettingsSymbol === compareSymbol) setComparisonSettingsSymbol(null);
           setCompareSymbols((current) => current.filter((item) => item !== compareSymbol));
         }}
         onResolutionChange={(nextResolution) => {
@@ -3744,7 +3862,7 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
             onMoveSourceOrder={moveSourceOrder}
             onToggleSourceVisibility={toggleSourceVisibility}
             onRemoveSource={removeSource}
-            onOpenSourceSettings={referenceStudies.setSettingsId}
+            onOpenSourceSettings={id => { if (id.startsWith("compare:")) setComparisonSettingsSymbol(id.slice(8)); else referenceStudies.setSettingsId(id); }}
             onPinSourceToScale={pinSourceToScale}
             seriesVisible={mainSeriesVisible}
             scaleSide={mainScaleSide}
@@ -3888,6 +4006,7 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
               {countdown.text}
             </div>
           )}
+          {olderHistoryLoading && !historyLoading && !dataError && <div className="chart-history-loading"><LoadingIndicator label="Đang tải lịch sử biểu đồ" /></div>}
           {dataError && <div className="chart-data-error" role="alert">{dataError}</div>}
           {mainPanePlotVisible && selectedDrawing && chartRef.current && seriesRef.current && lineToolsRef.current && (selectedDrawing.toolType !== "PriceNote" || priceNoteVisible(selectedDrawing.options as PriceNoteOptions, resolution)) && (
             <DrawingAxisRangeHighlight

@@ -3437,6 +3437,7 @@ main#chart.chart--zoom {
   z-index: 2;
   flex: none;
   overflow: visible;
+  background: #131722;
 }
 
 .market-data__title:hover,
@@ -5021,6 +5022,18 @@ main#chart.chart--zoom {
 
 }
 
+.chart-history-loading {
+  position: absolute;
+  left: 16px;
+  bottom: 32px;
+  max-width: calc(100% - 40px);
+  padding: 12px 16px;
+  border-radius: 6px;
+  background: rgb(19 23 34 / 90%);
+  color: #b2b5be;
+  pointer-events: none;
+}
+
 .market-data__session--open .market-data__session-heading,
 .market-data__session--open .market-data__session-heading svg {
   color: #089981;
@@ -6208,8 +6221,18 @@ html input[type="checkbox"]:focus-visible {
   background: #363a45;
 }
 
-.chart-type__favorite.filled {
+.chart-type__favorite.filled,
+.chart-type__row.selected .chart-type__favorite.filled {
   color: #f9a825;
+}
+
+.chart-type__favorite.filled:not(:disabled):is(:hover, :active, :focus-visible),
+.toolbar-menu--drawing .drawing-tool-menu__favorite.is-favorite:not(:disabled):is(:hover, :active, :focus-visible),
+.indicator-menu__favorite.is-active:not(:disabled):is(:hover, :active, :focus-visible),
+.layout-row__favorite.is-favorite:not(:disabled):is(:hover, :active, :focus-visible) {
+  border-radius: 4px;
+  background-color: #1848cc !important;
+  color: #f9a825 !important;
 }
 
 .chart-style-settings__colors,
@@ -7344,4 +7367,32 @@ html input[type="checkbox"]:focus-visible {
   height: 34.56px;
   padding-left: 6.912px;
   font-size: 13.824px;
+}
+
+.comparison-dialog { width: 480px; height: min(650px, calc(100dvh - 24px)); max-width: calc(100vw - 24px); }
+.comparison-dialog--visibility { width: 580px; height: min(570px, calc(100dvh - 24px)); }
+.comparison-dialog h2 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.comparison-dialog .volume-dialog__row > span:first-child { width: 128px; }
+.comparison-dialog select { text-overflow: ellipsis; }
+.comparison-dialog input[type="checkbox"] { width: 20px; height: 20px; margin: 0; accent-color: #2962ff; }
+.comparison-dialog__line { gap: 8px; }
+.comparison-dialog__line select { width: 64px; }
+.comparison-dialog__interval { display: grid; grid-template-columns: 120px minmax(64px, 1fr) minmax(80px, 1fr) minmax(64px, 1fr); align-items: center; gap: 12px; min-height: 62px; }
+.comparison-dialog__interval > label { display: flex; align-items: center; gap: 10px; white-space: nowrap; }
+.comparison-dialog__interval > input, .comparison-dialog footer > select { min-width: 0; width: 100%; height: 42px; padding: 0 9px; border: 1px solid #434651; border-radius: 8px; background: #1e222d; color: #d1d4dc; font: inherit; }
+.comparison-dialog :is(input, select):focus-visible { outline: 2px solid #2962ff; outline-offset: -1px; }
+.comparison-dialog :is(input, select):disabled { opacity: .45; }
+.comparison-dialog footer > select { width: 125px; }
+.comparison-dialog__range { position: relative; height: 14px; border-radius: 7px; background: linear-gradient(to right, #434651 var(--range-from), #2962ff var(--range-from), #2962ff var(--range-to), #434651 var(--range-to)); }
+.comparison-dialog__range[data-disabled="true"] { opacity: .4; }
+.comparison-dialog__range input { position: absolute; inset: 0; width: 100%; height: 14px; margin: 0; padding: 0; appearance: none; background: transparent; pointer-events: none; }
+.comparison-dialog__range input::-webkit-slider-thumb { appearance: none; width: 15px; height: 15px; border: 0; border-radius: 50%; background: #fff; pointer-events: auto; cursor: ew-resize; }
+.comparison-dialog__range input::-moz-range-thumb { width: 15px; height: 15px; border: 0; border-radius: 50%; background: #fff; pointer-events: auto; cursor: ew-resize; }
+.comparison-dialog__range input:disabled::-webkit-slider-thumb { pointer-events: none; }
+.comparison-dialog__range input:disabled::-moz-range-thumb { pointer-events: none; }
+@media (max-width: 520px) {
+  .comparison-dialog__interval { grid-template-columns: 80px minmax(48px, 1fr) minmax(36px, 1fr) minmax(48px, 1fr); gap: 6px; font-size: 13px; }
+  .comparison-dialog .volume-dialog__content { padding-inline: 16px; }
+  .comparison-dialog .volume-dialog__row > span:first-child { width: 110px; }
+  .comparison-dialog__line select { width: 54px; }
 }

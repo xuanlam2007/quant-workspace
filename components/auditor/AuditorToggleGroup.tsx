@@ -1,18 +1,21 @@
 "use client";
 
 import { useLayoutEffect, useRef } from "react";
+import { LoadingText } from "../ui/Loading";
 import styles from "../../app/auditor/auditor.module.css";
 
 type Option<T> = { value: T; label: string };
 
-export default function AuditorToggleGroup<T extends string>({ label, value, options, disabled = false, variant, onChange }: {
+export default function AuditorToggleGroup<T extends string>({ label, value, options, disabled: disabledProp = false, loading = false, variant, onChange }: {
   label: string;
   value: T | undefined;
   options: readonly Option<T>[];
   disabled?: boolean;
+  loading?: boolean;
   variant: "capture" | "filters";
   onChange: (value: T) => void;
 }) {
+  const disabled = disabledProp || loading;
   const group = useRef<HTMLDivElement>(null);
   const indicator = useRef<HTMLSpanElement>(null);
 
@@ -51,7 +54,7 @@ export default function AuditorToggleGroup<T extends string>({ label, value, opt
         <button key={option.value} type="button" tabIndex={-1} aria-pressed={value === option.value} disabled={disabled} onClick={() => {
           if (option.value !== value) onChange(option.value);
         }}>
-          {option.label}
+          <LoadingText loading={loading} width="auto">{option.label}</LoadingText>
         </button>
       ))}
     </div>
