@@ -67,7 +67,7 @@ export function auditorAnalysisError(message: string) {
   if (/Command\s+['\[]/i.test(message)) return "CLI không hoàn tất yêu cầu. Minh chứng đã được lưu; kiểm tra Terminal rồi thử lại.";
   return message;
 }
-export type AiStatus = Partial<AiSettings> & { available?: boolean; connected: boolean | null; error?: string; latency_ms?: number; vision?: boolean; audio_input?: boolean; transcription?: boolean };
+export type AiStatus = Partial<AiSettings> & { available?: boolean; connected: boolean | null; error?: string; terminal_error?: string; latency_ms?: number; vision?: boolean; audio_input?: boolean; transcription?: boolean };
 export type AiCatalogOption = { id: string; label: string; description?: string };
 export type AiCatalog = {
   provider: AiSettings["provider"];
