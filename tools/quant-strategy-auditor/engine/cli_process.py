@@ -96,12 +96,12 @@ class CliProcess:
         self.process.wait(timeout=3)
 
 
-def run_cli(command, *, input, timeout, terminal_event=None, **kwargs):
+def run_cli(command, *, input, timeout, terminal_event=None, on_output=None, **kwargs):
     owner = CliProcess(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **kwargs)
     process = owner.process
     readers = []
     try:
-        if terminal_event:
+        if terminal_event or on_output:
             messages = queue.Queue(maxsize=256)
             stopped = threading.Event()
 
@@ -137,11 +137,14 @@ def run_cli(command, *, input, timeout, terminal_event=None, **kwargs):
                 reader.start()
             deadline = time.monotonic() + timeout
             stdout, stderr, size = [], "", 0
+            finished = set()
             try:
                 def write():
                     try:
                         process.stdin.write(input)
                         process.stdin.flush()
+                        if not terminal_event:
+                            process.stdin.close()
                     except (OSError, ValueError):
                         if not stopped.is_set():
                             try:
@@ -162,6 +165,14 @@ def run_cli(command, *, input, timeout, terminal_event=None, **kwargs):
                         raise subprocess.TimeoutExpired(command, timeout) from None
                     if kind == "error":
                         raise RuntimeError(line)
+                    if on_output and line:
+                        on_output(kind, line)
+                    if line is None and not terminal_event:
+                        finished.add(kind)
+                        if len(finished) == 2:
+                            code = process.wait(timeout=max(.001, deadline - time.monotonic()))
+                            return subprocess.CompletedProcess(command, code, "".join(stdout), stderr)
+                        continue
                     if kind == "stderr":
                         if line:
                             stderr = (stderr + line)[-4000:]
@@ -172,6 +183,8 @@ def run_cli(command, *, input, timeout, terminal_event=None, **kwargs):
                     if size > 16 * 1024 * 1024:
                         raise RuntimeError("CLI observation exceeded its response limit")
                     stdout.append(line)
+                    if not terminal_event:
+                        continue
                     event = json.loads(line)
                     step = event.get("step_update", {})
                     if step.get("state") == "ERROR" or step.get("tool_info", {}).get("error"):
