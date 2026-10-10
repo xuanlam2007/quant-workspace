@@ -1,5 +1,7 @@
 "use client";
 
+import GlobalNotice from "@/components/ui/GlobalNotice";
+
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { LineStyle, type IChartApi, type ISeriesApi, type Time } from "lightweight-charts";
 import { interpolateLogicalIndexFromTime, interpolateTimeFromLogicalIndex, type LineToolExport, type TextFontOptions } from "lightweight-charts-line-tools-core";
@@ -133,7 +135,7 @@ export function PriceNoteDialog({ drawing, chart, series, onPreview, onCancel, o
       <footer className="text-tool-footer">
         <div className="price-note-template"><select tabIndex={-1} aria-label="Bản mẫu" value="" onChange={(event) => { const name = event.target.value; if (name === "__save") { setTemplateName(""); setSavingTemplate(true); } else if (templates[name]?.text && templates[name]?.line) options(structuredClone(templates[name])); }}>
           <option value="" disabled>Bản mẫu</option><option value="__save">Lưu bản mẫu...</option>{Object.keys(templates).map((name) => <option key={name} value={name}>{name}</option>)}
-        </select>{savingTemplate && <div className="price-note-template__save"><input tabIndex={-1} aria-label="Tên bản mẫu" value={templateName} onChange={(event) => setTemplateName(event.target.value)} maxLength={64}/><button type="button" tabIndex={-1} onClick={saveTemplate} disabled={!templateName.trim()}>Lưu</button><button type="button" tabIndex={-1} onClick={() => setSavingTemplate(false)}>Hủy bỏ</button>{templateError && <span role="alert">{templateError}</span>}</div>}</div>
+        </select>{savingTemplate && <div className="price-note-template__save"><input tabIndex={-1} aria-label="Tên bản mẫu" value={templateName} onChange={(event) => setTemplateName(event.target.value)} maxLength={64}/><button type="button" tabIndex={-1} onClick={saveTemplate} disabled={!templateName.trim()}>Lưu</button><button type="button" tabIndex={-1} onClick={() => setSavingTemplate(false)}>Hủy bỏ</button>{templateError && <GlobalNotice message={templateError} />}</div>}</div>
         <div className="text-tool-footer-actions"><button type="button" tabIndex={-1} className="dialog-btn dialog-btn--secondary" onClick={onCancel}>Hủy bỏ</button><button type="button" tabIndex={-1} className="dialog-btn dialog-btn--primary" onClick={() => onConfirm(draft)}>Ok</button></div>
       </footer>
     </section>
