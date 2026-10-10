@@ -60,19 +60,17 @@ The chart supports other symbols and intervals for exploration. That support doe
 
 The immediate workflow is to learn from trader evidence and explanations, then test strategy understanding in the separate Backtest tab. Its initial implementation provides replay and simulated execution; a future derivatives-order tab will handle approved live execution:
 
-| Status | Goal |
-| --- | --- |
-| Not complete | Understand my documented strategies through examples and teaching, preserving their conditions and recording rule changes only after my approval. |
-| Not complete | Produce evidence-based decisions with the strategy, action, time, reference price, relevant stop-loss conditions, and reasons to trade, wait, or skip. |
-| Not complete | Use my existing drawing tools to annotate setups, trade markers, explanations, calculations, and results on the chart, with annotated chart images for review. |
-| Not complete | Replay historical data with simulated orders and pause/resume controls, letting me inspect decisions and teach AI before continuing. AI should only see data available at the replay time and may execute simulated orders under the approved rules without approval for each order. |
-| Not complete | Evaluate strategy understanding and results on data separate from the teaching examples, recording mistakes, evidence, and assumptions about fills, fees, and slippage. |
+- [ ] Understand my documented strategies through examples and teaching, preserving their conditions and recording rule changes only after my approval.
+- [ ] Produce evidence-based decisions with the strategy, action, time, reference price, relevant stop-loss conditions, and reasons to trade, wait, or skip.
+- [ ] Use my existing drawing tools to annotate setups, trade markers, explanations, calculations, and results on the chart, with annotated chart images for review.
+- [ ] Replay historical data with simulated orders and pause/resume controls, letting me inspect decisions and teach AI before continuing. AI should only see data available at the replay time and may execute simulated orders under the approved rules without approval for each order.
+- [ ] Evaluate strategy understanding and results on data separate from the teaching examples, recording mistakes, evidence, and assumptions about fills, fees, and slippage.
 
 My trading research is intended to use **second-level historical data, not historical tick data**. The chart history adapter currently supplies M1; second-level files must be sourced separately and checked for actual sampling granularity. Backtesting must respect that limit rather than assume the price path within each second. Receiving live ticks and replaying historical ticks are separate capabilities: the existing live feed does not supply historical tick replay. Historical tick replay would require its own data source and implementation. Data granularity does not change the M1-only analysis scope.
 
 Teaching means working through guidance, examples, and approved strategy documents. A correction to one simulated trade does not automatically become a new trading rule or fine-tune a model.
 
-### Try visual backtesting
+### Try backtesting
 
 - Open **Backtest** and load a historical day, import a JSON file, or choose the explicitly labeled synthetic demonstration.
 - Loading or resetting starts at `0 / N` with no visible candles. Step or Play reveals the first minute. Use the chart's symbol search and calendar to choose the historical source.
@@ -90,10 +88,8 @@ Teaching means working through guidance, examples, and approved strategy documen
 
 ### Future execution
 
-| Status | Goal |
-| --- | --- |
-| Planned | Authenticated VNDIRECT Open API integration for account, order, and position operations. |
-| Planned | Live autonomous execution within the rules, risk limits, and permissions I approve. |
+- [ ] Authenticated VNDIRECT Open API integration for account, order, and position operations.
+- [ ] Live autonomous execution within the rules, risk limits, and permissions I approve.
 
 These remain future work. The existing market-data connection is separate from authenticated broker order integration, and backtest results do not authorize a switch to live trading. I decide when to move to each execution stage.
 
@@ -212,7 +208,7 @@ The frontend uses Next.js, React, TypeScript, and Lightweight Charts. The local 
 | [`main`](https://github.com/xuanlam2007/quant-workspace/tree/main) | The complete chart-and-auditor platform and the base for future development. |
 | [`legacy/chart-only`](https://github.com/xuanlam2007/quant-workspace/tree/legacy/chart-only) | Preserved chart-only predecessor, with its development history sanitized for public sharing. |
 | [`analyzer-auditor`](https://github.com/xuanlam2007/quant-workspace/tree/analyzer-auditor) | Retained development history of the Analyzer Auditor integration. |
-| `feature/visual-backtest` (local, not published) | Visual Backtest development using the full chart, replay controls, and simulated orders. |
+| [`feature/backtest-engine`](https://github.com/xuanlam2007/quant-workspace/tree/feature/backtest-engine) | Backtest engine development using the full chart, replay controls, and simulated orders. |
 
 Start new work from `main` on short-lived `feat/...`, `fix/...`, or `docs/...` branches, then open a pull request back to `main`. Preserve the legacy branch as the historical chart version.
 
