@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { auditEventLabel, auditorRequest, engineUrl, reportUrl, type AiStatus, type AiSettings, type AuditEvent, type RecordingState, type SessionGroup, type Snapshot, type Summary, type TerminalHost } from "../../lib/auditor-client";
+import { auditEventLabel, auditorAnalysisError, auditorRequest, engineUrl, reportUrl, type AiStatus, type AiSettings, type AuditEvent, type RecordingState, type SessionGroup, type Snapshot, type Summary, type TerminalHost } from "../../lib/auditor-client";
+import { notify as notifyGlobal } from "../../lib/notifications";
 import { captureBrowserTab } from "../../lib/auditor-capture";
 import type { CaptureMode, CaptureWindow } from "../../lib/auditor-client";
 import AuditorToggleGroup from "./AuditorToggleGroup";
@@ -30,6 +31,7 @@ export default function AuditorWorkspace({ active: isActive = true }: { active?:
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const snapshotRef = useRef<Snapshot | null>(null);
   const [events, setEvents] = useState<AuditEvent[]>([]);
+  const eventRecords = useRef(new Map<string, AuditEvent>());
   const [connection, setConnection] = useState<"connecting" | "connected" | "disconnected">("connecting");
   const [connectionNoticeVisible, setConnectionNoticeVisible] = useState(false);
   const [reconnectKey, setReconnectKey] = useState(0);
@@ -77,6 +79,7 @@ export default function AuditorWorkspace({ active: isActive = true }: { active?:
     snapshotRef.current = next;
     setSnapshot(next);
     setEvents(next.recent_events || []);
+    eventRecords.current = new Map((next.recent_events || []).map(event => [event.id, event]));
     setHost(next.config?.terminal_type || "ORCA");
     setAi(next.gemini_status || null);
     setReports(null);
@@ -84,6 +87,14 @@ export default function AuditorWorkspace({ active: isActive = true }: { active?:
   const upsertEvent = useCallback((event: AuditEvent, summary?: Summary) => {
     const current = snapshotRef.current;
     if (!current || (event.session_id && (event.session_id !== current.session_id || event.date !== current.current_date))) return;
+    const previous = eventRecords.current.get(event.id);
+    const next = { ...previous, ...event };
+    if (next.ai_error && !next.ai_pending && (next.ai_error !== previous?.ai_error || previous?.ai_pending)) notifyGlobal(auditorAnalysisError(next.ai_error), "warning");
+    if (next.capture_error && next.capture_error !== previous?.capture_error) notifyGlobal(`Đã lưu ghi âm, chưa chụp được ảnh: ${next.capture_error}`, "warning");
+    const priorWarnings = new Set((previous?.warnings || []).map(warning => warning.message));
+    for (const warning of next.warnings || []) if (!priorWarnings.has(warning.message)) notifyGlobal(warning.message, "warning");
+    eventRecords.current.set(event.id, next);
+    eventRecords.current = new Map(Array.from(eventRecords.current).slice(-200));
     if (summary) setSnapshot(previous => previous ? { ...previous, summary } : previous);
     setEvents(previous => previous.some(item => item.id === event.id)
       ? previous.map(item => item.id === event.id ? { ...item, ...event } : item)
@@ -345,7 +356,7 @@ export default function AuditorWorkspace({ active: isActive = true }: { active?:
           <button type="button" className={`${styles.button} ${styles.terminalButton}`} disabled={disabled || terminalPending || !active || host === "NONE"} aria-busy={terminalPending} onClick={() => void openTerminal()}>{terminalPending ? <LoadingIndicator label="Đang mở Terminal" /> : "Mở Terminal"}</button>
         </div>
       </header>
-      {!ready && connectionNoticeVisible && <div className={styles.connectionNotice} role="status">{connection !== "disconnected" ? <LoadingIndicator compact label="Đang kết nối bộ máy phân tích" /> : <Icon name="warning" />}<div><strong>{connection === "connected" ? "Đang chờ cập nhật bộ máy phân tích" : connection === "connecting" ? "Đang kết nối bộ máy phân tích" : "Bộ máy phân tích chưa khả dụng"}</strong><p>Bộ máy phân tích tự khởi động khi mở Quant. Hệ thống sẽ tự kết nối lại. Nếu vẫn chưa kết nối được, hãy kiểm tra Terminal đang chạy ứng dụng. {snapshot && "Dữ liệu phiên đang hiển thị có thể chưa được cập nhật."}</p></div><button className={styles.button} type="button" onClick={() => { activateAuditor(true); setReconnectKey(value => value + 1); }}><Icon name="refresh" />Kết nối lại</button></div>}
+      {!ready && connectionNoticeVisible && <AuditorNotice kind="warning" message={connection === "connected" ? "Đang chờ cập nhật bộ máy phân tích." : connection === "connecting" ? "Đang kết nối bộ máy phân tích." : "Bộ máy phân tích chưa khả dụng. Hệ thống sẽ tự kết nối lại."}><button type="button" tabIndex={-1} onClick={() => { activateAuditor(true); setReconnectKey(value => value + 1); }}>Kết nối lại</button></AuditorNotice>}
       {ready && !active && <div className={styles.connectionNotice}><Icon name="history" /><div><strong>Bắt đầu một phiên</strong><p>Tạo phiên mới hoặc chọn từ lịch sử. Tải lại trang vẫn giữ phiên đã chọn.</p></div><button className={styles.button} type="button" onClick={openSessions}>Xem lịch sử</button></div>}
       <AuditorMetrics snapshot={snapshot} loading={dataLoading} />
       <div className={styles.layout}>
