@@ -51,6 +51,13 @@ export function replayMinutes(data: ReplayData): number[] {
   return [...new Set(data.bars.map(bar => Math.floor(bar.time / 60) * 60))];
 }
 
+export function replayLogicalRange(barCount: number, plotWidth: number): { from: number; to: number } | null {
+  if (barCount <= 0 || plotWidth <= 0) return null;
+  // Giữ bar spacing tối đa 6 px như bundle, thu nhỏ khi toàn bộ nến đã mở vượt viewport.
+  const to = barCount - 1 + 6;
+  return { from: Math.min(-0.5, to + 1 - plotWidth / 6), to };
+}
+
 export function replayFrame(data: ReplayData, index: number, evaluationSecond = 55): ReplayFrame {
   const minutes = replayMinutes(data);
   if (index < 0) return { cutoff: minutes[0], minute: minutes[0], samples: [], bars: [] };

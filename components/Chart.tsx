@@ -40,7 +40,7 @@ import {
   type Bar,
   type SymbolInfo,
 } from "@/lib/dchart-api";
-import type { ChartReplay, ReplayDrawing } from "@/lib/backtest";
+import { replayLogicalRange, type ChartReplay, type ReplayDrawing } from "@/lib/backtest";
 import { connectPriceFeed, type ConnStatus, type PriceTick } from "@/lib/dchart-socket";
 import { bucketStart, mergeTick } from "@/lib/bar-builder";
 import { createRealtimeTickBuffer } from "@/lib/realtime-tick-buffer";
@@ -379,6 +379,8 @@ function ChartInstance({ active, onLoadLayout, replay }: { active: boolean; onLo
 
   const [selectedSymbol, setSymbol] = useState(DEFAULT_SYMBOL);
   const symbol = replay?.symbol ?? selectedSymbol;
+  // Series dùng symbol tại mount; effect dữ liệu cập nhật tên mà không tạo lại chart.
+  const initialSymbolRef = useRef(symbol);
   const [compareSymbols, setCompareSymbols] = useState<string[]>([]);
   const [comparisonSettings, setComparisonSettings] = useState<Record<string, ComparisonSettings>>({});
   const [comparisonSettingsRestored, setComparisonSettingsRestored] = useState(false);
@@ -581,7 +583,7 @@ function ChartInstance({ active, onLoadLayout, replay }: { active: boolean; onLo
     setIndicatorScaleSideOverrides(saved.indicatorSides);
     sourceScaleOverridesRef.current = new Map(Object.entries(saved.sourceSides));
     setAxisSettingsRestored(true);
-  }, []);
+  }, [setChartAppearance]);
 
   useEffect(() => {
     if (!axisSettingsRestored || replayMode) return;
@@ -662,7 +664,7 @@ function ChartInstance({ active, onLoadLayout, replay }: { active: boolean; onLo
 
   const handleTimezoneChange = useCallback((newTimezone: string) => {
     setChartTimezone(newTimezone);
-  }, []);
+  }, [setChartTimezone]);
 
   const effectiveChartTimezone = chartTimezone === "exchange"
     ? symbolInfo?.timezone ?? "Asia/Bangkok"
@@ -703,6 +705,10 @@ function ChartInstance({ active, onLoadLayout, replay }: { active: boolean; onLo
     autoScaleRef.current = true;
     setAutoScale(true);
     chart.timeScale().resetTimeScale();
+    if (replayRef.current) {
+      const range = replayLogicalRange(replayRef.current.frame?.bars.length ?? 0, chart.timeScale().width());
+      if (range) chart.timeScale().setVisibleLogicalRange(range);
+    }
     chart.panes().forEach((pane) => {
       for (const side of ["left", "right"] as const) chart.priceScale(side, pane.paneIndex()).setAutoScale(true);
     });
@@ -810,6 +816,7 @@ function ChartInstance({ active, onLoadLayout, replay }: { active: boolean; onLo
   }, []);
   const referenceStudies = useReferenceStudies(chartRef, barsByTimeRef, symbol, resolution, symbolInfo, chartStyle, studyLabelsVisible,
     () => setVisibleBar((bar) => bar ? { ...bar } : currentBarRef.current));
+  const { instances: referenceStudyInstances, update: updateReferenceStudies, setSettingsId: setReferenceSettingsId } = referenceStudies;
   const secondaryLeftVisible = (activeStudies.includes("macd") && indicatorScaleSides.macd === "left")
     || (activeStudies.includes("rsi") && indicatorScaleSides.rsi === "left");
   const secondaryRightVisible = (activeStudies.includes("macd") && indicatorScaleSides.macd === "right")
@@ -908,7 +915,7 @@ function ChartInstance({ active, onLoadLayout, replay }: { active: boolean; onLo
         setHistoryLoading(false);
       });
     return () => controller.abort();
-  }, [symbol, symbolRestored, replayMode]);
+  }, [symbol, symbolRestored, replayMode, setVisibleBar]);
 
   const openTextDialog = useCallback((drawing: LineToolExport<LineToolType>) => {
     const snapshot = structuredClone(drawing);
@@ -924,9 +931,9 @@ function ChartInstance({ active, onLoadLayout, replay }: { active: boolean; onLo
   const streamingVolume = useRef(new StreamingIndicators());
   const volumeHistory = useRef<Map<number, Bar> | null>(null);
 
-  const updateStudySeries = (rawBars: Bar[]) => {
+  const updateStudySeries = useCallback((rawBars: Bar[]) => {
     volumeHistory.current = null;
-    referenceStudies.update(rawBars);
+    updateReferenceStudies(rawBars);
     const bars = chartStudyBars(rawBars, chartStyleRef.current);
     streamingStudies.current.reset(bars);
     PRICE_INDICATORS.forEach((indicator) => {
@@ -950,7 +957,7 @@ function ChartInstance({ active, onLoadLayout, replay }: { active: boolean; onLo
       rsiSeriesRef.current.upper.setData(values.map((point) => ({ time: point.time, value: 70 })));
       rsiSeriesRef.current.lower.setData(values.map((point) => ({ time: point.time, value: 30 })));
     }
-  };
+  }, [updateReferenceStudies]);
 
   // Tạo biểu đồ một lần khi gắn component
   useEffect(() => {
@@ -992,8 +999,8 @@ function ChartInstance({ active, onLoadLayout, replay }: { active: boolean; onLo
         secondsVisible: false,
         borderVisible: true,
         borderColor: "#787b86",
-        barSpacing: 14,
-        minBarSpacing: 0.5,
+        barSpacing: replayRef.current ? 6 : 14,
+        minBarSpacing: replayRef.current ? 0.01 : 0.5,
         rightOffset: 6,
         fixRightEdge: false,
         lockVisibleTimeRangeOnResize: true,
@@ -1048,7 +1055,7 @@ function ChartInstance({ active, onLoadLayout, replay }: { active: boolean; onLo
       visible: false,
     });
     const series = chart.addSeries(CandlestickSeries, {
-      title: symbol,
+      title: initialSymbolRef.current,
       priceScaleId: "right",
       upColor: "#53B987",
       downColor: "#EB4D5C",
@@ -1463,15 +1470,25 @@ function ChartInstance({ active, onLoadLayout, replay }: { active: boolean; onLo
     element.addEventListener("wheel", onChartWheel, { capture: true, passive: false });
     window.addEventListener("keydown", cancelZoomOnEscape);
 
-    // autoSize quản lý kích thước; chỉ cập nhật lớp vẽ sau khi bố trí thay đổi.
+    // autoSize quản lý kích thước; replay đang follow cần fit lại toàn bộ nến đã mở.
+    const refreshAfterResize = () => {
+      if (replayRef.current && followLatestRef.current) {
+        const range = replayLogicalRange(replayRef.current.frame?.bars.length ?? 0, chart.timeScale().width());
+        if (range) chart.timeScale().setVisibleLogicalRange(range);
+      }
+      refreshDrawingOverlays();
+    };
     let resizeFrame = 0;
     const resizeObserver = new ResizeObserver(() => {
       cancelAnimationFrame(resizeFrame);
-      resizeFrame = requestAnimationFrame(() => refreshDrawingOverlays());
+      resizeFrame = requestAnimationFrame(refreshAfterResize);
     });
     resizeObserver.observe(containerRef.current);
-    resizeFrame = requestAnimationFrame(() => refreshDrawingOverlays());
+    resizeFrame = requestAnimationFrame(refreshAfterResize);
 
+    const compareSeries = compareSeriesRef.current;
+    const compareBars = compareBarsRef.current;
+    const priceIndicatorSeries = priceIndicatorSeriesRef.current;
     const compareViews = compareViewsRef.current;
     const compareIntervalAllowed = compareIntervalAllowedRef.current;
     const compareRawBars = compareRawBarsRef.current;
@@ -1510,23 +1527,22 @@ function ChartInstance({ active, onLoadLayout, replay }: { active: boolean; onLo
       volumeSeriesRef.current = null;
       volumeMaSeriesRef.current = null;
       volumeSmaSeriesRef.current = null;
-      compareSeriesRef.current.clear();
+      compareSeries.clear();
       compareViews.clear();
       compareIntervalAllowed.clear();
       compareRawBars.clear();
       compareInfo.clear();
-      compareBarsRef.current.clear();
-      priceIndicatorSeriesRef.current.clear();
+      compareBars.clear();
+      priceIndicatorSeries.clear();
       macdSeriesRef.current = null;
       rsiSeriesRef.current = null;
       timelineSeriesRef.current = null;
       highLowLinesRef.current = null;
     };
-  }, [recordDrawingState]);
+  }, [recordDrawingState, openTextDialog, setVisibleBar]);
 
   const replayStudyRefresh = useRef(updateStudySeries);
   replayStudyRefresh.current = updateStudySeries;
-  const replayInitialized = useRef(false);
   const renderedReplaySession = useRef<number | undefined>(undefined);
   // Chụp canvas của chart, không lấy DOM toolbar hoặc browser chrome.
   const captureChartCanvas = useCallback(() => chartRef.current?.takeScreenshot(), []);
@@ -1568,7 +1584,6 @@ function ChartInstance({ active, onLoadLayout, replay }: { active: boolean; onLo
     });
     if (renderedReplaySession.current !== replaySession) {
       renderedReplaySession.current = replaySession;
-      replayInitialized.current = false;
       resetChartView();
       loadedAxisContextRef.current = null;
       zoomHistoryRef.current = [];
@@ -1600,8 +1615,10 @@ function ChartInstance({ active, onLoadLayout, replay }: { active: boolean; onLo
     refreshHighLowRef.current();
     refreshSelectionMarkersRef.current();
     syncCompareSeries();
-    if (bars.length && !replayInitialized.current) { seriesRef.current?.priceScale().setAutoScale(true); chartRef.current.timeScale().fitContent(); replayInitialized.current = true; }
-    else if (followLatestRef.current) chartRef.current.timeScale().scrollToRealTime();
+    if (followLatestRef.current) {
+      const range = replayLogicalRange(bars.length, chartRef.current.timeScale().width());
+      if (range) chartRef.current.timeScale().setVisibleLogicalRange(range);
+    }
     navigateHistoryRef.current = async target => {
       const index = bars.findIndex(bar => Number(bar.time) >= target);
       if (index < 0) throw new Error("Chưa có dữ liệu tại mốc replay này.");
@@ -1973,10 +1990,10 @@ function ChartInstance({ active, onLoadLayout, replay }: { active: boolean; onLo
       if (latestVolumeSma) volumeSmaSeriesRef.current?.update(latestVolumeSma);
       const latestVolumeMa = streamingVolume.current.volume(currentSettings.length, "SMA", 1);
       if (latestVolumeMa) volumeMaSeriesRef.current?.update(latestVolumeMa);
-      if (referenceStudies.instances.current.size > 0 || priceIndicatorSeriesRef.current.size > 0 || macdSeriesRef.current || rsiSeriesRef.current) {
+      if (referenceStudyInstances.current.size > 0 || priceIndicatorSeriesRef.current.size > 0 || macdSeriesRef.current || rsiSeriesRef.current) {
         const stream = streamingStudies.current;
         stream.update(chartStyleRendererRef.current?.displayBar(bar) ?? bar);
-        if (referenceStudies.instances.current.size) referenceStudies.update([...barsByTimeRef.current.values()], true);
+        if (referenceStudyInstances.current.size) updateReferenceStudies([...barsByTimeRef.current.values()], true);
         PRICE_INDICATORS.forEach(({ id, length, type }) => {
           const series = priceIndicatorSeriesRef.current.get(id);
           if (!series) return;
@@ -2095,7 +2112,7 @@ function ChartInstance({ active, onLoadLayout, replay }: { active: boolean; onLo
       flushRealtimeRef.current = () => undefined;
       suspendRealtimeRef.current = () => undefined;
     };
-  }, [axisSettingsRestored, persistDrawingHistory, rangeDays, resolution, resolutionRestored, symbol, symbolInfo, syncCompareSeries, updateCompareSeries, syncDrawingHistoryAvailability, replayMode, fetchHistory]);
+  }, [axisSettingsRestored, persistDrawingHistory, rangeDays, resolution, resolutionRestored, symbol, symbolInfo, syncCompareSeries, updateCompareSeries, syncDrawingHistoryAvailability, replayMode, fetchHistory, referenceStudyInstances, updateReferenceStudies, setVisibleBar, updateStudySeries, volumeColorForBar]);
 
   useEffect(() => {
     const chart = chartRef.current;
@@ -2471,7 +2488,7 @@ function ChartInstance({ active, onLoadLayout, replay }: { active: boolean; onLo
       .sort((a, b) => Number(a.time) - Number(b.time));
     updateStudySeries(bars);
     syncPaneLayout();
-  }, [syncPaneLayout, transferSeriesGroup, activeStudies, compareSymbols.length, resolution, symbolInfo?.session, symbolInfo?.timezone, volumeMaVisible, volumeSmoothedMaVisible, volumeAllowed, volumeVisualSettings.histogramVisible, volumeHidden]);
+  }, [syncPaneLayout, transferSeriesGroup, activeStudies, compareSymbols.length, resolution, symbolInfo?.session, symbolInfo?.timezone, volumeMaVisible, volumeSmoothedMaVisible, volumeAllowed, volumeVisualSettings.histogramVisible, volumeHidden, updateStudySeries]);
 
   const layoutReady = axisSettingsRestored && appearanceRestored && chartStyleRestored && volumeSettingsRestored && indicatorSettingsRestored && referenceStudies.restored && !historyLoading;
   const flushLayout = useSavedLayout<MovableSeries>({
@@ -2494,7 +2511,7 @@ function ChartInstance({ active, onLoadLayout, replay }: { active: boolean; onLo
       add("volume:smoothing", volumeSmaSeriesRef.current);
       priceIndicatorSeriesRef.current.forEach((series, id) => add(`study:${id}`, series));
       compareSeriesRef.current.forEach((series, id) => add(`compare:${id}`, series));
-      referenceStudies.instances.current.forEach((study) => add(study.id, study.series));
+      referenceStudyInstances.current.forEach((study) => add(study.id, study.series));
       if (macdSeriesRef.current) Object.entries(macdSeriesRef.current).forEach(([id, series]) => add(`macd:${id}`, series));
       if (rsiSeriesRef.current) Object.entries(rsiSeriesRef.current).forEach(([id, series]) => add(`rsi:${id}`, series));
       return result;
@@ -2657,7 +2674,7 @@ function ChartInstance({ active, onLoadLayout, replay }: { active: boolean; onLo
     updateStudySeries([...barsByTimeRef.current.values()].sort((a, b) => Number(a.time) - Number(b.time)));
     refreshSelectionMarkersRef.current();
     refreshHighLowRef.current();
-  }, [chartStyle, chartStylePreferences.settings, chartAppearance.backgroundColor]);
+  }, [chartStyle, chartStylePreferences.settings, chartAppearance.backgroundColor, setVisibleBar, updateStudySeries]);
 
   useEffect(() => {
     seriesRef.current?.applyOptions({ visible: mainSeriesVisible });
@@ -2684,7 +2701,7 @@ function ChartInstance({ active, onLoadLayout, replay }: { active: boolean; onLo
           source?.getPane().getHTMLElement()?.getBoundingClientRect().top ?? paneElement.getBoundingClientRect().top;
         const rootTop = container.parentElement.getBoundingClientRect().top;
         const sourceTops: Record<string, number> = {};
-        referenceStudies.instances.current.forEach((study) => { if (study.series) sourceTops[study.id] = plotTop(study.series) - rootTop; });
+        referenceStudyInstances.current.forEach((study) => { if (study.series) sourceTops[study.id] = plotTop(study.series) - rootTop; });
         compareSeriesRef.current.forEach((source, symbol) => { sourceTops[`compare:${symbol}`] = plotTop(source) - rootTop; });
         priceIndicatorSeriesRef.current.forEach((source, id) => { sourceTops[`study:${id}`] = plotTop(source) - rootTop; });
         if (macdSeriesRef.current) sourceTops["study:macd"] = plotTop(macdSeriesRef.current.macd) - rootTop;
@@ -2713,7 +2730,7 @@ function ChartInstance({ active, onLoadLayout, replay }: { active: boolean; onLo
       observer.disconnect();
       chart.timeScale().unsubscribeSizeChange(update);
     };
-  }, [mainPaneIndex, mainScaleSide, comparisonActive, volumePaneIndex, paneRevision, activeStudies, compareSymbols, referenceStudies.revision]);
+  }, [mainPaneIndex, mainScaleSide, comparisonActive, volumePaneIndex, paneRevision, activeStudies, compareSymbols, referenceStudies.revision, referenceStudyInstances]);
 
   useEffect(() => {
     const series = seriesRef.current;
@@ -2741,7 +2758,7 @@ function ChartInstance({ active, onLoadLayout, replay }: { active: boolean; onLo
     volumeSeriesRef.current?.applyOptions({ title: axisLabels.studyNames ? "Volume" : "", lastValueVisible: false });
     volumeMaSeriesRef.current?.applyOptions({ title: axisLabels.studyNames ? "Volume MA" : "", lastValueVisible: false });
     volumeSmaSeriesRef.current?.applyOptions({ title: axisLabels.studyNames ? "Smoothed MA" : "", lastValueVisible: false });
-    referenceStudies.instances.current.forEach((study) => {
+    referenceStudyInstances.current.forEach((study) => {
       const plots = study.definition?.metainfo.plots.filter((plot) => {
         const style = study.settings?.styles[plot.id];
         return plot.type === "line" && style && style.visible !== false && style.display !== 0 && (style.trackPrice || study.settings?.scaleLabels) && study.points.some((point) => Number.isFinite(point.values[plot.id]));
@@ -2752,7 +2769,7 @@ function ChartInstance({ active, onLoadLayout, replay }: { active: boolean; onLo
       }));
     });
     chartRef.current?.priceScale(mainScaleSide, mainPaneIndex).applyOptions({ alignLabels: axisLabels.align });
-  }, [axisLabels, axisLines.price, chartAppearance.lastPriceVisible, mainScaleSide, mainPaneIndex, symbol, volumeVisualSettings.scaleLabelVisible, referenceStudies.revision, studyLabelsVisible]);
+  }, [axisLabels, axisLines.price, chartAppearance.lastPriceVisible, mainScaleSide, mainPaneIndex, symbol, volumeVisualSettings.scaleLabelVisible, referenceStudies.revision, studyLabelsVisible, referenceStudyInstances]);
 
   useEffect(() => {
     const main = seriesRef.current;
@@ -3642,7 +3659,7 @@ function ChartInstance({ active, onLoadLayout, replay }: { active: boolean; onLo
 
   const sourceGroupForId = (id: string): MovableSeries[] => {
     if (id.startsWith("reference:")) {
-      const series = referenceStudies.instances.current.get(id)?.series;
+      const series = referenceStudyInstances.current.get(id)?.series;
       return series ? [series] : [];
     }
     if (id.startsWith("compare:")) {
@@ -3673,7 +3690,7 @@ function ChartInstance({ active, onLoadLayout, replay }: { active: boolean; onLo
       if (visible) compareHiddenRef.current.add(id.slice(8));
       else compareHiddenRef.current.delete(id.slice(8));
     }
-    const reference = referenceStudies.instances.current.get(id);
+    const reference = referenceStudyInstances.current.get(id);
     if (reference) reference.visible = !visible;
     if (reference) referenceStudies.refresh();
     const allowed = !id.startsWith("compare:") || comparisonAllowed(normalizeComparisonSettings(comparisonSettingsRef.current[id.slice(8)]), resolution);
@@ -3775,7 +3792,7 @@ function ChartInstance({ active, onLoadLayout, replay }: { active: boolean; onLo
   });
   if (macdSeriesRef.current) addSourceLegend("study:macd", "MACD 12 26 9", "#2962ff");
   if (rsiSeriesRef.current) addSourceLegend("study:rsi", "RSI 14", "#7e57c2");
-  referenceStudies.instances.current.forEach((study) => {
+  referenceStudyInstances.current.forEach((study) => {
     const point = study.points.find((item) => Number(item.time) === Number(quoteBar?.time)) ?? [...study.points].reverse().find((item) => !item.isProjection);
     const plot = study.definition?.metainfo.plots.find((item) => item.type === "line");
     const color = (plot && point?.colors[plot.id]) || (plot && study.settings?.styles[plot.id]?.color) || "#2196f3";
@@ -3824,7 +3841,7 @@ function ChartInstance({ active, onLoadLayout, replay }: { active: boolean; onLo
     closeGoToDate();
     setChartSettingsOpen(false);
     setTextDialogOpen(false);
-    referenceStudies.setSettingsId(null);
+    setReferenceSettingsId(null);
     setComparisonSettingsSymbol(null);
     setAxisMenu(null);
     setHoverAxis(null);
@@ -3832,9 +3849,9 @@ function ChartInstance({ active, onLoadLayout, replay }: { active: boolean; onLo
     zoomStartRef.current = null;
     setZoomSelection(null);
     if (document.fullscreenElement?.id === "app") void document.exitFullscreen();
-  }, [active, closeGoToDate, referenceStudies.setSettingsId]);
+  }, [active, closeGoToDate, setReferenceSettingsId]);
 
-  const referenceSettings = referenceStudies.settingsId ? referenceStudies.instances.current.get(referenceStudies.settingsId) : undefined;
+  const referenceSettings = referenceStudies.settingsId ? referenceStudyInstances.current.get(referenceStudies.settingsId) : undefined;
   const scaleButtonTargets: ScaleButtonTarget[] = (["left", "right"] as const).flatMap((side) => {
     const panes = chartRef.current?.panes() ?? [];
     const candidates = panes.filter((pane) => !panePresentation.hidden.includes(pane.paneIndex()) && pane.getSeries().some((series) => series.options().priceScaleId === side));
@@ -3859,7 +3876,7 @@ function ChartInstance({ active, onLoadLayout, replay }: { active: boolean; onLo
     <>
       {active && (<DelayedTooltip />)}
       {active && (<OutsideDragSelectionGuard />)}
-      {referenceSettings?.definition && referenceSettings.settings && (active && (<ReferenceStudySettingsDialog key={referenceSettings.id} definition={referenceSettings.definition} settings={referenceSettings.settings} onApply={(settings) => referenceStudies.apply(referenceSettings.id, settings)} onClose={() => referenceStudies.setSettingsId(null)}/>)) }
+      {referenceSettings?.definition && referenceSettings.settings && (active && (<ReferenceStudySettingsDialog key={referenceSettings.id} definition={referenceSettings.definition} settings={referenceSettings.settings} onApply={(settings) => referenceStudies.apply(referenceSettings.id, settings)} onClose={() => setReferenceSettingsId(null)}/>)) }
       {active && comparisonSettingsSymbol && compareSymbols.includes(comparisonSettingsSymbol) && <ComparisonSettingsDialog
         key={comparisonSettingsSymbol}
         title={`${comparisonSettingsSymbol}${compareInfoRef.current.get(comparisonSettingsSymbol)?.exchange ? `, ${compareInfoRef.current.get(comparisonSettingsSymbol)!.exchange}` : ""}`}
@@ -4000,7 +4017,7 @@ function ChartInstance({ active, onLoadLayout, replay }: { active: boolean; onLo
             onMoveSourceOrder={moveSourceOrder}
             onToggleSourceVisibility={toggleSourceVisibility}
             onRemoveSource={removeSource}
-            onOpenSourceSettings={id => { if (id.startsWith("compare:")) setComparisonSettingsSymbol(id.slice(8)); else referenceStudies.setSettingsId(id); }}
+            onOpenSourceSettings={id => { if (id.startsWith("compare:")) setComparisonSettingsSymbol(id.slice(8)); else setReferenceSettingsId(id); }}
             onPinSourceToScale={pinSourceToScale}
             seriesVisible={mainSeriesVisible}
             scaleSide={mainScaleSide}
