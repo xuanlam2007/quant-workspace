@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import GlobalNotice from "@/components/ui/GlobalNotice";
+
+import { useEffect, useId, useRef, useState } from "react";
 import { LoadingIndicator } from "@/components/ui/Loading";
 import { createPortal } from "react-dom";
 import { getTimezoneOffsetString } from "../../core/chart-utils";
@@ -36,6 +38,7 @@ function parseDate(date: string, time: string) {
 }
 
 function TimeField({ value, disabled, onPick }: { value: string; disabled: boolean; onPick: (value: string) => void }) {
+  const menuId = useId();
   const [text, setText] = useState(value);
   const [open, setOpen] = useState(false);
   const [hovered, setHovered] = useState(value);
@@ -72,13 +75,13 @@ function TimeField({ value, disabled, onPick }: { value: string; disabled: boole
   }, [open]);
   useEffect(() => { if (open) menu.current?.querySelector('[data-hovered="true"]')?.scrollIntoView({ block: "nearest", behavior: hovered === value ? "auto" : "smooth" }); }, [hovered, open, value]);
   return <div className="go-to-date-time" data-time-menu-open={open}>
-    <input ref={input} tabIndex={-1} inputMode="numeric" aria-label="Thời gian" aria-haspopup="listbox" aria-expanded={open} disabled={disabled} value={text} maxLength={5} onFocus={(event) => { event.currentTarget.select(); setOpen(true); }} onBlur={() => commit(text)} onChange={(event) => { const raw = event.target.value.replace(/[^0-9:]/g, ""); const next = raw.length === 3 && !raw.includes(":") ? `${raw.slice(0, 2)}:${raw.slice(2)}` : raw; setText(next); setHovered(next); }} onKeyDown={(event) => {
+    <input ref={input} tabIndex={-1} role="combobox" inputMode="numeric" aria-label="Thời gian" aria-haspopup="listbox" aria-controls={open ? menuId : undefined} aria-autocomplete="list" aria-activedescendant={open && options.includes(hovered) ? `${menuId}-${hovered}` : undefined} aria-expanded={open} disabled={disabled} value={text} maxLength={5} onFocus={(event) => { event.currentTarget.select(); setOpen(true); }} onBlur={() => commit(text)} onChange={(event) => { const raw = event.target.value.replace(/[^0-9:]/g, ""); const next = raw.length === 3 && !raw.includes(":") ? `${raw.slice(0, 2)}:${raw.slice(2)}` : raw; setText(next); setHovered(next); }} onKeyDown={(event) => {
       if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setOpen(false); input.current?.blur(); }
       if (event.key === "Enter") { event.preventDefault(); commit(open ? hovered : text); }
       if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); setOpen(true); setHovered(options[(Math.max(0, options.indexOf(hovered)) + (event.key === "ArrowDown" ? 1 : options.length - 1)) % options.length]); }
     }} />
     <svg viewBox="0 0 17 17" width="17" height="17" aria-hidden="true"><path fill="currentColor" d="M1 8.5a7.5 7.5 0 1 1 15 0 7.5 7.5 0 0 1-15 0zM8.5 0a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17zM9 9V3H8v5H5v1h4z"/></svg>
-    {open && createPortal(<div ref={menu} className="go-to-date-time-menu" role="listbox" aria-label="Thời gian" style={bounds}>{options.map((option) => <button key={option} type="button" tabIndex={-1} role="option" aria-selected={option === value} data-hovered={option === hovered} onPointerDown={(event) => event.preventDefault()} onPointerMove={() => setHovered(option)} onClick={() => { commit(option); }}>{option}</button>)}</div>, document.body)}
+    {open && createPortal(<div id={menuId} ref={menu} className="go-to-date-time-menu" role="listbox" aria-label="Thời gian" style={bounds}>{options.map((option) => <button id={`${menuId}-${option}`} key={option} type="button" tabIndex={-1} role="option" aria-selected={option === value} data-hovered={option === hovered} onPointerDown={(event) => event.preventDefault()} onPointerMove={() => setHovered(option)} onClick={() => { commit(option); }}>{option}</button>)}</div>, document.body)}
   </div>;
 }
 
@@ -203,7 +206,7 @@ export function GoToDateDialog({ timezone, daily, initialRange, onClose, onNavig
             })}</div>
           </> : <div className={`go-to-date-grid go-to-date-grid--${view}`}>{Array.from({ length: view === "months" ? 12 : 20 }, (_, index) => <button type="button" tabIndex={-1} key={index} onClick={() => { setMonth(new Date(view === "months" ? year : yearStart + index, view === "months" ? index : monthNumber, 1)); setView(view === "years" ? "months" : "days"); }}>{view === "months" ? `Tháng ${index + 1}` : yearStart + index}</button>)}</div>}
         </div>
-        {(!valid || error) && <div className="go-to-date-error" role="alert">{error || "Vui lòng nhập đúng ngày và phạm vi thời gian"}</div>}
+        {error && <GlobalNotice message={error} />}
       </div>
       <footer><button type="button" tabIndex={-1} onClick={onClose}>Hủy bỏ</button><button type="submit" tabIndex={-1} disabled={!valid || busy}>{busy ? <LoadingIndicator label="Đang tải" /> : submitLabel}</button></footer>
     </form>
