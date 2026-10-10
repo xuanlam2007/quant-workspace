@@ -46,6 +46,9 @@ const bodies: Record<string, z.ZodType> = {
   "/end-session": empty,
   "/socket-ticket": z.strictObject({ client_id: id }),
   "/backtest/connection/test": empty,
+  "/backtest/terminal/open": z.strictObject({ provider }),
+  "/backtest/connection/config": z.strictObject({ provider, model: z.string().max(120).regex(/^[^\x00-\x1f]*$/).optional(), effort: z.string().max(40).regex(/^(?:[a-z][a-z0-9_-]*)?$/).optional() }),
+  "/backtest/strategy": z.strictObject({ content: z.string().trim().min(1).max(100000) }),
   "/backtest/analyze": backtestFrameSchema,
 };
 
@@ -57,7 +60,7 @@ const fill = z.strictObject({ date, session_id: session, candidate_id: z.string(
 
 export function routeSchema(kind: "auditor" | "backtest", method: string, path: string): z.ZodType | null {
   if (kind === "backtest") {
-    if (method === "GET" && ["/health", "/backtest/status"].includes(path)) return empty;
+    if (method === "GET" && ["/health", "/backtest/status", "/ai/catalog"].includes(path)) return empty;
     if (method === "POST" && path.startsWith("/backtest/")) return bodies[path] || null;
     return null;
   }
