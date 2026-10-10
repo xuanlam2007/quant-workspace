@@ -5,7 +5,11 @@ import { createPortal } from "react-dom";
 import { advancePaperLedger, emptyLedger, exampleReplay, parseReplayData, replayFrame, replayMinutes, submitPaperOrder, type BacktestDecision, type PaperLedger, type ReplayData } from "../../lib/backtest";
 import { backtestRequest, engineUrl } from "../../lib/backtest-client";
 import { activateBacktest } from "../../lib/backtest-status";
+import { notify } from "../../lib/notifications";
 import { Icon } from "../auditor/AuditorUi";
+import AuditorConnection from "../auditor/AuditorConnection";
+import GlobalNotice from "../ui/GlobalNotice";
+import type { AiCatalog, AiSettings } from "../../lib/auditor-client";
 import AuditorThoughtLine from "../auditor/AuditorThoughtLine";
 import BacktestChart, { type BacktestChartHandle } from "./BacktestChart";
 import BacktestConnectionSummary from "./BacktestConnectionSummary";
@@ -15,7 +19,8 @@ import { GoToDateDialog, GO_TO_DATE_ICON } from "../chart/layout/navigation/GoTo
 import { HEADER_SVGS } from "../chart/layout/navigation/ChartHeader";
 import { ChartSelect } from "../chart/ui/ChartSelect";
 
-type Status = { adapter_ready: boolean; strategy_available: boolean; strategy_documents: string[]; connected: boolean | null; provider: string; model: string; effort: string; busy: boolean };
+type Status = AiSettings & { adapter_ready: boolean; strategy_available: boolean; strategy_documents: string[]; strategy_error?: string; error?: string; terminal_error?: string; connected: boolean | null; busy: boolean };
+const loadCatalog = (provider: AiSettings["provider"], refresh: boolean, signal: AbortSignal) => backtestRequest<AiCatalog>(`/ai/catalog?provider=${provider}&refresh=${refresh}`, "GET", undefined, signal);
 type Entry = { cutoff: number; decision: BacktestDecision; model: { model: string; effort: string }; strategy_versions: string[]; duration: number };
 type SavedRun = { symbol: string; granularity: string; demo: boolean; cutoff: number; ledger: PaperLedger; entries: Entry[]; fee: number; second: number; teaching: string };
 const formatTime = (time: number) => new Date(time * 1000).toLocaleTimeString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", hour12: false });
@@ -26,6 +31,7 @@ const waitForChart = () => new Promise<void>(resolve => requestAnimationFrame(()
 export default function BacktestWorkspace({ active }: { active: boolean }) {
   const chart = useRef<BacktestChartHandle>(null);
   const upload = useRef<HTMLInputElement>(null);
+  const strategyUpload = useRef<HTMLInputElement>(null);
   const request = useRef<AbortController | null>(null);
   const generation = useRef(0);
   const busyRef = useRef(false);
@@ -38,6 +44,9 @@ export default function BacktestWorkspace({ active }: { active: boolean }) {
   const [notice, setNotice] = useState("");
   const [status, setStatus] = useState<Status | null>(null);
   const [statusLoading, setStatusLoading] = useState(true);
+  const [connectionPending, setConnectionPending] = useState("");
+  const terminalOpening = useRef(false);
+  const [connectionDirty, setConnectionDirty] = useState(false);
   const [ledger, setLedger] = useState<PaperLedger>(emptyLedger);
   const [entries, setEntries] = useState<Entry[]>([]);
   const [savedRuns, setSavedRuns] = useState<SavedRun[]>([]);
@@ -59,7 +68,8 @@ export default function BacktestWorkspace({ active }: { active: boolean }) {
   const openSourceDialog = (dialog: "symbol" | "date", trigger: HTMLElement) => { sourceTrigger.current = trigger; setSourceClosing(false); setSourceDialog(dialog); };
   const frame = useMemo(() => data ? replayFrame(data, cursor, second) : null, [data, cursor, second]);
   const minutes = useMemo(() => data ? replayMinutes(data) : [], [data]);
-  const canAnalyze = !!status?.adapter_ready && !!status.strategy_available && status.provider === "CODEX" && !!status.connected;
+  const canAnalyze = !!status?.adapter_ready && !!status.strategy_available && !!status.connected && !connectionDirty && !connectionPending;
+  const aiBlocked = connectionDirty ? "Lưu cấu hình AI đã chọn trước khi phân tích." : !status ? "Đang chờ trạng thái Backtest." : !status.adapter_ready ? "Chưa cài bộ kết nối AI riêng cho Backtest." : !status.strategy_available ? status.strategy_error || "Nhập tài liệu chiến lược Markdown để AI biết quy tắc Backtest." : !status.connected ? "Kiểm tra kết nối CLI đã chọn trước khi phân tích." : "";
   const gross = ledger.pairs.reduce((sum, pair) => sum + pair.gross, 0);
   const fees = ledger.pairs.reduce((sum, pair) => sum + pair.fee, 0);
 
@@ -79,14 +89,43 @@ export default function BacktestWorkspace({ active }: { active: boolean }) {
   useEffect(() => () => { generation.current += 1; request.current?.abort(); }, []);
 
   const checkConnection = async () => {
-    setStatusLoading(true); setNotice("");
+    setStatusLoading(true); setConnectionPending("ai"); setPlaying(false); setNotice("");
     try {
-      await activateBacktest(true);
+      await activateBacktest();
       const result = await backtestRequest<{ connected: boolean; error?: string }>("/backtest/connection/test", "POST");
-      if (!result.connected) setNotice(result.error || "Chưa kết nối được Codex.");
+      if (!result.connected) setNotice(result.error || "Chưa kết nối được CLI đã chọn.");
       await refreshStatus();
     } catch (error) { setNotice(error instanceof Error ? error.message : "Không kiểm tra được kết nối."); }
-    finally { setStatusLoading(false); }
+    finally { setStatusLoading(false); setConnectionPending(""); }
+  };
+  const openTerminal = async (provider: AiSettings["provider"]) => {
+    if (terminalOpening.current || busyRef.current || connectionPending) return;
+    terminalOpening.current = true;
+    setConnectionPending("ai-account"); setPlaying(false); setNotice("");
+    try {
+      await backtestRequest("/backtest/terminal/open", "POST", { provider });
+      notify("Đã mở Terminal. Đăng nhập trong CLI, rồi kiểm tra lại kết nối AI.", "info");
+    } catch (error) { setNotice(error instanceof Error ? error.message : "Không mở được Terminal để đăng nhập."); }
+    finally {
+      await refreshStatus();
+      terminalOpening.current = false; setConnectionPending("");
+    }
+  };
+  const saveConnection = async (settings: AiSettings) => {
+    setConnectionPending("ai-config"); setPlaying(false); setNotice("");
+    try { await backtestRequest("/backtest/connection/config", "POST", settings); await refreshStatus(); }
+    catch (error) { setNotice(error instanceof Error ? error.message : "Không lưu được kết nối AI."); }
+    finally { setConnectionPending(""); }
+  };
+  const importStrategy = async (file?: File) => {
+    if (!file) return;
+    setConnectionPending("strategy"); setPlaying(false); setNotice("");
+    try {
+      if (!file.name.toLowerCase().endsWith(".md") || file.size > 100000) throw new Error("Chọn tài liệu Markdown (.md) không vượt 100 KB.");
+      await backtestRequest("/backtest/strategy", "POST", { content: await file.text() });
+      await refreshStatus();
+    } catch (error) { setNotice(error instanceof Error ? error.message : "Không nhập được chiến lược."); }
+    finally { setConnectionPending(""); if (strategyUpload.current) strategyUpload.current.value = ""; }
   };
 
   const reset = useCallback((next?: ReplayData) => {
@@ -98,7 +137,7 @@ export default function BacktestWorkspace({ active }: { active: boolean }) {
 
   const analyze = useCallback(async (index = cursor, currentLedger = ledger) => {
     if (!data || busyRef.current) return;
-    if (!canAnalyze) { setNotice("Cần bộ kết nối riêng, tài liệu chiến lược và Codex đã kiểm tra kết nối trong Backtest."); setPlaying(false); return; }
+    if (!canAnalyze) { setNotice(aiBlocked); setPlaying(false); return; }
     const visible = replayFrame(data, index, second);
     if (!visible.bars.length) { setNotice("Chưa có mẫu giá tại mốc phân tích này."); return; }
     const version = generation.current;
@@ -116,6 +155,7 @@ export default function BacktestWorkspace({ active }: { active: boolean }) {
       const result = await response.json();
       if (!response.ok) throw new Error(typeof result.detail === "string" ? result.detail : "AI không trả về quyết định hợp lệ.");
       if (version !== generation.current || result.cutoff !== visible.cutoff) return;
+      if (result.terminal_error) setStatus(previous => previous ? { ...previous, terminal_error: result.terminal_error } : previous);
       const decision = result.decision as BacktestDecision;
       chart.current!.apply(decision.drawings);
       setEntries(previous => [...previous, { cutoff: visible.cutoff, decision, model: result.model, strategy_versions: result.strategy_versions, duration: Math.round((performance.now() - start) / 1000) }]);
@@ -127,7 +167,7 @@ export default function BacktestWorkspace({ active }: { active: boolean }) {
       window.clearTimeout(timeout);
       if (version === generation.current) { request.current = null; busyRef.current = false; setBusy(false); }
     }
-  }, [cursor, ledger, data, canAnalyze, second, teaching, entries, applyOrders]);
+  }, [cursor, ledger, data, canAnalyze, aiBlocked, second, teaching, entries, applyOrders]);
 
   const step = useCallback(async () => {
     if (!data || !frame || busyRef.current || cursor >= minutes.length - 1) { setPlaying(false); return; }
@@ -189,10 +229,10 @@ export default function BacktestWorkspace({ active }: { active: boolean }) {
         </div>
         <p className={styles.help}>Nạp lịch sử từ kết nối chart dùng nến M1. Dữ liệu giây thật: nhập JSON với symbol, granularity: 1s và bars gồm time (Unix giây bắt đầu mẫu), open, high, low, close, volume. Mỗi file là một ngày, một mã; volume là lượng của từng mẫu. Timestamp theo giây không chứng minh độ chi tiết mỗi giây.</p>
       </section>
-      {notice && <div className={styles.notice} role="status"><Icon name="warning" /><span>{notice}</span><button type="button" tabIndex={-1} aria-label="Đóng thông báo" onClick={() => setNotice("")}><Icon name="close" /></button></div>}
+      {notice && <GlobalNotice message={notice} onDismiss={() => setNotice(previous => previous === notice ? "" : previous)} />}
       <div className={styles.toolbar}>
-        <button type="button" tabIndex={-1} className={styles.primary} disabled={!data || loading || cursor >= minutes.length - 1 || busy} onClick={() => setPlaying(value => !value)}><Icon name={playing ? "pause" : "play"} />{playing ? "Tạm dừng" : "Chạy replay"}</button>
-        <button type="button" tabIndex={-1} disabled={!data || busy || loading || cursor >= minutes.length - 1} onClick={() => { setPlaying(false); void step(); }}>Phút tiếp theo</button>
+        <button type="button" tabIndex={-1} className={`${styles.primary} ${styles.replayToggle}`} disabled={!data || loading || cursor >= minutes.length - 1 || busy || !!connectionPending} onClick={() => setPlaying(value => !value)}><Icon name={playing ? "pause" : "play"} />{playing ? "Tạm dừng" : "Chạy replay"}</button>
+        <button type="button" tabIndex={-1} disabled={!data || busy || loading || !!connectionPending || cursor >= minutes.length - 1} onClick={() => { setPlaying(false); void step(); }}>Phút tiếp theo</button>
         <button type="button" tabIndex={-1} disabled={!data || loading} onClick={() => reset()}><Icon name="refresh" />Chạy lại từ đầu</button>
         <div className={styles.inline}><label htmlFor="backtest-speed">Tốc độ</label><ChartSelect id="backtest-speed" label="Tốc độ replay" value={speed} onChange={setSpeed} options={[{ value: 1, label: "1 phút / giây" }, { value: .5, label: "1 phút / 2 giây" }, { value: 2, label: "2 phút / giây" }]} /></div>
         <div className={styles.clock}><span>Thời điểm replay (UTC+7)</span><strong>{frame ? formatTime(frame.cutoff) : "--:--:--"}</strong></div>
@@ -210,10 +250,14 @@ export default function BacktestWorkspace({ active }: { active: boolean }) {
           </section>
         </div>
         <aside className={styles.aside}>
-          <section className={`${styles.panel} ${styles.aiPanel}`}><div className={styles.panelHeading}><h2>AI Backtest</h2><button type="button" tabIndex={-1} className={styles.iconButton} disabled={busy || statusLoading} aria-label="Làm mới trạng thái AI" onClick={() => void refreshStatus()}><Icon name="refresh" /></button></div>
-            <BacktestConnectionSummary loading={statusLoading && !status} ready={canAnalyze} status={status} />
+          <section className={`${styles.panel} ${styles.aiPanel}`}>
+            <BacktestConnectionSummary loading={statusLoading && !status} ready={canAnalyze} status={status} refreshing={statusLoading} refreshDisabled={busy || !!connectionPending} onRefresh={() => void refreshStatus()} />
+            <AuditorConnection context="backtest" className={styles.connectionConfig} status={status} loading={statusLoading && !status} pending={connectionPending} disabled={busy || statusLoading || !!connectionPending} loadCatalog={loadCatalog} onDraftChange={setConnectionDirty} onSave={settings => void saveConnection(settings)} onCheck={() => void checkConnection()} onOpenTerminal={provider => void openTerminal(provider)} />
+            <button type="button" tabIndex={-1} disabled={busy || statusLoading || !!connectionPending} onClick={() => strategyUpload.current?.click()}>{connectionPending === "strategy" ? "Đang nhập chiến lược..." : status?.strategy_available ? "Thay chiến lược Markdown" : "Nhập chiến lược Markdown"}</button>
+            <input ref={strategyUpload} className={styles.hidden} type="file" accept=".md,text/markdown" onChange={event => void importStrategy(event.target.files?.[0])} />
+            {!!aiBlocked && !statusLoading && <GlobalNotice message={aiBlocked} kind="info" />}
             <div className={styles.aiActions}>
-              <button type="button" tabIndex={-1} disabled={busy || statusLoading} aria-busy={statusLoading} onClick={() => void checkConnection()}>Kiểm tra kết nối AI</button>
+              <button type="button" tabIndex={-1} disabled={busy || statusLoading || connectionDirty || !!connectionPending} aria-busy={connectionPending === "ai"} onClick={() => void checkConnection()}>Kiểm tra kết nối AI</button>
               <button type="button" tabIndex={-1} className={`${styles.primary} ${styles.full}`} disabled={!frame?.bars.length || !canAnalyze || busy || loading} onClick={() => { setPlaying(false); void analyze(); }}>Phân tích chart hiện tại</button>
               {busy && <button type="button" tabIndex={-1} onClick={() => { request.current?.abort(); setPlaying(false); }}>Dừng chờ kết quả</button>}
             </div>
