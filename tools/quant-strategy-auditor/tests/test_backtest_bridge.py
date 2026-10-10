@@ -75,6 +75,23 @@ class BacktestRouteTests(unittest.TestCase):
                 asyncio.run(self.endpoint(frame()))
         self.assertEqual(error.exception.status_code, 503)
 
+    def test_gemini_uses_same_admission_and_decision_validation(self):
+        self.analyzer.configure({"provider": "AGY", "model": "gemini-preset"})
+        self.analyzer.connection = {"connected": True}
+        result = self.run_mock(hold())
+        self.assertEqual(result["model"]["provider"], "AGY")
+        self.assertEqual(result["decision"]["action"], "HOLD")
+
+    def test_backtest_strategy_does_not_override_auditor_reference(self):
+        config = {"strategy_documents": ["auditor.md"], "backtest_strategy_documents": ["backtest.md"]}
+        app = FastAPI()
+        register_backtest(app, self.analyzer, config, Path("config.json"))
+        endpoint = next(route.endpoint for route in app.routes if route.path == "/api/backtest/status")
+        with patch("engine.backtest_bridge.load_strategy_documents", return_value=([], [])) as load:
+            endpoint()
+        self.assertEqual(load.call_args.args[0]["strategy_documents"], ["backtest.md"])
+        self.assertEqual(config["strategy_documents"], ["auditor.md"])
+
     def test_busy_provider_does_not_queue(self):
         self.analyzer._lock.acquire()
         try:
