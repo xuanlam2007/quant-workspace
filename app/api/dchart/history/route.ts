@@ -1,24 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
-import { marketDataConfig } from "@/lib/market-data-config";
+import { marketDataConfig, marketDataHeaders } from "@/lib/server/market-data";
 import { sampleHistory } from "@/lib/sample-market-data";
-const SYMBOL_PATTERN = /^[A-Z0-9._-]{1,32}$/;
-const RESOLUTIONS = new Set(["1", "5", "15", "30", "60", "D", "W", "M"]);
-const MAX_RANGE_SECONDS = 20 * 366 * 86400;
+import { historyQuery, queryObject } from "@/lib/server/history-schema";
+import { isWorkspaceRequest } from "@/lib/server/request-security";
 
 export async function GET(request: NextRequest) {
-  const symbol = request.nextUrl.searchParams.get("symbol")?.trim().toUpperCase() ?? "";
-  const resolution = request.nextUrl.searchParams.get("resolution") ?? "";
-  const from = Number(request.nextUrl.searchParams.get("from"));
-  const to = Number(request.nextUrl.searchParams.get("to"));
-  const validRange = Number.isInteger(from)
-    && Number.isInteger(to)
-    && from > 0
-    && to > from
-    && to - from <= MAX_RANGE_SECONDS;
-
-  if (!SYMBOL_PATTERN.test(symbol) || !RESOLUTIONS.has(resolution) || !validRange) {
+  if (!isWorkspaceRequest(request)) return NextResponse.json({ error: "local workspace required" }, { status: 403 });
+  const parsed = historyQuery.safeParse(queryObject(request.nextUrl.searchParams));
+  if (!parsed.success) {
     return NextResponse.json({ error: "invalid history request" }, { status: 400 });
   }
+  const { symbol, resolution, from, to } = parsed.data;
 
   let config;
   try { config = marketDataConfig(); } catch {
@@ -34,13 +26,15 @@ export async function GET(request: NextRequest) {
     to: String(to),
   });
   try {
-    const upstream = await fetch(`${config.apiUrl}/history?${params}`, { cache: "no-store", signal: request.signal });
-    const body = await upstream.text();
+    const upstream = await fetch(`${config.apiUrl}/history?${params}`, { headers: marketDataHeaders(), cache: "no-store", redirect: "error", signal: AbortSignal.any([request.signal, AbortSignal.timeout(15000)]) });
+    if (!upstream.ok) return NextResponse.json({ error: "history service unavailable" }, { status: 502 });
+    const body = JSON.stringify(await upstream.json());
     return new NextResponse(body, {
       status: upstream.status,
       headers: {
         "Cache-Control": "no-store",
-        "Content-Type": upstream.headers.get("content-type") ?? "application/json; charset=utf-8",
+        "Content-Type": "application/json; charset=utf-8",
+        "X-Content-Type-Options": "nosniff",
       },
     });
   } catch {

@@ -1,13 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
-import { marketDataConfig } from "@/lib/market-data-config";
+import { marketDataConfig, marketDataHeaders } from "@/lib/server/market-data";
 import { sampleSymbol } from "@/lib/sample-market-data";
-const SYMBOL_PATTERN = /^[A-Z0-9._-]{1,32}$/;
+import { symbolQuery, queryObject } from "@/lib/server/history-schema";
+import { isWorkspaceRequest } from "@/lib/server/request-security";
 
 export async function GET(request: NextRequest) {
-  const symbol = request.nextUrl.searchParams.get("symbol")?.trim().toUpperCase() ?? "";
-  if (!SYMBOL_PATTERN.test(symbol)) {
+  if (!isWorkspaceRequest(request)) return NextResponse.json({ error: "local workspace required" }, { status: 403 });
+  const parsed = symbolQuery.safeParse(queryObject(request.nextUrl.searchParams));
+  if (!parsed.success) {
     return NextResponse.json({ error: "invalid symbol" }, { status: 400 });
   }
+  const { symbol } = parsed.data;
 
   let config;
   try { config = marketDataConfig(); } catch {
@@ -19,14 +22,17 @@ export async function GET(request: NextRequest) {
   try {
     const upstream = await fetch(`${config.apiUrl}/symbols?${new URLSearchParams({ symbol })}`, {
       cache: "no-store",
-      signal: request.signal,
+      headers: marketDataHeaders(), redirect: "error",
+      signal: AbortSignal.any([request.signal, AbortSignal.timeout(15000)]),
     });
-    const body = await upstream.text();
+    if (!upstream.ok) return NextResponse.json({ error: "symbol service unavailable" }, { status: 502 });
+    const body = JSON.stringify(await upstream.json());
     return new NextResponse(body, {
       status: upstream.status,
       headers: {
         "Cache-Control": "no-store",
-        "Content-Type": upstream.headers.get("content-type") ?? "application/json; charset=utf-8",
+        "Content-Type": "application/json; charset=utf-8",
+        "X-Content-Type-Options": "nosniff",
       },
     });
   } catch {

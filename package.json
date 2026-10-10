@@ -5,33 +5,42 @@
   "scripts": {
     "dev": "node scripts/next-dev.mjs",
     "build": "next build --webpack",
-    "start": "next start",
+    "start": "next start --hostname 127.0.0.1",
     "lint": "eslint ."
   },
   "dependencies": {
-    "lightweight-charts": "^5.2.1",
-    "lightweight-charts-line-tools-core": "github:difurious/lightweight-charts-line-tools-core",
-    "lightweight-charts-line-tools-fib-retracement": "github:difurious/lightweight-charts-line-tools-fib-retracement",
-    "lightweight-charts-line-tools-lines": "github:difurious/lightweight-charts-line-tools-lines",
-    "lightweight-charts-line-tools-long-short-position": "github:difurious/lightweight-charts-line-tools-long-short-position",
-    "lightweight-charts-line-tools-price-range": "github:difurious/lightweight-charts-line-tools-price-range",
-    "lightweight-charts-line-tools-rectangle": "github:difurious/lightweight-charts-line-tools-rectangle",
-    "lightweight-charts-line-tools-text": "github:difurious/lightweight-charts-line-tools-text",
-    "next": "^16.3.7",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "socket.io-client": "^2.5.0"
+    "lightweight-charts": "5.2.1",
+    "lightweight-charts-line-tools-core": "github:difurious/lightweight-charts-line-tools-core#db2695c628f7ff2b163f2f465003d52e959bb8cd",
+    "lightweight-charts-line-tools-fib-retracement": "github:difurious/lightweight-charts-line-tools-fib-retracement#248b46813b44dd2dbe1576a9bce67ddf39d1338f",
+    "lightweight-charts-line-tools-lines": "github:difurious/lightweight-charts-line-tools-lines#edb2a6ce00c8bbbe6f19e8469e378350efe6013f",
+    "lightweight-charts-line-tools-long-short-position": "github:difurious/lightweight-charts-line-tools-long-short-position#a6d256484a5d646550fd7e840e201efbdb7e93af",
+    "lightweight-charts-line-tools-price-range": "github:difurious/lightweight-charts-line-tools-price-range#03e7c92166746f3632337e035f2ba955090465cb",
+    "lightweight-charts-line-tools-rectangle": "github:difurious/lightweight-charts-line-tools-rectangle#8c229e62852f72936dbef5fdc198e321b9a85cc3",
+    "lightweight-charts-line-tools-text": "github:difurious/lightweight-charts-line-tools-text#3a64a17814c85a98cccccce1f5a014ef8e18a091",
+    "next": "16.3.8",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "socket.io-client": "2.5.0",
+    "zod": "4.6.5",
+    "server-only": "0.0.1",
+    "parseuri": "file:vendor/parseuri-2.0.0.tgz"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
-    "@types/react": "^18.3.0",
-    "@types/react-dom": "^18.3.0",
-    "eslint": "^9.39.5",
-    "eslint-config-next": "^16.3.7",
-    "typescript": "^5.6.0"
+    "@types/node": "22.20.2",
+    "@types/react": "18.3.31",
+    "@types/react-dom": "18.3.7",
+    "eslint": "9.39.5",
+    "eslint-config-next": "16.3.8",
+    "typescript": "5.9.3",
+    "braces": "file:vendor/braces-3.0.3-quant.1.tgz"
   },
   "overrides": {
-    "postcss": "^8.5.23",
-    "parseuri": "file:vendor/parseuri"
-  }
+    "postcss": "8.5.23",
+    "parseuri": "$parseuri",
+    "braces": "$braces",
+    "brace-expansion@>=4.0.0": "5.0.12",
+    "sharp": "0.35.5",
+    "source-map-js": "1.2.2"
+  },
+  "packageManager": "npm@11.6.2"
 }

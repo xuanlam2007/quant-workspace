@@ -11,10 +11,13 @@ AGENTS.md
 .agents
 VNDIRECT_DATA_PARITY_AUDIT.md
 tools/quant-strategy-auditor/.engine.lock
+tools/quant-strategy-auditor/.backtest-engine.lock
 /docs/
 /.docs/
 
 /private/
+/backtest-data/
+/backtest-results/
 /strategies/
 /automation-private/
 /evidence/

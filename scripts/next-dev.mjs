@@ -44,7 +44,7 @@ async function run() {
   const explicitPort = hasExplicitPort(args);
   const requestedPort = parseDevPort(args);
   const port = explicitPort ? requestedPort : await findAvailablePort(requestedPort);
-  const nextArgs = explicitPort ? args : [...args, "--port", String(port)];
+  const nextArgs = [...(explicitPort ? args : [...args, "--port", String(port)]), "--hostname", "127.0.0.1"];
   const require = createRequire(import.meta.url);
   const nextBin = require.resolve("next/dist/bin/next");
   const env = { ...process.env, NEXT_DIST_DIR: devDistDir(port) };

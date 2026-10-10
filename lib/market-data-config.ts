@@ -12,7 +12,7 @@ function endpoint(value: string | undefined) {
   return url.toString().replace(/\/$/, "");
 }
 
-export function marketDataConfig(env: Record<string, string | undefined> = process.env): MarketDataConfig {
+export function marketDataConfig(env: Record<string, string | undefined>): MarketDataConfig {
   const apiUrl = endpoint(env.MARKET_DATA_API_URL);
   const socketUrl = endpoint(env.MARKET_DATA_SOCKET_URL);
   if (!apiUrl && !socketUrl) return { mode: "sample", name: "Sample data" };
