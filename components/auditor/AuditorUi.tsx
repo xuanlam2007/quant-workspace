@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { TerminalHost } from "../../lib/auditor-client";
 import { LoadingText } from "../ui/Loading";
 import styles from "../../app/auditor/auditor.module.css";
@@ -35,26 +35,35 @@ export function TerminalSelect({ value, disabled, loading = false, onChange }: {
 
 type SelectOption<T> = { value: T; label: string; disabled?: boolean };
 
-export function AuditorSelect<T extends string | number>({ id, label, icon, value, options, disabled: disabledProp, loading = false, onChange }: {
+export function AuditorSelect<T extends string | number>({ id, label, icon, value, options, disabled: disabledProp, loading = false, variant = "auditor", onChange }: {
   id: string;
   label: string;
-  icon: IconName;
+  icon?: IconName;
   value: T;
   options: SelectOption<T>[];
   disabled: boolean;
   loading?: boolean;
+  variant?: "auditor" | "chart";
   onChange: (value: T) => void;
 }) {
   const disabled = disabledProp || loading;
   const [open, setOpen] = useState(false);
+  const [closing, setClosing] = useState(false);
   const [placement, setPlacement] = useState({ above: false, height: 280 });
   const container = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const search = useRef({ text: "", time: 0 });
   const selected = options.find(option => option.value === value);
 
+  const close = useCallback(() => { setClosing(true); setOpen(false); }, []);
+  useEffect(() => {
+    if (!closing) return;
+    const timer = window.setTimeout(() => setClosing(false), 140);
+    return () => window.clearTimeout(timer);
+  }, [closing]);
+
   useLayoutEffect(() => {
-    if (disabled) { setOpen(false); return; }
+    if (disabled) { setOpen(false); setClosing(false); return; }
     if (!open) return;
     const place = () => {
       const rect = trigger.current?.getBoundingClientRect();
@@ -69,7 +78,7 @@ export function AuditorSelect<T extends string | number>({ id, label, icon, valu
     const option = menu?.querySelector<HTMLButtonElement>('[aria-selected="true"]:not(:disabled)') || menu?.querySelector<HTMLButtonElement>('[role="option"]:not(:disabled)');
     option?.focus({ preventScroll: true });
     option?.scrollIntoView({ block: "nearest" });
-    const outside = (event: PointerEvent) => { if (!container.current?.contains(event.target as Node)) setOpen(false); };
+    const outside = (event: PointerEvent) => { if (!container.current?.contains(event.target as Node)) close(); };
     document.addEventListener("pointerdown", outside);
     window.addEventListener("resize", place);
     document.addEventListener("scroll", place, true);
@@ -78,26 +87,27 @@ export function AuditorSelect<T extends string | number>({ id, label, icon, valu
       window.removeEventListener("resize", place);
       document.removeEventListener("scroll", place, true);
     };
-  }, [open, value, disabled, options.length]);
+  }, [open, value, disabled, options.length, close]);
 
   return (
-    <div className={styles.select} ref={container} onKeyDown={event => {
+    <div className={`${styles.select} ${variant === "chart" ? "chart-select" : ""}`} ref={container} onKeyDown={event => {
+      if (variant === "chart" && event.key === "Tab") event.preventDefault();
       if (event.key === "Escape" && open) {
         event.preventDefault();
         event.stopPropagation();
-        setOpen(false);
+        close();
         trigger.current?.focus();
         return;
       }
       if (event.key === "Tab" && open) {
         trigger.current?.focus({ preventScroll: true });
-        setOpen(false);
+        close();
       }
       const buttons = Array.from(container.current?.querySelectorAll<HTMLButtonElement>('[role="option"]:not(:disabled)') || []);
       const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
       if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
         event.preventDefault();
-        if (!open) { setOpen(true); return; }
+        if (!open) { setClosing(false); setOpen(true); return; }
         const next = event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1 : (index + (event.key === "ArrowDown" ? 1 : -1) + buttons.length) % buttons.length;
         buttons[next]?.focus({ preventScroll: true });
         buttons[next]?.scrollIntoView({ block: "nearest" });
@@ -117,6 +127,7 @@ export function AuditorSelect<T extends string | number>({ id, label, icon, valu
         id={id}
         ref={trigger}
         type="button"
+        tabIndex={variant === "chart" ? -1 : undefined}
         className={styles.button}
         disabled={disabled}
         aria-label={`${label}: ${selected?.label || "Chưa chọn"}`}
@@ -124,15 +135,15 @@ export function AuditorSelect<T extends string | number>({ id, label, icon, valu
         aria-expanded={open && !disabled}
         aria-controls={`${id}-options`}
         title={selected?.label}
-        onClick={() => setOpen(previous => !previous)}
+        onClick={() => { if (open) close(); else { setClosing(false); setOpen(true); } }}
       >
-        <Icon name={icon} /><span><LoadingText width="100%" loading={loading} label={`Đang tải ${label}`}>{selected?.label || "Chọn..."}</LoadingText></span><Icon name="chevron" />
+        {icon && <Icon name={icon} />}<span><LoadingText width="100%" loading={loading} label={`Đang tải ${label}`}>{selected?.label || "Chọn..."}</LoadingText></span><Icon name="chevron" />
       </button>
-      {open && !disabled && (
-        <div className={styles.menu} id={`${id}-options`} role="listbox" aria-label={label} data-placement={placement.above ? "top" : "bottom"} style={{ maxHeight: placement.height }}>
+      {(open || closing) && !disabled && (
+        <div className={styles.menu} id={`${id}-options`} role="listbox" aria-label={label} aria-hidden={!open} data-leaving={closing} data-placement={placement.above ? "top" : "bottom"} style={{ maxHeight: placement.height }}>
           {options.map(option => (
-            <button key={option.value} type="button" role="option" aria-selected={value === option.value} disabled={option.disabled} tabIndex={-1} title={option.label} onClick={() => {
-              setOpen(false);
+            <button key={option.value} type="button" role="option" aria-selected={value === option.value} disabled={option.disabled || closing} tabIndex={-1} title={option.label} onClick={() => {
+              close();
               trigger.current?.focus();
               if (option.value !== value) onChange(option.value);
             }}>

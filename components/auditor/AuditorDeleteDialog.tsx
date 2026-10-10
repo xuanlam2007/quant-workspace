@@ -3,6 +3,7 @@
 import { useLayoutEffect, useRef } from "react";
 import { LoadingIndicator } from "../ui/Loading";
 import { Icon } from "./AuditorUi";
+import AuditorNotice from "./AuditorNotice";
 import styles from "../../app/auditor/auditor.module.css";
 
 type Props = {
@@ -56,7 +57,7 @@ export default function AuditorDeleteDialog({ title, description, confirmLabel, 
       </div>
       <h2 id="auditor-delete-title">{title}</h2>
       <p id="auditor-delete-description">{description}</p>
-      {error && <p className={styles.error} role="alert">{error}</p>}
+      {error && <AuditorNotice message={error} />}
       <div className={styles.deleteDialogActions}>
         <button ref={cancel} type="button" className={styles.button} disabled={pending} onClick={onCancel}>Hủy</button>
         <button type="button" className={`${styles.button} ${styles.sellButton}`} disabled={disabled} onClick={onConfirm}>{pending ? <LoadingIndicator label="Đang xóa" /> : confirmLabel}</button>

@@ -1,22 +1,29 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { auditEventLabel, auditorRequest, engineUrl, reportUrl, type AiStatus, type AuditEvent, type CaptureMode, type CaptureWindow, type DecisionPreview, type RecordingState, type SessionGroup, type Snapshot, type StrategyState, type TerminalHost } from "../../lib/auditor-client";
+import { auditEventLabel, auditorRequest, engineUrl, reportUrl, type AiStatus, type AiSettings, type AuditEvent, type RecordingState, type SessionGroup, type Snapshot, type Summary, type TerminalHost } from "../../lib/auditor-client";
+import { captureBrowserTab } from "../../lib/auditor-capture";
+import type { CaptureMode, CaptureWindow } from "../../lib/auditor-client";
+import AuditorToggleGroup from "./AuditorToggleGroup";
 import AuditorFeed from "./AuditorFeed";
 import AuditorMetrics from "./AuditorMetrics";
 import { SessionsLoading } from "./AuditorLoadingParts";
-import AuditorToggleGroup from "./AuditorToggleGroup";
+import AuditorCapturePreview from "./AuditorCapturePreview";
 import AuditorStrategy from "./AuditorStrategy";
+import AuditorConnection from "./AuditorConnection";
+import { useAuditorAudio } from "./useAuditorAudio";
+import AuditorAudio from "./AuditorAudio";
 import AuditorDeleteDialog from "./AuditorDeleteDialog";
 import AuditorNotifications, { type AuditorNotification } from "./AuditorNotifications";
+import AuditorNotice from "./AuditorNotice";
 import { AuditorSelect, Icon, TerminalSelect } from "./AuditorUi";
-import { LoadingBlock, LoadingImage, LoadingIndicator, LoadingNumber, LoadingText, Skeleton } from "../ui/Loading";
+import { LoadingBlock, LoadingIndicator, LoadingNumber, LoadingText, Skeleton } from "../ui/Loading";
 import styles from "../../app/auditor/auditor.module.css";
+import { activateAuditor } from "../../lib/auditor-status";
 
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
-const captureModes: readonly { value: CaptureMode; label: string }[] = [
-  { value: "DESKTOP", label: "Desktop" },
-  { value: "IN_APP", label: "Trình duyệt" },
+const captureModes: { value: CaptureMode; label: string }[] = [
+  { value: "DESKTOP", label: "Desktop" }, { value: "IN_APP", label: "Trình duyệt" },
 ];
 
 export default function AuditorWorkspace({ active: isActive = true }: { active?: boolean }) {
@@ -41,15 +48,8 @@ export default function AuditorWorkspace({ active: isActive = true }: { active?:
   }, []);
   const [host, setHost] = useState<TerminalHost>("ORCA");
   const [ai, setAi] = useState<AiStatus | null>(null);
-  const [target, setTarget] = useState(0);
-  const [windows, setWindows] = useState<CaptureWindow[]>([]);
-  const [windowsLoading, setWindowsLoading] = useState(true);
   const clientId = useRef("");
-  const [decisionPreview, setDecisionPreview] = useState<DecisionPreview | null>(null);
-  const [price, setPrice] = useState("");
-  const [contracts, setContracts] = useState("1");
-  const [rationale, setRationale] = useState("");
-  const [validation, setValidation] = useState("");
+  const [microphone, setMicrophone] = useState(true);
   const [filter, setFilter] = useState("all");
   const [query, setQuery] = useState("");
   const [sessionGroups, setSessionGroups] = useState<SessionGroup[]>([]);
@@ -67,6 +67,8 @@ export default function AuditorWorkspace({ active: isActive = true }: { active?:
   const [capturePending, setCapturePending] = useState(false);
   const [captureError, setCaptureError] = useState("");
   const [previewReady, setPreviewReady] = useState(false);
+  const [windows, setWindows] = useState<CaptureWindow[]>([]);
+  const [windowsLoading, setWindowsLoading] = useState(false);
   const mounted = useRef(true);
 
   useEffect(() => { snapshotRef.current = snapshot; }, [snapshot]);
@@ -76,14 +78,13 @@ export default function AuditorWorkspace({ active: isActive = true }: { active?:
     setSnapshot(next);
     setEvents(next.recent_events || []);
     setHost(next.config?.terminal_type || "ORCA");
-    setTarget(next.target_window_id || 0);
     setAi(next.gemini_status || null);
     setReports(null);
-    setDecisionPreview(null);
   }, []);
-  const upsertEvent = useCallback((event: AuditEvent) => {
+  const upsertEvent = useCallback((event: AuditEvent, summary?: Summary) => {
     const current = snapshotRef.current;
     if (!current || (event.session_id && (event.session_id !== current.session_id || event.date !== current.current_date))) return;
+    if (summary) setSnapshot(previous => previous ? { ...previous, summary } : previous);
     setEvents(previous => previous.some(item => item.id === event.id)
       ? previous.map(item => item.id === event.id ? { ...item, ...event } : item)
       : [...previous, event].slice(-200));
@@ -93,15 +94,22 @@ export default function AuditorWorkspace({ active: isActive = true }: { active?:
     let socket: WebSocket | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let delay = 1000;
-    const connect = () => {
+    const connect = async () => {
       if (stopped) return;
       setConnection("connecting");
-      const address = new URL(engineUrl);
       if (!clientId.current) clientId.current = crypto.randomUUID();
-      address.protocol = address.protocol === "https:" ? "wss:" : "ws:";
-      address.pathname = "/ws";
-      address.searchParams.set("client_id", clientId.current);
-      socket = new WebSocket(address);
+      try {
+        const result = await auditorRequest<{ url: string }>("/socket", { client_id: clientId.current });
+        if (stopped) return;
+        socket = new WebSocket(result.url);
+      } catch {
+        if (!stopped) {
+          setConnection("disconnected");
+          timer = setTimeout(() => void connect(), delay);
+          delay = Math.min(delay * 2, 15000);
+        }
+        return;
+      }
       socket.onopen = () => { if (!stopped) { delay = 1000; setConnection("connected"); } };
       socket.onmessage = event => {
         if (stopped) return;
@@ -110,18 +118,14 @@ export default function AuditorWorkspace({ active: isActive = true }: { active?:
           if (message.type === "INIT_STATE" || message.type === "SESSION_SWITCHED") {
             applySnapshot({ ...snapshotRef.current, ...message, current_date: message.current_date || message.date || "" });
           } else if (message.event) {
-            if (message.session_id && message.session_id !== snapshotRef.current?.session_id) return;
-            upsertEvent(message.event);
-            if (message.summary) setSnapshot(previous => previous ? { ...previous, summary: message.summary } : previous);
+            if (message.session_id && (message.session_id !== snapshotRef.current?.session_id || message.date !== snapshotRef.current?.current_date)) return;
+            upsertEvent(message.event, message.summary);
           } else if (message.type === "MODE_CHANGED" || message.type === "RECORDING_CHANGED") {
             setSnapshot(previous => previous ? { ...previous, ...message } : previous);
-            setTarget(message.target_window_id || 0);
           } else if (message.type === "STRATEGY_MODE_CHANGED") {
-            setSnapshot(previous => previous ? { ...previous, strategy_mode: message.enabled } : previous);
-            setDecisionPreview(null);
-          } else if (message.type === "STRATEGY_CHANGED") {
-            setSnapshot(previous => previous ? { ...previous, strategy_mode: message.strategy_mode, config: message.config } : previous);
-            setDecisionPreview(null);
+            setSnapshot(previous => previous ? { ...previous, strategy_mode: message.enabled, strategy_available: message.strategy_available, strategy_documents: message.strategy_documents, strategy_error: message.strategy_error } : previous);
+          } else if (message.type === "AI_CONFIG_CHANGED") {
+            setAi(message.ai_status);
           } else if (message.type === "ERROR") notify({ kind: "error", text: message.message });
         } catch { notify({ kind: "error", text: "Không đọc được dữ liệu từ bộ máy phân tích. Hãy kết nối lại để tải dữ liệu phiên." }); }
       };
@@ -129,11 +133,11 @@ export default function AuditorWorkspace({ active: isActive = true }: { active?:
       socket.onclose = () => {
         if (stopped) return;
         setConnection("disconnected");
-        timer = setTimeout(connect, delay);
+        timer = setTimeout(() => void connect(), delay);
         delay = Math.min(delay * 2, 15000);
       };
     };
-    connect();
+    void connect();
     return () => { stopped = true; clearTimeout(timer); socket?.close(); };
   }, [applySnapshot, upsertEvent, reconnectKey, notify]);
 
@@ -142,7 +146,7 @@ export default function AuditorWorkspace({ active: isActive = true }: { active?:
     const controller = new AbortController();
     setWindowsLoading(true);
     void auditorRequest<{ windows: CaptureWindow[] }>("/windows", undefined, "GET", controller.signal)
-      .then(result => setWindows(result.windows))
+      .then(result => { if (!controller.signal.aborted) setWindows(result.windows); })
       .catch(error => { if (!controller.signal.aborted) setCaptureError(errorText(error)); })
       .finally(() => { if (!controller.signal.aborted) setWindowsLoading(false); });
     return () => controller.abort();
@@ -205,7 +209,7 @@ export default function AuditorWorkspace({ active: isActive = true }: { active?:
   });
   const stopCapture = useCallback(() => {
     if (streamRef.current) {
-      void fetch(`${engineUrl}/api/recording`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "pause", source_id: clientId.current, browser_only: true, capture_generation: snapshotRef.current?.capture_generation }), keepalive: true }).catch(() => {});
+      void fetch(`${engineUrl}/recording`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "pause", source_id: clientId.current, browser_only: true, capture_generation: snapshotRef.current?.capture_generation }), keepalive: true }).catch(() => {});
     }
     streamRef.current?.getTracks().forEach(track => track.stop());
     streamRef.current = null;
@@ -220,65 +224,68 @@ export default function AuditorWorkspace({ active: isActive = true }: { active?:
   useEffect(() => { if (snapshot?.mode === "DESKTOP") stopCapture(); }, [snapshot?.mode, stopCapture]);
   useEffect(() => {
     if (stream && video.current) {
-      video.current.srcObject = stream;
-      const enabled = snapshot?.recording_status === "recording";
-      stream.getVideoTracks().forEach(track => { track.enabled = enabled; });
-      if (enabled) void video.current.play().catch(error => setCaptureError(errorText(error)));
-      else video.current.pause();
+      if (video.current.srcObject !== stream) video.current.srcObject = stream;
+      void video.current.play().catch(error => setCaptureError(errorText(error)));
     }
-  }, [stream, snapshot?.recording_status]);
+  }, [stream]);
   const startCapture = async () => {
     if (capturePending) return;
     setCapturePending(true);
     setCaptureError("");
     try {
       if (!navigator.mediaDevices?.getDisplayMedia) throw new Error("Chia sẻ màn hình cần trình duyệt hỗ trợ trên localhost hoặc HTTPS.");
-      const next = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
-      if (next.getVideoTracks()[0]?.getSettings().displaySurface === "monitor") {
+      const options: DisplayMediaStreamOptions & { surfaceSwitching: "exclude"; monitorTypeSurfaces: "exclude" } = { video: true, audio: false, surfaceSwitching: "exclude", monitorTypeSurfaces: "exclude" };
+      const next = await navigator.mediaDevices.getDisplayMedia(options);
+      if (next.getVideoTracks()[0]?.getSettings().displaySurface !== "browser") {
         next.getTracks().forEach(track => track.stop());
-        throw new Error("Hãy chọn một thẻ trình duyệt hoặc cửa sổ ứng dụng thay vì toàn bộ màn hình.");
+        throw new Error("Chỉ chọn browser tab. Cửa sổ ứng dụng và toàn bộ màn hình không được dùng làm nguồn ghi.");
       }
       if (!mounted.current || snapshotRef.current?.mode !== "IN_APP") { next.getTracks().forEach(track => track.stop()); return; }
       stopCapture();
       streamRef.current = next;
-      next.getVideoTracks()[0]?.addEventListener("ended", () => { if (mounted.current) stopCapture(); }, { once: true });
+      next.getVideoTracks()[0]?.addEventListener("ended", () => { if (mounted.current && streamRef.current === next) stopCapture(); }, { once: true });
       setStream(next);
       setPreviewReady(false);
       const result = await auditorRequest<RecordingState>("/mode", { mode: "IN_APP", browser_source_id: clientId.current });
+      if (!mounted.current || streamRef.current !== next || next.getVideoTracks()[0]?.readyState !== "live") {
+        void auditorRequest("/recording", { action: "pause", source_id: clientId.current, browser_only: true, capture_generation: result.capture_generation }).catch(() => {});
+        return;
+      }
       setSnapshot(previous => previous ? { ...previous, ...result } : previous);
     } catch (error) { if (mounted.current) { stopCapture(); setCaptureError(errorText(error)); } }
     finally { if (mounted.current) setCapturePending(false); }
   };
-  const captureFrame = () => {
+  const captureFrame = useCallback(() => {
     const element = video.current;
-    if (!streamRef.current || !element?.videoWidth) return undefined;
-    const canvas = document.createElement("canvas");
-    canvas.width = element.videoWidth;
-    canvas.height = element.videoHeight;
-    canvas.getContext("2d")?.drawImage(element, 0, 0);
-    return canvas.toDataURL("image/png");
-  };
-  const testDecision = (direction: "LONG" | "SHORT", save = false) => {
-    if (!Number.isFinite(Number(price)) || Number(price) <= 0 || !Number.isInteger(Number(contracts)) || Number(contracts) < 1 || Number(contracts) > 1000) {
-      setValidation("Nhập giá lớn hơn 0 và số hợp đồng nguyên từ 1 đến 1000.");
-      return;
-    }
-    if (save && snapshot?.mode === "IN_APP" && !streamRef.current) { setCaptureError("Chọn thẻ trình duyệt hoặc cửa sổ trước khi lưu lệnh giả lập."); return; }
-    setValidation("");
-    void perform(save ? "save-test" : direction, async () => {
-      const context = { session_id: snapshotRef.current?.session_id, session_date: snapshotRef.current?.current_date, source_id: clientId.current };
-      const result = await auditorRequest<DecisionPreview>("/decision-test", { ...context, direction, price: Number(price), contracts: Number(contracts), voice_transcript: rationale, save, frame_base64: save && snapshot?.mode === "IN_APP" ? captureFrame() : undefined });
-      setDecisionPreview(result);
-      if (result.event) upsertEvent(result.event);
-      if (save) notify({ kind: "success", text: `Đã lưu lệnh ${direction} kèm minh chứng. Vị thế và lãi/lỗ của phiên không thay đổi.` });
-    });
-  };
+    return element && streamRef.current ? captureBrowserTab(element, streamRef.current) : undefined;
+  }, []);
   const setMode = (mode: CaptureMode, windowId = 0) => void perform("mode", async () => {
-    if (streamRef.current) stopCapture();
+    if (capturePending) return;
+    stopCapture();
+    setCaptureError("");
     const result = await auditorRequest<RecordingState>("/mode", { mode, target_window_id: windowId });
     setSnapshot(previous => previous ? { ...previous, ...result } : previous);
-    setTarget(result.target_window_id);
   });
+  useEffect(() => {
+    if (!stream || !previewReady || connection !== "connected" || snapshot?.mode !== "IN_APP" || snapshot.recording_status !== "recording" || snapshot.browser_source_id !== clientId.current) return;
+    let stopped = false;
+    let capturing = false;
+    const save = async () => {
+      if (capturing || stopped) return;
+      const current = snapshotRef.current;
+      const frame = captureFrame();
+      if (!frame || !current?.session_id) return;
+      capturing = true;
+      try {
+        const result = await auditorRequest<{ event: AuditEvent }>("/observation", { frame_base64: frame, session_id: current.session_id, session_date: current.current_date, source_id: clientId.current, capture_generation: current.capture_generation });
+        if (!stopped) upsertEvent(result.event);
+      } catch (error) { if (!stopped) setCaptureError(errorText(error)); }
+      finally { capturing = false; }
+    };
+    const timer = window.setInterval(() => void save(), 15000);
+    void save();
+    return () => { stopped = true; window.clearInterval(timer); };
+  }, [stream, previewReady, connection, snapshot?.mode, snapshot?.recording_status, snapshot?.browser_source_id, snapshot?.session_id, snapshot?.capture_generation, captureFrame, upsertEvent]);
   const changeRecording = (action: "start" | "pause" | "resume" | "stop") => void perform(action === "stop" ? "recording-stop" : "recording", async () => {
     const result = await auditorRequest<RecordingState>("/recording", { action, source_id: clientId.current });
     setSnapshot(previous => previous ? { ...previous, ...result } : previous);
@@ -302,22 +309,23 @@ export default function AuditorWorkspace({ active: isActive = true }: { active?:
   const disabled = !ready || !!pending;
   const active = !!snapshot?.session_id;
   const recording = snapshot?.recording_status === "recording";
-  const hasSource = snapshot?.mode === "IN_APP" ? !!stream && snapshot.browser_source_id === clientId.current : !!snapshot?.target_window_id;
-  const dataLoading = !snapshot && !connectionNoticeVisible;
-  const windowsPending = (ready && windowsLoading) || pending === "windows";
-  const visibleEvents = useMemo(() => events.filter(event => {
-    if (filter === "warnings" && !event.warnings?.length) return false;
-    if (filter === "tests" && event.type !== "DECISION_TEST") return false;
-    if (filter === "rejects" && event.action !== "REJECT") return false;
-    return !query || [auditEventLabel(event), event.action, event.type, event.voice_transcript, event.ai_thesis, event.reason, ...(event.warnings || []).map(item => item.message)].join(" ").toLowerCase().includes(query.toLowerCase());
-  }).reverse(), [events, filter, query]);
-  const aiLabel = ai?.connected === true ? "AGY đã kết nối" : ai?.connected === false ? "AGY chưa khả dụng" : ai?.available ? "AGY đã cài đặt" : "Chưa tìm thấy AGY";
-  const totalSessions = sessionGroups.reduce((count, group) => count + group.sessions.length, 0);
-  const captureOptions = useMemo(() => [
+  const hasSource = snapshot?.mode === "DESKTOP" ? !!snapshot.target_window_id : snapshot?.mode === "IN_APP" && !!stream && previewReady && snapshot.browser_source_id === clientId.current;
+  const target = snapshot?.target_window_id || 0;
+  const windowsPending = windowsLoading || pending === "windows";
+  const captureOptions = [
     { value: 0, label: "Chọn cửa sổ..." },
-    ...(target > 0 && !windows.some(window => window.id === target) ? [{ value: target, label: snapshot?.target_window_title || "Cửa sổ đã chọn không khả dụng", disabled: true }] : []),
-    ...windows.map(window => ({ value: window.id, label: window.title })),
-  ], [windows, target, snapshot?.target_window_title]);
+    ...(target && !windows.some(item => item.id === target) ? [{ value: target, label: snapshot?.target_window_title || "Cửa sổ không khả dụng", disabled: true }] : []),
+    ...windows.map(item => ({ value: item.id, label: item.title })),
+  ];
+  const dataLoading = !snapshot && !connectionNoticeVisible;
+  const audioError = useCallback((message: string) => notify({ kind: "error", text: message }), [notify]);
+  const audio = useAuditorAudio({ enabled: microphone && ready && hasSource, recording, date: snapshot?.current_date || "", sessionId: snapshot?.session_id || "", generation: snapshot?.capture_generation || 0, sourceId: clientId.current, captureFrame, onEvent: upsertEvent, onError: audioError });
+  const visibleEvents = useMemo(() => events.filter(event => {
+    if (filter === "evaluations" && !event.ai_thesis && !event.ai_error && !event.ai_pending) return false;
+    if (filter === "questions" && !event.ai_question) return false;
+    return !query || [auditEventLabel(event), event.action, event.type, event.voice_transcript, event.ai_transcript, event.ai_thesis, event.ai_question, event.reason, ...(event.warnings || []).map(item => item.message)].join(" ").toLowerCase().includes(query.toLowerCase());
+  }).reverse(), [events, filter, query]);
+  const totalSessions = sessionGroups.reduce((count, group) => count + group.sessions.length, 0);
 
   return <main className={styles.workspace} lang="vi" aria-label="Không gian phân tích Quant">
     <div className={styles.container}>
@@ -337,77 +345,68 @@ export default function AuditorWorkspace({ active: isActive = true }: { active?:
           <button type="button" className={`${styles.button} ${styles.terminalButton}`} disabled={disabled || terminalPending || !active || host === "NONE"} aria-busy={terminalPending} onClick={() => void openTerminal()}>{terminalPending ? <LoadingIndicator label="Đang mở Terminal" /> : "Mở Terminal"}</button>
         </div>
       </header>
-      {!ready && connectionNoticeVisible && <div className={styles.connectionNotice} role="status">{connection !== "disconnected" ? <LoadingIndicator compact label="Đang kết nối bộ máy phân tích" /> : <Icon name="warning" />}<div><strong>{connection === "connected" ? "Đang chờ cập nhật bộ máy phân tích" : connection === "connecting" ? "Đang kết nối bộ máy phân tích" : "Bộ máy phân tích chưa khả dụng"}</strong><p>Bộ máy phân tích tự khởi động khi mở Quant. Hệ thống sẽ tự kết nối lại. Nếu vẫn chưa kết nối được, hãy kiểm tra Terminal đang chạy ứng dụng. {snapshot && "Dữ liệu phiên đang hiển thị có thể chưa được cập nhật."}</p></div><button className={styles.button} type="button" onClick={() => setReconnectKey(value => value + 1)}><Icon name="refresh" />Kết nối lại</button></div>}
+      {!ready && connectionNoticeVisible && <div className={styles.connectionNotice} role="status">{connection !== "disconnected" ? <LoadingIndicator compact label="Đang kết nối bộ máy phân tích" /> : <Icon name="warning" />}<div><strong>{connection === "connected" ? "Đang chờ cập nhật bộ máy phân tích" : connection === "connecting" ? "Đang kết nối bộ máy phân tích" : "Bộ máy phân tích chưa khả dụng"}</strong><p>Bộ máy phân tích tự khởi động khi mở Quant. Hệ thống sẽ tự kết nối lại. Nếu vẫn chưa kết nối được, hãy kiểm tra Terminal đang chạy ứng dụng. {snapshot && "Dữ liệu phiên đang hiển thị có thể chưa được cập nhật."}</p></div><button className={styles.button} type="button" onClick={() => { activateAuditor(true); setReconnectKey(value => value + 1); }}><Icon name="refresh" />Kết nối lại</button></div>}
       {ready && !active && <div className={styles.connectionNotice}><Icon name="history" /><div><strong>Bắt đầu một phiên</strong><p>Tạo phiên mới hoặc chọn từ lịch sử. Tải lại trang vẫn giữ phiên đã chọn.</p></div><button className={styles.button} type="button" onClick={openSessions}>Xem lịch sử</button></div>}
-      <AuditorMetrics snapshot={snapshot} loading={dataLoading} active={isActive} connected={ready} />
+      <AuditorMetrics snapshot={snapshot} loading={dataLoading} />
       <div className={styles.layout}>
         <aside className={styles.controls}>
-          <section className={styles.panel}>
+          <section className={`${styles.panel} ${styles.capturePanel}`}>
             <div className={styles.sectionHeading}><h2>Nguồn ghi hình</h2>{pending === "mode" ? <LoadingIndicator compact label="Đang cập nhật nguồn" /> : <Icon name="capture" />}</div>
-            <AuditorToggleGroup loading={dataLoading} label="Nguồn ghi hình" variant="capture" value={snapshot?.mode} options={captureModes} disabled={disabled} onChange={mode => setMode(mode)} />
-            {snapshot?.mode !== "IN_APP" ? <div className={styles.field}>
+            <AuditorToggleGroup loading={dataLoading} label="Nguồn ghi hình" variant="capture" value={snapshot?.mode} options={captureModes} disabled={disabled || capturePending} onChange={mode => setMode(mode)} />
+            <div className={styles.captureSources}>
+            <div className={`${styles.field} ${styles.capturePane}`} data-active={snapshot?.mode === "DESKTOP"} aria-hidden={snapshot?.mode !== "DESKTOP"}>
               <label htmlFor="auditor-window">Cửa sổ ghi hình</label>
               <div className={styles.inputAction}>
-                <AuditorSelect loading={dataLoading || (windowsPending && !windows.length)} id="auditor-window" label="Cửa sổ ghi hình" icon="capture" value={target} options={captureOptions} disabled={disabled || !isActive} onChange={value => setMode("DESKTOP", value)} />
-                <button type="button" className={styles.iconButton} disabled={disabled || windowsPending} aria-busy={windowsPending} aria-label="Làm mới danh sách cửa sổ" onClick={() => void perform("windows", async () => { const result = await auditorRequest<{ windows: CaptureWindow[] }>("/windows"); setWindows(result.windows); setCaptureError(""); })}>{windowsPending ? <LoadingIndicator compact label="Đang tải cửa sổ" /> : <Icon name="refresh" />}</button>
+                <AuditorSelect loading={dataLoading || (windowsPending && !windows.length)} id="auditor-window" label="Cửa sổ ghi hình" icon="capture" value={target} options={captureOptions} disabled={disabled || capturePending || !isActive || snapshot?.mode !== "DESKTOP"} onChange={value => setMode("DESKTOP", value)} />
+                <button type="button" tabIndex={-1} className={styles.iconButton} disabled={disabled || windowsPending || snapshot?.mode !== "DESKTOP"} aria-busy={windowsPending} aria-label="Làm mới danh sách cửa sổ" onClick={() => void perform("windows", async () => { const result = await auditorRequest<{ windows: CaptureWindow[] }>("/windows"); setWindows(result.windows); setCaptureError(""); })}>{windowsPending ? <LoadingIndicator compact label="Đang tải cửa sổ" /> : <Icon name="refresh" />}</button>
               </div>
-              <p className={styles.help}>Chỉ ghi hình cửa sổ đã chọn. Sự kiện được ghi tự động khi bạn tương tác với cửa sổ đó.</p>
-            </div> : <div className={styles.capture}>
-              {stream && recording && !previewReady && !captureError && <LoadingImage label="Đang tải màn hình chia sẻ" />}
-              <video ref={video} autoPlay muted playsInline className={stream ? styles.preview : styles.hidden} aria-label="Xem trước màn hình chia sẻ" onLoadedData={() => setPreviewReady(true)} onError={() => setCaptureError("Không tải được màn hình chia sẻ. Hãy chọn lại nguồn ghi hình.")} />
-              {!stream && <p className={styles.help}>Chọn thẻ biểu đồ hoặc cửa sổ ứng dụng. Không thể dùng toàn bộ màn hình làm nguồn ghi hình.</p>}
-              <button type="button" className={styles.button} disabled={(!stream && disabled) || capturePending} onClick={() => stream ? stopCapture() : void startCapture()}><Icon name="capture" />{capturePending ? <LoadingIndicator label="Đang chọn nguồn" /> : stream ? "Dừng chia sẻ" : "Chọn thẻ hoặc cửa sổ"}</button>
-            </div>}
-            {captureError && <p className={styles.error} role="alert">{captureError}</p>}
+              <p className={styles.help}>Ghi hình cửa sổ đã chọn. Thao tác được ghi khi bạn tương tác với cửa sổ đó.</p>
+              <div className={styles.capturePreview}><div className={styles.capturePlaceholder}><Icon name="capture" /><span>{target ? snapshot?.target_window_title : "Chọn cửa sổ Desktop để ghi hình"}</span></div></div>
+            </div>
+            <div className={`${styles.field} ${styles.capturePane}`} data-active={snapshot?.mode === "IN_APP"} aria-hidden={snapshot?.mode !== "IN_APP"}>
+              <label>Nguồn browser tab</label>
+              <button type="button" className={styles.button} disabled={snapshot?.mode !== "IN_APP" || (!stream && disabled) || !isActive || capturePending} onClick={() => stream ? stopCapture() : void startCapture()}><Icon name="capture" />{capturePending ? <LoadingIndicator label="Đang cập nhật nguồn" /> : stream ? "Dừng chia sẻ" : "Chọn browser tab"}</button>
+              <p className={styles.help}>Ghi toàn bộ nội dung browser tab đã chọn, không gồm address bar hoặc taskbar.</p>
+              {stream ? <AuditorCapturePreview video={video} ready={previewReady} onReady={() => setPreviewReady(true)} onError={() => { stopCapture(); setCaptureError("Không tải được browser tab. Hãy chọn lại nguồn ghi hình."); }} /> : <>
+                <div className={styles.capturePreview}><div className={styles.capturePlaceholder}><Icon name="capture" /><span>Xem trước tab đã chọn</span></div></div>
+              </>}
+            </div>
+            </div>
             <div className={styles.recordingPanel}>
-              <div className={styles.sectionHeading}><strong>Ghi hình</strong><span className={recording ? styles.positive : styles.muted}><LoadingText width="8ch" loading={dataLoading}>{recording ? "Ghi hình" : snapshot?.recording_status === "paused" ? "Tạm dừng" : "Đã dừng"}</LoadingText></span></div>
+              <div className={styles.sectionHeading}><strong>Ghi hình</strong><span className={`${styles.recordingStatus} ${recording ? styles.positive : styles.muted}`}><LoadingText width="11ch" loading={dataLoading}>{recording ? "Ghi hình" : snapshot?.recording_status === "paused" ? "Tạm dừng" : "Đã dừng"}</LoadingText></span></div>
               <div className={styles.recordingActions}>
                 <button type="button" tabIndex={-1} className={`${styles.button} ${recording ? styles.pauseButton : styles.primary} ${styles.fullWidth}`} disabled={disabled || (!recording && (!active || !hasSource))} onClick={() => changeRecording(recording ? "pause" : snapshot?.recording_status === "paused" ? "resume" : "start")}><Icon name={recording ? "pause" : "play"} />{pending === "recording" ? <LoadingIndicator label="Đang cập nhật" /> : recording ? "Tạm dừng ghi" : snapshot?.recording_status === "paused" ? "Tiếp tục ghi" : "Bắt đầu ghi"}</button>
                 <button type="button" tabIndex={-1} className={`${styles.button} ${styles.sellButton} ${styles.fullWidth}`} disabled={disabled || !active || !["recording", "paused"].includes(snapshot?.recording_status || "")} onClick={() => changeRecording("stop")}><Icon name="stop" />{pending === "recording-stop" ? <LoadingIndicator label="Đang dừng" /> : "Dừng ghi"}</button>
               </div>
               <label className={styles.autoStart}>{dataLoading ? <Skeleton width={16} height={16} label="Đang tải tùy chọn ghi hình" /> : <input type="checkbox" checked={snapshot?.auto_start_recording ?? true} disabled={disabled} onChange={event => { const autoStart = event.target.checked; void perform("auto-start", async () => { const result = await auditorRequest<RecordingState>("/recording/preference", { auto_start: autoStart }); setSnapshot(previous => previous ? { ...previous, ...result } : previous); }); }} />}<span>Tự bắt đầu ghi khi chọn nguồn</span>{pending === "auto-start" && <LoadingIndicator compact label="Đang cập nhật tùy chọn ghi hình" />}</label>
-              {dataLoading ? <p className={styles.help}><LoadingText width="80%" /></p> : !active ? <p className={styles.help}>Tạo hoặc mở lại một phiên trước khi bắt đầu.</p> : !hasSource ? <p className={styles.help}>Chọn nguồn để bật ghi hình.</p> : !recording && <p className={styles.help}>Chưa ghi ảnh chụp và nhật ký sự kiện. Phiên và nguồn đã chọn vẫn được giữ lại.</p>}
-              {snapshot?.recording_error && <p className={styles.error} role="alert">{snapshot.recording_error}</p>}
+              <p className={`${styles.help} ${styles.captureHint}`}>{dataLoading ? <LoadingText width="80%" /> : !active ? "Tạo hoặc mở lại một phiên trước khi bắt đầu." : !hasSource ? "Chọn nguồn để bật ghi hình." : recording ? "Đang ghi thao tác và ảnh chụp từ nguồn đã chọn." : "Chưa ghi hình. Phiên và nguồn đã chọn vẫn được giữ lại."}</p>
             </div>
           </section>
+          {captureError && <AuditorNotice message={captureError} />}
+          {snapshot?.recording_error && <AuditorNotice message={snapshot.recording_error} />}
+          <AuditorAudio key={`${snapshot?.current_date}/${snapshot?.session_id}`} audio={audio} enabled={microphone} loading={dataLoading} disabled={!ready} canRecord={ready && recording && hasSource} hasSource={hasSource} canHear={!!ai?.connected && !!ai?.audio_input} onToggle={setMicrophone} />
           <AuditorStrategy
-            key={snapshot?.config?.strategy_notes || ""}
-            notes={snapshot?.config?.strategy_notes || ""}
-            enabled={snapshot?.strategy_mode ?? false}
+            enabled={!!snapshot?.strategy_mode}
+            available={!!snapshot?.strategy_available}
+            documents={snapshot?.strategy_documents || []}
+            error={snapshot?.strategy_error}
             disabled={disabled}
-            saving={pending === "strategy-save"}
             loading={dataLoading}
             toggling={pending === "strategy"}
-            onSave={notes => void perform("strategy-save", async () => {
-              const result = await auditorRequest<StrategyState>("/strategy", { notes });
-              setSnapshot(previous => previous ? { ...previous, ...result } : previous);
-              setDecisionPreview(null);
-              notify({ kind: "success", text: result.strategy_mode ? "Đã lưu chiến lược. Các lệnh giả lập tiếp theo sẽ được đánh giá theo quy tắc này." : "Đã xóa chiến lược. Việc ghi hình tiếp tục mà không áp dụng quy tắc chiến lược." });
-            })}
             onToggle={enabled => void perform("strategy", async () => {
-              await auditorRequest("/strategy-mode", { enabled });
-              setSnapshot(previous => previous ? { ...previous, strategy_mode: enabled } : previous);
-              setDecisionPreview(null);
+              const result = await auditorRequest<{ strategy_mode: boolean }>("/strategy-mode", { enabled });
+              setSnapshot(previous => previous ? { ...previous, strategy_mode: result.strategy_mode } : previous);
             })}
           />
-          <section className={styles.panel}>
-            <h2>Giả lập đặt lệnh</h2><p className={styles.help}>Xem trước lệnh LONG hoặc SHORT, rồi lưu để đánh giá theo chiến lược của bạn.</p>
-            <div className={styles.formRow}>
-              <div className={styles.field}><label htmlFor="auditor-price">Giá vào lệnh</label><input id="auditor-price" inputMode="decimal" type="number" min="0" step="any" value={price} aria-invalid={!!validation} disabled={disabled} placeholder="Ví dụ: 1250.5" onChange={event => { setPrice(event.target.value); setValidation(""); setDecisionPreview(null); }} /></div>
-              <div className={styles.field}><label htmlFor="auditor-contracts">Số hợp đồng</label><input id="auditor-contracts" type="number" min="1" max="1000" step="1" value={contracts} aria-invalid={!!validation} disabled={disabled} onChange={event => { setContracts(event.target.value); setValidation(""); setDecisionPreview(null); }} /></div>
-            </div>
-            {validation && <p className={styles.error} role="alert">{validation}</p>}
-            <div className={styles.field}><label htmlFor="auditor-rationale">Luận điểm vào lệnh</label><textarea id="auditor-rationale" rows={3} value={rationale} disabled={disabled} placeholder="Điều gì hỗ trợ lệnh này? Khi nào luận điểm không còn hợp lệ?" onChange={event => { setRationale(event.target.value); setDecisionPreview(null); }} /></div>
-            <div className={styles.tradeActions}><button type="button" className={`${styles.button} ${styles.buyButton}`} disabled={disabled} onClick={() => testDecision("LONG")}>{pending === "LONG" ? <LoadingIndicator label="Đang kiểm tra" /> : "LONG"}</button><button type="button" className={`${styles.button} ${styles.sellButton}`} disabled={disabled} onClick={() => testDecision("SHORT")}>{pending === "SHORT" ? <LoadingIndicator label="Đang kiểm tra" /> : "SHORT"}</button></div>
-            {["LONG", "SHORT"].includes(pending) ? <LoadingBlock label="Đang đánh giá lệnh giả lập" /> : decisionPreview && <div className={styles.testPreview} aria-live="polite"><strong className={decisionPreview.direction === "LONG" ? styles.positive : styles.negative}>{decisionPreview.direction} tại {decisionPreview.price.toLocaleString("en-US")}</strong><p className={styles.help}>{decisionPreview.contracts} hợp đồng · {decisionPreview.saved ? "Đã lưu lệnh giả lập" : "Chỉ xem trước"}</p>{decisionPreview.warnings.length ? decisionPreview.warnings.map((warning, index) => <p key={`${warning.type}-${index}`} className={styles.warning}>{warning.message}</p>) : <p className={styles.help}>{snapshot?.strategy_mode ? "Bản xem trước chưa đánh giá nội dung chiến lược. Lưu lệnh giả lập để AGY phân tích." : "Chưa có chiến lược. Bản xem trước chưa có kết luận đánh giá."}</p>}<button type="button" className={`${styles.button} ${styles.fullWidth}`} disabled={disabled || !active || !recording || !hasSource || decisionPreview.saved} onClick={() => testDecision(decisionPreview.direction, true)}>{pending === "save-test" ? <LoadingIndicator label="Đang lưu" /> : decisionPreview.saved ? "Đã lưu lệnh giả lập" : "Lưu lệnh kèm minh chứng"}</button><p className={styles.help}>{!recording ? "Bắt đầu ghi để lưu lệnh giả lập này." : "Lệnh giả lập đã lưu không làm thay đổi vị thế hoặc lãi/lỗ đã thực hiện."}</p></div>}
-          </section>
-          <section className={styles.panel}>
-            <div className={styles.sectionHeading}><h2>Phân tích</h2><span className={`${styles.smallStatus} ${ai?.connected === false ? styles.warning : styles.muted}`}>{dataLoading || pending === "ai" ? <LoadingIndicator label="Đang kiểm tra AGY" /> : aiLabel}</span></div>
-            <p className={styles.help}>AGY dùng tài khoản bạn đã đăng nhập. Lệnh đã lưu sẽ được phân tích, ảnh chụp được giữ làm minh chứng.</p>
-            <button type="button" className={styles.button} disabled={disabled} onClick={() => void perform("ai", async () => { const result = await auditorRequest<AiStatus>("/gemini/status"); setAi(result); })}><Icon name="refresh" />{pending === "ai" ? <LoadingIndicator label="Đang kiểm tra" /> : "Kiểm tra kết nối"}</button>
-            {ai?.error && <p className={styles.error} role="alert">{ai.error}</p>}
-            {(pending === "ai" || ai?.latency_ms !== undefined) && <p className={styles.help}>Lần kiểm tra gần nhất: <LoadingNumber loading={pending === "ai"} digits={3} label="Đang đo độ trễ">{ai?.latency_ms}</LoadingNumber> ms</p>}
-          </section>
+          <AuditorConnection status={ai} loading={dataLoading} pending={pending} disabled={disabled} observing={events.some(event => event.ai_pending)}
+            onSave={(settings: AiSettings) => void perform("ai-config", async () => { setAi(await auditorRequest<AiStatus>("/ai/config", settings)); })}
+            onCheck={() => void perform("ai", async () => { setAi(await auditorRequest<AiStatus>("/ai/connection/test", {})); })}
+            onOpenTerminal={provider => void perform("ai-account", async () => {
+              await auditorRequest("/terminal/open", { terminal_type: host, purpose: "account", provider });
+              setAi(previous => previous ? { ...previous, connected: null, error: undefined } : previous);
+              notify({ kind: "success", text: "Đã mở Terminal của CLI đã chọn. Sau khi đổi tài khoản, làm mới model và kiểm tra kết nối lại." });
+            })}
+          />
           <button type="button" className={`${styles.button} ${styles.fullWidth}`} disabled={disabled || !active} onClick={() => void perform("export", async () => {
             const result = await auditorRequest<{ date: string; session_id: string; reports: { pdf: string } }>("/end-session", {});
             setReports({ date: result.date, id: result.session_id, pdf: !!result.reports.pdf });
@@ -415,7 +414,7 @@ export default function AuditorWorkspace({ active: isActive = true }: { active?:
           })}><Icon name="export" />{pending === "export" ? <LoadingIndicator label="Đang xuất" /> : "Xuất báo cáo phiên"}</button>
           {pending === "export" ? <LoadingBlock label="Đang tạo báo cáo phiên" rows={2} /> : reports && <div className={styles.reportLinks}><a href={reportUrl(reports.date, reports.id, "html")} target="_blank" rel="noreferrer">Mở báo cáo HTML</a>{reports.pdf && <a href={reportUrl(reports.date, reports.id, "pdf")} target="_blank" rel="noreferrer">Mở báo cáo PDF</a>}</div>}
         </aside>
-        <AuditorFeed snapshot={snapshot} events={visibleEvents} total={events.length} loading={dataLoading} filter={filter} query={query} onFilter={setFilter} onQuery={setQuery} />
+        <AuditorFeed snapshot={snapshot} events={visibleEvents} total={events.length} loading={dataLoading} filter={filter} query={query} onFilter={setFilter} onQuery={setQuery} onUpdate={upsertEvent} canAnalyze={ready && !!ai?.connected} canAnalyzeAudio={!!ai?.audio_input} canReview={ready} />
       </div>
     </div>
     <dialog id="auditor-history-dialog" ref={drawer} className={`${styles.workspace} ${styles.drawer}`} aria-labelledby="auditor-history-title" onCancel={() => setDrawerOpen(false)} onClose={() => { setDrawerOpen(false); drawerTrigger.current?.focus(); }} onClick={event => { if (event.target === event.currentTarget && event.clientX < event.currentTarget.getBoundingClientRect().left) setDrawerOpen(false); }}>
@@ -425,9 +424,9 @@ export default function AuditorWorkspace({ active: isActive = true }: { active?:
         <button type="button" className={`${styles.button} ${styles.deleteButton}`} disabled={disabled || sessionLoading || totalSessions === 0} onClick={() => requestDelete("all")}>Xóa tất cả phiên</button>
         <button type="button" className={styles.iconButton} aria-label="Làm mới danh sách phiên" disabled={sessionLoading} onClick={() => void refreshSessions()}>{sessionLoading ? <LoadingIndicator compact label="Đang tải phiên" /> : <Icon name="refresh" />}</button>
       </div>
-      {sessionError && <p className={styles.error} role="alert">{sessionError}</p>}
+      {sessionError && <AuditorNotice message={sessionError} />}
       {sessionLoading && !sessionGroups.length && <SessionsLoading />}
-      {!sessionLoading && !sessionError && !sessionGroups.length && <div className={styles.empty}><Icon name="history" /><h3>Chưa có phiên đã lưu</h3><p>Bắt đầu một phiên khi bạn sẵn sàng ghi lệnh giả lập.</p></div>}
+      {!sessionLoading && !sessionError && !sessionGroups.length && <div className={styles.empty}><Icon name="history" /><h3>Chưa có phiên đã lưu</h3><p>Tạo phiên để ghi thao tác và minh chứng giao dịch.</p></div>}
       {sessionGroups.map(group => <section className={styles.sessionGroup} key={group.date}><h3 className={styles.mono}>{group.date}</h3>{group.sessions.map(session => {
         const selected = session.date === snapshot?.current_date && session.id === snapshot?.session_id;
         return <div className={`${styles.sessionItem} ${selected ? styles.selected : ""}`} key={session.id}><div className={styles.sessionTitle}><strong>{session.label}</strong>{selected && <span className={styles.positive}><Icon name="check" />Hiện tại</span>}</div><p className={styles.help}><LoadingNumber loading={false} digits={3}>{session.events_count}</LoadingNumber> sự kiện đã ghi</p><div className={styles.sessionActions}>{!selected && <button type="button" className={styles.button} disabled={disabled} onClick={() => void perform("switch", async () => { const result = await auditorRequest<Snapshot & { dates: SessionGroup[] }>("/sessions/switch", { date: session.date, session_id: session.id }); applySnapshot(result); setSessionGroups(result.dates); setDeleteTarget(null); })}>{pending === "switch" ? <LoadingIndicator label="Đang mở phiên" /> : "Mở lại"}</button>}{session.has_html && <a href={reportUrl(session.date, session.id, "html")} target="_blank" rel="noreferrer">HTML</a>}{session.has_pdf && <a href={reportUrl(session.date, session.id, "pdf")} target="_blank" rel="noreferrer">PDF</a>}<button type="button" className={`${styles.button} ${styles.deleteButton}`} disabled={disabled} onClick={() => requestDelete({ date: session.date, id: session.id })}>Xóa</button></div></div>;

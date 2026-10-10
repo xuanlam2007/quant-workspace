@@ -1,40 +1,51 @@
 "use client";
 
-import { auditEventLabel, evidenceUrl, type AuditEvent, type Snapshot } from "../../lib/auditor-client";
+import { auditEventLabel, auditorAnalysisError, audioUrl, evidenceUrl, type AuditEvent, type Snapshot, type Summary } from "../../lib/auditor-client";
 import { Icon, points } from "./AuditorUi";
 import { FeedLoading, PairsLoading } from "./AuditorLoadingParts";
 import AuditorEvidence from "./AuditorEvidence";
-import { LoadingBlock, LoadingNumber } from "../ui/Loading";
+import AuditorEventReview from "./AuditorEventReview";
+import AuditorFillReview from "./AuditorFillReview";
+import { LoadingNumber } from "../ui/Loading";
+import AuditorThoughtLine from "./AuditorThoughtLine";
 import AuditorToggleGroup from "./AuditorToggleGroup";
+import AuditorNotice from "./AuditorNotice";
 import styles from "../../app/auditor/auditor.module.css";
 
 const filters = [
   { value: "all", label: "Tất cả" },
-  { value: "tests", label: "Lệnh" },
-  { value: "warnings", label: "Cảnh báo" },
-  { value: "rejects", label: "Từ chối" },
+  { value: "evaluations", label: "Đánh giá" },
+  { value: "questions", label: "Cần xác minh" },
 ];
 
-export default function AuditorFeed({ snapshot, events, total, loading, filter, query, onFilter, onQuery }: {
+export default function AuditorFeed({ snapshot, events, total, loading, filter, query, onFilter, onQuery, onUpdate, canAnalyze, canAnalyzeAudio, canReview }: {
+  canAnalyze: boolean;
+  canAnalyzeAudio: boolean; canReview: boolean;
+  onUpdate: (event: AuditEvent, summary?: Summary) => void;
   snapshot: Snapshot | null; events: AuditEvent[]; total: number; loading: boolean;
   filter: string; query: string; onFilter: (value: string) => void; onQuery: (value: string) => void;
 }) {
   const summary = snapshot?.summary;
   return <div className={styles.auditArea}>
     <section className={styles.panel}>
-      <div className={styles.sectionHeading}><div><h2>Nhật ký giao dịch</h2><p className={styles.help}>Lệnh giả lập, minh chứng và đánh giá chiến lược.</p></div><span className={styles.muted}><LoadingNumber loading={loading} digits={3} label="Đang tải số sự kiện">{total}</LoadingNumber> sự kiện</span></div>
+      <div className={styles.sectionHeading}><div><h2>Nhật ký quan sát</h2><p className={styles.help}>Thao tác, minh chứng và lời giải thích của trader.</p></div><span className={styles.muted}><LoadingNumber loading={loading} digits={3} label="Đang tải số sự kiện">{total}</LoadingNumber> sự kiện</span></div>
       <div className={styles.feedControls}>
         <AuditorToggleGroup label="Bộ lọc sự kiện" variant="filters" value={filter} options={filters} onChange={onFilter} />
         <input type="search" aria-label="Tìm sự kiện trong nhật ký" placeholder="Tìm sự kiện..." value={query} onChange={event => onQuery(event.target.value)} />
       </div>
       <div className={styles.feed} aria-busy={loading}>
         {loading ? <FeedLoading /> : !snapshot ? <div className={styles.tableEmpty}>Chưa tải được dữ liệu phiên. Hãy kết nối lại bộ máy phân tích.</div> :
-        !events.length ? <div className={styles.empty}><Icon name="activity" /><h3>{total ? "Không có sự kiện phù hợp" : "Nhật ký của bạn bắt đầu tại đây"}</h3><p>{total ? "Thử bộ lọc khác hoặc xóa nội dung tìm kiếm." : snapshot?.session_id ? "Lưu lệnh giả lập để xem luận điểm, cảnh báo và minh chứng." : "Tạo hoặc chọn một phiên để bắt đầu ghi."}</p>{total > 0 && <button type="button" className={styles.button} onClick={() => { onQuery(""); onFilter("all"); }}>Xóa bộ lọc</button>}</div> : events.map(event => <article className={styles.event} key={event.id}>
+        !events.length ? <div className={styles.empty}><Icon name="activity" /><h3>{total ? "Không có sự kiện phù hợp" : "Nhật ký của bạn bắt đầu tại đây"}</h3><p>{total ? "Thử bộ lọc khác hoặc xóa nội dung tìm kiếm." : snapshot?.session_id ? "Bắt đầu ghi thao tác, ảnh và âm thanh để lưu minh chứng giao dịch." : "Tạo hoặc chọn một phiên để bắt đầu ghi."}</p>{total > 0 && <button type="button" className={styles.button} onClick={() => { onQuery(""); onFilter("all"); }}>Xóa bộ lọc</button>}</div> : events.map(event => <article className={styles.event} key={event.id}>
           <div className={styles.eventMeta}><time className={styles.mono}>{event.timestamp}</time><span className={`${styles.badge} ${["BUY", "LONG"].includes(event.action || "") ? styles.positive : ["SELL", "SHORT"].includes(event.action || "") ? styles.negative : styles.muted}`}>{auditEventLabel(event)}</span>{event.price !== undefined && <strong className={styles.mono}>{event.price.toLocaleString("en-US")} <small>điểm</small></strong>}{event.contracts && <small className={styles.muted}>{event.contracts} hợp đồng</small>}</div>
           {(event.voice_transcript || event.reason) && <p className={styles.rationale}>{event.voice_transcript || event.reason}</p>}
-          {!!event.warnings?.length && <div className={styles.warnings}>{event.warnings.map((warning, index) => <p key={`${warning.type}-${index}`}><Icon name="warning" /><span>{warning.message}</span></p>)}</div>}
-          {event.ai_pending ? <div className={styles.aiNote}><span>AGY</span><LoadingBlock label="Đang chờ AGY phân tích" rows={2} /></div> : event.ai_error ? <p className={`${styles.aiNote} ${styles.warning}`}>Không thể phân tích: {event.ai_error}</p> : event.ai_thesis ? <div className={styles.aiNote}><span>AGY</span><p>{event.ai_thesis}</p></div> : null}
-          {(event.frame_path || event.drawing_data) && <details className={styles.evidence}><summary>Xem minh chứng</summary>{event.frame_path && <AuditorEvidence key={evidenceUrl(event, snapshot!.current_date, snapshot!.session_id)} src={evidenceUrl(event, snapshot!.current_date, snapshot!.session_id)} timestamp={event.timestamp} />}{event.drawing_data && <pre>{JSON.stringify(event.drawing_data, null, 2)}</pre>}</details>}
+          {!!event.warnings?.length && <div className={styles.warnings}>{event.warnings.map((warning, index) => <AuditorNotice key={`${warning.type}-${index}`} kind="warning" dismissible={false} message={warning.message} />)}</div>}
+          {(event.ai_pending || event.ai_error || event.ai_thesis) && <div className={styles.aiNote}><AuditorThoughtLine working={!!event.ai_pending} queued={event.ai_status === "queued"} failed={!!event.ai_error && !event.ai_pending} audio={!!event.audio_path} startedAt={event.ai_status === "queued" ? event.ai_requested_at : event.ai_started_at || event.ai_requested_at} finishedAt={event.analysis_history?.at(-1)?.timestamp} />{!event.ai_pending && (event.ai_error ? <AuditorNotice kind="warning" dismissible={false} message={auditorAnalysisError(event.ai_error)} /> : <p>{event.ai_thesis}</p>)}</div>}
+          <AuditorEventReview event={event} onUpdate={onUpdate} canAnalyze={canAnalyze && (!event.audio_path || canAnalyzeAudio)} />
+          <AuditorFillReview event={event} onUpdate={onUpdate} enabled={canReview} />
+          {event.audio_path && <div className={styles.evidence}><audio controls preload="none" src={audioUrl(event)} />{event.ai_transcript ? <p><strong>Bản chép lời AI:</strong> {event.ai_transcript}</p> : <p className={styles.help}>{event.ai_pending ? "Bản ghi âm được giữ nguyên trong phiên khi AI xử lý." : event.ai_error ? "Ghi âm vẫn được lưu. Xem lỗi bên trên rồi thử phân tích lại." : event.ai_thesis ? "Model không trả về lời nói rõ ràng. Bạn có thể nghe lại và phân tích lại đoạn này." : "Chưa có bản chép lời. Kết nối AGY hoặc Codex có hỗ trợ âm thanh, rồi phân tích lại đoạn đã lưu."}</p>}{event.capture_error && <AuditorNotice kind="warning" dismissible={false} message={`Đã lưu ghi âm, chưa chụp được ảnh: ${event.capture_error}`} />}{event.frame_captured_at && <p className={styles.help}>Ảnh chụp kèm ghi âm lúc {new Date(event.frame_captured_at).toLocaleTimeString("vi-VN")}. Ảnh chỉ thể hiện thời điểm chụp.</p>}</div>}
+          {event.ai_evidence_limitations && <p className={styles.help}>{event.ai_evidence_limitations}</p>}
+          {!!event.observation_frames?.length && <p className={styles.help}>{event.observation_frames.length} ảnh theo thời gian, kèm đoạn ghi âm. AI đối chiếu lời nói với từng ảnh; thao tác giữa hai ảnh có thể chưa được ghi nhận.</p>}
+          {(event.frame_path || event.drawing_data || event.observation_frames?.length) && <details className={styles.evidence}><summary>Xem minh chứng</summary>{event.observation_frames?.length ? event.observation_frames.map(frame => <div key={frame.path}><p className={styles.help}>{new Date(frame.captured_at).toLocaleTimeString("vi-VN")}</p><AuditorEvidence src={evidenceUrl({ ...event, frame_path: frame.path }, snapshot!.current_date, snapshot!.session_id)} timestamp={new Date(frame.captured_at).toLocaleTimeString("vi-VN")} /></div>) : event.frame_path && <AuditorEvidence key={evidenceUrl(event, snapshot!.current_date, snapshot!.session_id)} src={evidenceUrl(event, snapshot!.current_date, snapshot!.session_id)} timestamp={event.timestamp} />}{event.drawing_data && <pre>{JSON.stringify(event.drawing_data, null, 2)}</pre>}</details>}
         </article>)}
       </div>
       <p className={styles.feedFooter}><LoadingNumber loading={loading} digits={3} label="Đang tải số sự kiện hiển thị">{events.length}</LoadingNumber> / <LoadingNumber loading={loading} digits={3} label="Đang tải tổng số sự kiện">{total}</LoadingNumber> sự kiện gần đây · Mới nhất trước</p>

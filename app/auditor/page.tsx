@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Quant · Nhật ký giao dịch",
-  description: "Xem lệnh giả lập, cảnh báo chiến lược và kết quả từng phiên.",
+  title: "Analyzer Auditor · Quant Workspace",
+  description: "Ghi lại hoạt động giao dịch, phân tích minh chứng và đánh giá chiến lược.",
 };
 
 export default function AuditorPage() {
