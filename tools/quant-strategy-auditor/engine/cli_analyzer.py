@@ -12,6 +12,7 @@ from .observed_trades import TradeObservation
 from .cli_catalog import discover_catalog
 from .codex_audio import run_codex_audio
 from .cli_process import cli_environment, observer_workspace, run_cli
+from .ai_request_terminal import cli_failure
 
 
 def observer_settings(settings):
@@ -50,6 +51,7 @@ class CliLearningAnalyzer:
         self._catalog_lock = threading.Lock()
         self._catalog_revision = 0
         self._catalog_cache = {}
+        self.terminal = None
 
     def configure(self, settings):
         self.settings = observer_settings(settings)
@@ -75,7 +77,7 @@ class CliLearningAnalyzer:
     def status(self):
         provider = self.settings["provider"]
         # Khả năng của bộ tích hợp; kết nối văn bản chưa xác nhận model hiểu âm thanh.
-        return {**self.settings, **self.connection, "available": bool(find_cli(provider)), "vision": True, "audio_input": True, "transcription": True}
+        return {**self.settings, **self.connection, "available": bool(find_cli(provider)), "vision": True, "audio_input": True, "transcription": True, "terminal_error": self.terminal.error if self.terminal else ""}
 
     @contextmanager
     def _analysis_slot(self):
@@ -87,6 +89,24 @@ class CliLearningAnalyzer:
             self._lock.release()
 
     def _run(self, prompt, settings, image=None, audio=None, structured=False, timeout=120, frames=None, response_schema=None):
+        monitor = self.terminal if structured else None
+        if monitor:
+            try:
+                monitor.begin(settings)
+            except OSError:
+                monitor = None
+        try:
+            response = self._run_request(prompt, settings, image, audio, structured, timeout, frames, response_schema, monitor)
+            if monitor:
+                monitor.write("request.completed", result=response[:64000], truncated=len(response) > 64000)
+            return response
+        except Exception as error:
+            if monitor:
+                message = "AI request timed out. Evidence remains available for retry." if isinstance(error, subprocess.TimeoutExpired) else "AI request failed. Check the application notification for the diagnostic."
+                monitor.write("request.failed", message=message)
+            raise
+
+    def _run_request(self, prompt, settings, image=None, audio=None, structured=False, timeout=120, frames=None, response_schema=None, monitor=None):
         executable = find_cli(settings["provider"])
         if not executable:
             raise RuntimeError(f"{settings['provider']} CLI was not found. Install it and sign in through Terminal.")
@@ -94,10 +114,12 @@ class CliLearningAnalyzer:
         with observer_workspace() as folder:
             environment = cli_environment()
             if settings["provider"] == "CODEX" and audio:
-                return run_codex_audio(executable, folder, prompt, settings, audio, image, RESPONSE_SCHEMA if structured else None, timeout, frames=frames)
+                return run_codex_audio(executable, folder, prompt, settings, audio, image, RESPONSE_SCHEMA if structured else None, timeout, frames=frames, **({"on_output": monitor.progress} if monitor else {}))
             if settings["provider"] == "CODEX":
                 output = Path(folder) / "response.txt"
                 command = [executable, "exec", "--ignore-user-config", "--sandbox", "read-only", "--ephemeral", "--skip-git-repo-check", "--color", "never", "-o", str(output), "-c", "features.shell_tool=false", "-c", 'web_search="disabled"']
+                if monitor:
+                    command += ["--json"]
                 if settings.get("effort"):
                     command += ["-c", f"model_reasoning_effort={json.dumps(settings['effort'])}"]
                 if settings.get("model"):
@@ -139,17 +161,21 @@ class CliLearningAnalyzer:
                 hooks = {"observer-evidence-only": {"PreToolUse": [{"matcher": ".*", "hooks": [{"type": "command", "command": guard_command, "timeout": 5}]}]}}
                 (guard_folder / "hooks.json").write_text(json.dumps(hooks), encoding="utf-8")
                 environment["QUANT_OBSERVER_MEDIA_PATHS"] = json.dumps([str(path) for path in files])
+                environment["QUANT_OBSERVER_RESPONSE_KIND"] = "backtest" if response_schema else "observation"
                 command = [executable, "--add-dir", folder, "--mode", "plan", "--sandbox", "--disable-slash-commands", "--input-format", "stream-json", "--output-format", "stream-json"]
                 if settings.get("model"):
                     command += ["--model", settings["model"]]
                 if structured:
                     schema = Path(folder) / "schema.json"
-                    schema.write_text(json.dumps(RESPONSE_SCHEMA), encoding="utf-8")
+                    schema.write_text(json.dumps(response_schema or RESPONSE_SCHEMA), encoding="utf-8")
                     command += ["--json-schema", str(schema)]
                 stdin = json.dumps({"event": "user", "message": {"content": prompt}}, ensure_ascii=False) + "\n"
-            result = run_cli(command, input=stdin, cwd=folder, env=environment, text=True, encoding="utf-8", errors="replace", timeout=timeout, terminal_event="result" if settings["provider"] == "AGY" else None, creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+            result = run_cli(command, input=stdin, cwd=folder, env=environment, text=True, encoding="utf-8", errors="replace", timeout=timeout, terminal_event="result" if settings["provider"] == "AGY" else None, creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0, **({"on_output": monitor.progress} if monitor else {}))
             if result.returncode:
-                raise RuntimeError(f"{settings['provider']} CLI exited with code {result.returncode}. Check Terminal and retry.")
+                message = cli_failure(settings["provider"], result.returncode, result.stderr)
+                if monitor:
+                    monitor.write("provider.error", message=message)
+                raise RuntimeError(message)
             response = output.read_text(encoding="utf-8").strip() if settings["provider"] == "CODEX" and output.is_file() else result.stdout.strip()
             if settings["provider"] == "AGY":
                 events = [json.loads(line) for line in response.splitlines() if line.strip()]
@@ -219,6 +245,8 @@ class CliLearningAnalyzer:
             trades = [TradeObservation.model_validate(item).model_dump() for item in trades]
             difference = bool(strategy.get("enabled") and data["strategy_difference"])
             question = data["question"] or ("Tôi chưa hiểu điểm khác với tài liệu chiến lược. Bạn giải thích lý do được không?" if difference else "")
+            if self.terminal:
+                self.terminal.write("observation.validated", session=session_id)
             return {"ai_thesis": data["observation"], "ai_question": question, "ai_strategy_difference": difference, "ai_evidence_limitations": data["evidence_limitations"], "ai_transcript": data.get("transcript", "") if audio else "", "ai_trade_observations": trades, "ai_error": "", "model_used": settings}
         except subprocess.TimeoutExpired as error:
             return {"ai_thesis": "", "ai_error": f"{settings['provider']} chưa trả về kết quả sau {error.timeout:g} giây. Ghi âm và ảnh đã được lưu; kiểm tra Terminal rồi thử phân tích lại.", "model_used": settings}
