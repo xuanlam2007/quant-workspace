@@ -1,0 +1,44 @@
+.frame {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border-radius: 10px;
+  padding: 1px;
+  background: var(--audit-border, #2d3a4d);
+}
+
+.bottom, .top {
+  position: absolute;
+  width: 300%;
+  height: 50%;
+  border-radius: 50%;
+  opacity: 0;
+  pointer-events: none;
+  background: radial-gradient(circle, var(--star-color), transparent 10%);
+}
+
+.bottom { bottom: -12px; right: -250%; }
+.top { top: -12px; left: -250%; }
+.frame[data-active="true"] .bottom { animation: move-bottom var(--star-speed) linear infinite alternate; }
+.frame[data-active="true"] .top { animation: move-top var(--star-speed) linear infinite alternate; }
+
+.content {
+  position: relative;
+  z-index: 1;
+  border-radius: inherit;
+  background: var(--audit-panel, #121722);
+}
+
+@keyframes move-bottom {
+  from { transform: translate(0, 0); opacity: 1; }
+  to { transform: translate(-100%, 0); opacity: 0; }
+}
+
+@keyframes move-top {
+  from { transform: translate(0, 0); opacity: 1; }
+  to { transform: translate(100%, 0); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .frame[data-active="true"] .bottom, .frame[data-active="true"] .top { animation: none; }
+}

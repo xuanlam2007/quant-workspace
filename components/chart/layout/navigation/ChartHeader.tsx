@@ -82,6 +82,7 @@ export const HEADER_SVGS = {
 };
 
 export interface ChartHeaderProps {
+  sourceLocked?: boolean;
   layoutReady: boolean;
   captureLayout: () => import("../workspace/named-layouts").WorkspaceSnapshot;
   onLoadLayout: (id: string) => void;
@@ -123,6 +124,7 @@ export interface ChartHeaderProps {
 }
 
 export function ChartHeader({
+  sourceLocked = false,
   layoutReady,
   captureLayout,
   onLoadLayout,
@@ -171,13 +173,14 @@ export function ChartHeader({
 
   const setSymbolModalOpen = useCallback(
     (open: boolean) => {
+      if (open && sourceLocked) return;
       if (onSymbolModalToggle) {
         onSymbolModalToggle(open);
       } else {
         setInternalSymbolModalOpen(open);
       }
     },
-    [onSymbolModalToggle]
+    [onSymbolModalToggle, sourceLocked]
   );
 
   const timeframeDropdownRef = useRef<HTMLDivElement>(null);
@@ -258,8 +261,9 @@ export function ChartHeader({
           <button
             type="button"
             className="header-btn header-btn--symbol"
+            disabled={sourceLocked}
             aria-label="Tìm kiếm mã"
-            data-tooltip="Tìm kiếm mã"
+            data-tooltip={sourceLocked ? "Mã do nguồn Backtest cung cấp" : "Tìm kiếm mã"}
             onClick={() => {
               setSymbolModalOpen(true);
             }}
@@ -292,8 +296,9 @@ export function ChartHeader({
               type="button"
               tabIndex={-1}
               className="header-btn header-btn--text"
+              disabled={sourceLocked}
               aria-label="Khung thời gian"
-              data-tooltip="Khung thời gian"
+              data-tooltip={sourceLocked ? "Backtest dùng chart M1" : "Khung thời gian"}
               aria-haspopup="menu"
               aria-expanded={timeframeMenuOpen}
               onClick={() => {
@@ -302,7 +307,7 @@ export function ChartHeader({
             >
               <span className="header-btn__text">{currentResolutionLabel}</span>
             </button>
-            {timeframeMenuOpen && (
+            {timeframeMenuOpen && !sourceLocked && (
               <div className="header-dropdown__panel timeframe-dropdown__panel" role="menu">
                 {TIMEFRAME_GROUPS.map((group) => (
                   <div

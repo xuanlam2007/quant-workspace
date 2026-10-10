@@ -1908,7 +1908,7 @@ header {
   color: #ff727d !important;
 }
 
-main#chart {
+main:is(#chart, #backtest-chart) {
   flex: 1;
   min-width: 0;
   min-height: 0;
@@ -1916,27 +1916,27 @@ main#chart {
   position: relative;
 }
 
-main#chart.chart--pan,
-main#chart.chart--pan canvas {
+main:is(#chart, #backtest-chart).chart--pan,
+main:is(#chart, #backtest-chart).chart--pan canvas {
   cursor: crosshair !important;
 }
 
-main#chart.chart--tool-active,
-main#chart.chart--tool-active canvas {
+main:is(#chart, #backtest-chart).chart--tool-active,
+main:is(#chart, #backtest-chart).chart--tool-active canvas {
   cursor: crosshair !important;
 }
 
-main#chart[data-axis-cursor="price"],
-main#chart[data-axis-cursor="price"] canvas {
+main:is(#chart, #backtest-chart)[data-axis-cursor="price"],
+main:is(#chart, #backtest-chart)[data-axis-cursor="price"] canvas {
   cursor: ns-resize !important;
 }
 
-main#chart[data-axis-cursor="time"],
-main#chart[data-axis-cursor="time"] canvas {
+main:is(#chart, #backtest-chart)[data-axis-cursor="time"],
+main:is(#chart, #backtest-chart)[data-axis-cursor="time"] canvas {
   cursor: ew-resize !important;
 }
 
-main#chart.chart--zoom {
+main:is(#chart, #backtest-chart).chart--zoom {
   touch-action: none;
 }
 
@@ -4506,6 +4506,24 @@ main#chart.chart--zoom {
   max-width: 225px;
 }
 
+.chart-select.chart-select > button {
+  width: 100%; min-width: 124px; height: 42px; padding: 0 10px;
+  border: 1px solid #434651; border-radius: 6px;
+  background: #1e222d; color: #d1d4dc; font: inherit;
+}
+.chart-select.chart-select > button:hover:not(:disabled) { background: #2a2e39; border-color: #50535e; }
+.chart-select.chart-select > button:focus-visible { outline: 2px solid #2962ff; outline-offset: -1px; }
+.chart-select > [role="listbox"] { width: max(100%, 225px); background: #1e222d; border-color: #434651; border-radius: 6px; }
+.chart-select [role="option"] { border: 0; background: transparent; color: #d1d4dc; border-radius: 4px; justify-content: space-between; }
+.chart-select [role="option"]:hover:not(:disabled), .chart-select [role="option"]:focus-visible { background: #2a2e39; }
+.chart-select [role="option"][aria-selected="true"] { background: #2962ff; color: #fff; }
+.chart-select [role="option"]:disabled { color: #868993; }
+.backtest-source-dialog { position: relative; z-index: 700; animation: backtest-dialog-reveal 160ms ease-out both; }
+.backtest-source-dialog[data-leaving="true"] { animation: backtest-dialog-dismiss 120ms ease-in both; pointer-events: none; }
+@keyframes backtest-dialog-reveal { from { opacity: 0; } to { opacity: 1; } }
+@keyframes backtest-dialog-dismiss { to { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .backtest-source-dialog, .backtest-source-dialog * { animation: none !important; transition: none !important; } }
+
 .chart-settings__row small {
   color: #868993;
   font-size: 14px;
@@ -4692,8 +4710,13 @@ main#chart.chart--zoom {
   font: 400 14px Arial;
 }
 
-.chart-footer button:hover {
+.chart-footer button:hover:not(:disabled) {
   background: #252d3d;
+}
+
+.chart-footer button:disabled {
+  opacity: .4;
+  cursor: default;
 }
 
 .chart-footer .chart-footer__active {
@@ -5682,7 +5705,7 @@ html input[type="checkbox"]:focus-visible {
   border-radius: 4px;
 }
 
-.chart-footer__go-to-date:hover {
+.chart-footer__go-to-date:hover:not(:disabled) {
   background: #2a2e39;
 }
 

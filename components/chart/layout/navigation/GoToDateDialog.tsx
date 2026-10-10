@@ -88,13 +88,18 @@ interface Props {
   initialRange: { from: number; to: number };
   onClose: () => void;
   onNavigate: (from: number, to?: number) => Promise<void>;
+  dateOnly?: boolean;
+  title?: string;
+  submitLabel?: string;
 }
 
-export function GoToDateDialog({ timezone, daily, initialRange, onClose, onNavigate }: Props) {
+export function GoToDateDialog({ timezone, daily, initialRange, onClose, onNavigate, dateOnly = false, title = "Đi đến", submitLabel = "Đi đến" }: Props) {
   const [tab, setTab] = useState<"Date" | "CustomRange">(() => {
+    if (dateOnly) return "Date";
     try { return localStorage.getItem("GoToDialog.activeTab") === "CustomRange" ? "CustomRange" : "Date"; } catch { return "Date"; }
   });
   const [picked] = useState(() => {
+    if (dateOnly) return chartCalendarDate(initialRange.from, timezone, daily);
     try {
       const saved = sessionStorage.getItem("goToDateTabLastPickedDate");
       if (saved && Number.isFinite(new Date(Number(saved)).valueOf())) return new Date(Number(saved));
@@ -120,7 +125,7 @@ export function GoToDateDialog({ timezone, daily, initialRange, onClose, onNavig
     return () => { alive.current = false; };
   }, [tab]);
   useEffect(() => {
-    const escape = (event: KeyboardEvent) => { if (event.key === "Escape" && !(event.target instanceof Element && event.target.closest('[data-time-menu-open="true"]'))) { event.preventDefault(); event.stopImmediatePropagation(); onClose(); } };
+    const escape = (event: KeyboardEvent) => { if (event.key === "Tab") event.preventDefault(); if (event.key === "Escape" && !(event.target instanceof Element && event.target.closest('[data-time-menu-open="true"]'))) { event.preventDefault(); event.stopImmediatePropagation(); onClose(); } };
     document.addEventListener("keydown", escape, true);
     return () => document.removeEventListener("keydown", escape, true);
   }, [onClose]);
@@ -143,7 +148,7 @@ export function GoToDateDialog({ timezone, daily, initialRange, onClose, onNavig
     setBusy(true); setError("");
     try {
       const from = parsed[tab === "Date" ? 0 : 1]!;
-      if (tab === "Date") { try { sessionStorage.setItem("goToDateTabLastPickedDate", String(from.valueOf())); } catch { /* Bộ nhớ trình duyệt có thể bị chặn. */ } }
+      if (tab === "Date" && !dateOnly) { try { sessionStorage.setItem("goToDateTabLastPickedDate", String(from.valueOf())); } catch { /* Bộ nhớ trình duyệt có thể bị chặn. */ } }
       await onNavigate(calendarTimestamp(from, timezone, daily), tab === "CustomRange" ? calendarTimestamp(parsed[2]!, timezone, daily) : undefined);
       if (alive.current) onClose();
     } catch (failure) {
@@ -158,15 +163,15 @@ export function GoToDateDialog({ timezone, daily, initialRange, onClose, onNavig
   const shift = (direction: number) => setMonth(new Date(year + (view === "years" ? direction * 20 : view === "months" ? direction : 0), monthNumber + (view === "days" ? direction : 0), 1));
   return <div className="go-to-date-backdrop" onPointerDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <form className="go-to-date-dialog" role="dialog" aria-modal="true" aria-labelledby="go-to-date-title" style={drag.style} onSubmit={(event) => { event.preventDefault(); void submit(); }}>
-      <header {...drag.handle}><h2 id="go-to-date-title">Đi đến</h2><button type="button" tabIndex={-1} aria-label="Đóng" onClick={onClose}>{CLOSE}</button></header>
-      <div className="go-to-date-tabs" role="tablist">{(["Date", "CustomRange"] as const).map((value) => <button key={value} type="button" role="tab" tabIndex={-1} aria-selected={tab === value} onClick={() => {
+      <header {...drag.handle}><h2 id="go-to-date-title">{title}</h2><button type="button" tabIndex={-1} aria-label="Đóng" onClick={onClose}>{CLOSE}</button></header>
+      {!dateOnly && <div className="go-to-date-tabs" role="tablist">{(["Date", "CustomRange"] as const).map((value) => <button key={value} type="button" role="tab" tabIndex={-1} aria-selected={tab === value} onClick={() => {
         setTab(value); focusDate(value === "Date" ? 0 : 1); setError("");
         try { localStorage.setItem("GoToDialog.activeTab", value); } catch { /* Bộ nhớ trình duyệt có thể bị chặn. */ }
-      }}>{value === "Date" ? "Ngày" : "Phạm vi tùy chỉnh"}</button>)}</div>
+      }}>{value === "Date" ? "Ngày" : "Phạm vi tùy chỉnh"}</button>)}</div>}
       <div className="go-to-date-content">
         {(tab === "Date" ? [0] : [1, 2]).map((index) => <div className="go-to-date-row" key={index}>
           <input ref={(element) => { inputs.current[index] = element; }} tabIndex={-1} aria-label={index === 2 ? "Ngày kết thúc" : "Ngày bắt đầu"} aria-invalid={!parsed[index]} className={active === index ? "is-active" : ""} value={dates[index]} placeholder="yyyy-mm-dd" onFocus={() => focusDate(index)} onChange={(event) => { setDates((current) => current.map((value, i) => i === index ? event.target.value : value)); const next = parseDate(event.target.value, times[index]); if (next) setMonth(new Date(next.getFullYear(), next.getMonth(), 1)); setError(""); }} />
-          <TimeField disabled={daily} value={times[index]} onPick={(picked) => setTimes((current) => current.map((value, i) => i === index ? picked : value))} />
+          {!dateOnly && <TimeField disabled={daily} value={times[index]} onPick={(picked) => setTimes((current) => current.map((value, i) => i === index ? picked : value))} />}
         </div>)}
         <div className="go-to-date-calendar" onKeyDown={(event) => {
           if (!(event.target instanceof HTMLButtonElement) || view !== "days") return;
@@ -200,7 +205,7 @@ export function GoToDateDialog({ timezone, daily, initialRange, onClose, onNavig
         </div>
         {(!valid || error) && <div className="go-to-date-error" role="alert">{error || "Vui lòng nhập đúng ngày và phạm vi thời gian"}</div>}
       </div>
-      <footer><button type="button" tabIndex={-1} onClick={onClose}>Hủy bỏ</button><button type="submit" tabIndex={-1} disabled={!valid || busy}>{busy ? <LoadingIndicator label="Đang tải" /> : "Đi đến"}</button></footer>
+      <footer><button type="button" tabIndex={-1} onClick={onClose}>Hủy bỏ</button><button type="submit" tabIndex={-1} disabled={!valid || busy}>{busy ? <LoadingIndicator label="Đang tải" /> : submitLabel}</button></footer>
     </form>
   </div>;
 }

@@ -49,6 +49,9 @@
 
 .nav {
   position: relative;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
   display: flex;
   align-self: stretch;
   align-items: stretch;
@@ -57,6 +60,7 @@
 
 .navItem {
   position: relative;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -114,6 +118,11 @@
 .connection {
   transition: color 180ms ease;
 }
+
+.serviceRetry { display: flex; align-items: center; border: 0; padding: 0; background: transparent; color: inherit; font: inherit; }
+.serviceRetry:enabled { cursor: pointer; }
+.serviceRetry:disabled { opacity: 1; cursor: default; }
+.serviceRetry:enabled:hover .source { color: #eef1f6; }
 
 .connected {
   color: #70d5a2;
@@ -407,8 +416,18 @@
 
   .telemetry {
     justify-self: end;
+    min-width: 0;
+    max-width: 100%;
+    gap: 8px;
   }
 
+  .services { gap: 8px; }
+  .source { display: none; }
+
+}
+
+@media (max-width: 600px) {
+  .services .statusWindow { display: none; }
 }
 
 @media (max-width: 700px) {
@@ -484,6 +503,10 @@
 }
 
 .engineError {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  z-index: 50;
   position: absolute;
   top: 100%;
   right: 12px;
@@ -495,7 +518,16 @@
   background: #23191e;
   color: #ffc1c8;
   font-size: 12px;
+  animation: engineNoticeIn 180ms ease-out both;
 }
+
+.engineError[data-closing="true"] { animation: engineNoticeOut 180ms ease-in both; pointer-events: none; }
+.engineError p { margin: 0 0 8px; }
+.engineError .engineDismiss { margin: 0; padding: 4px; border: 0; line-height: 0; flex-shrink: 0; }
+.engineError button:hover { background: #70414955; }
+@keyframes engineNoticeIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes engineNoticeOut { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(-4px); } }
+@media (prefers-reduced-motion: reduce) { .engineError { animation: none; } .engineError[data-closing="true"] { opacity: 0; } }
 
 @media (max-width: 600px) {
   .header {

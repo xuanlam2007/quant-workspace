@@ -233,7 +233,7 @@ function highlightMatch(text: string, query: string) {
   );
 }
 
-function EmptySearchIcon() {
+export function EmptySearchIcon() {
   return (
     <span className="symbol-search-modal__empty-icon" aria-hidden="true">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120">

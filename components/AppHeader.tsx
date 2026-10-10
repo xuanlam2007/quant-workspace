@@ -5,9 +5,11 @@ import { usePathname } from "next/navigation";
 import { useEffect, useLayoutEffect, useRef, useSyncExternalStore } from "react";
 import { connectionStatusLabel, getConnectionStatus, getServerConnectionStatus, subscribeConnectionStatus, getPriceFeedName, getServerPriceFeedName, subscribePriceFeedName, type ConnStatus } from "@/lib/dchart-socket";
 import { activateAuditor, getAuditorStatus, getServerAuditorStatus, subscribeAuditorStatus } from "@/lib/auditor-status";
+import { activateBacktest, getBacktestStatus, getServerBacktestStatus, subscribeBacktestStatus, dismissBacktestError } from "@/lib/backtest-status";
 import { useSavedState } from "./chart/config/saved-state";
 import { WorkspaceClock } from "./WorkspaceClock";
 import styles from "./AppHeader.module.css";
+import EngineErrorNotice from "./EngineErrorNotice";
 
 // Giữ vị trí đang hiển thị khi đổi trang hoặc tải lại bố cục.
 
@@ -46,15 +48,22 @@ export function AppHeader({ timezone, exchangeTimezone, onTimezoneChange }: {
   onTimezoneChange?: (timezone: string) => void;
 }) {
   const pathname = usePathname();
+  const navigateWorkspace = (event: { preventDefault: () => void }, href: string) => {
+    event.preventDefault();
+    // Các tab dùng chung persistent layout, không cần chờ server navigation.
+    if (window.location.pathname !== href) window.history.pushState(null, "", href);
+  };
   const navRef = useRef<HTMLElement>(null);
   const indicatorRef = useRef<HTMLSpanElement>(null);
   const status = useSyncExternalStore(subscribeConnectionStatus, getConnectionStatus, getServerConnectionStatus);
   const providerName = useSyncExternalStore(subscribePriceFeedName, getPriceFeedName, getServerPriceFeedName);
+  const backtest = useSyncExternalStore(subscribeBacktestStatus, getBacktestStatus, getServerBacktestStatus);
   const engine = useSyncExternalStore(subscribeAuditorStatus, getAuditorStatus, getServerAuditorStatus);
   const engineStatus = engine.status;
   const engineError = engine.error;
   useEffect(() => {
-    if (pathname === "/auditor") activateAuditor();
+    if (pathname === "/auditor") void activateAuditor();
+    if (pathname === "/backtest") void activateBacktest();
   }, [pathname]);
 
   useLayoutEffect(() => {
@@ -65,6 +74,8 @@ export function AppHeader({ timezone, exchangeTimezone, onTimezoneChange }: {
     const position = (animate: boolean) => {
       const active = nav.querySelector<HTMLElement>('[aria-current="page"]');
       if (!active) { indicator.style.opacity = "0"; return; }
+      if (active.offsetLeft < nav.scrollLeft) nav.scrollLeft = active.offsetLeft;
+      else if (active.offsetLeft + active.offsetWidth > nav.scrollLeft + nav.clientWidth) nav.scrollLeft = active.offsetLeft + active.offsetWidth - nav.clientWidth;
       const target = { left: active.offsetLeft + 10, width: Math.max(0, active.offsetWidth - 20) };
       const from = previousIndicator;
       animation?.cancel();
@@ -96,7 +107,7 @@ export function AppHeader({ timezone, exchangeTimezone, onTimezoneChange }: {
 
 
   return <header className={styles.header} aria-label="Workspace header">
-    <Link className={styles.brand} href="/" tabIndex={-1} aria-label="Quant Workspace home" draggable={false}>
+    <Link className={styles.brand} href="/" prefetch={false} onNavigate={event => navigateWorkspace(event, "/")} tabIndex={-1} aria-label="Quant Workspace home" draggable={false}>
       <svg className={styles.logo} width="32" height="32" viewBox="0 0 32 32" fill="none" aria-hidden="true">
         <rect x="1" y="1" width="30" height="30" rx="9" fill="currentColor" fillOpacity=".08" stroke="currentColor" strokeOpacity=".25" />
         <circle cx="15" cy="15" r="7" stroke="currentColor" strokeWidth="2" />
@@ -105,8 +116,9 @@ export function AppHeader({ timezone, exchangeTimezone, onTimezoneChange }: {
       <span className={styles.wordmark}>Quant<span className={styles.brandSuffix}> Workspace</span></span>
     </Link>
     <nav ref={navRef} className={styles.nav} aria-label="Main navigation">
-      {[{ href: "/", label: "Chart" }, { href: "/auditor", label: "Quant Analyzer Auditor" }].map(item => <Link
+      {[{ href: "/", label: "Chart" }, { href: "/auditor", label: "Analyzer Auditor" }, { href: "/backtest", label: "Backtest" }].map(item => <Link
         key={item.href} href={item.href} tabIndex={-1} draggable={false}
+        prefetch={false} onNavigate={event => navigateWorkspace(event, item.href)}
         className={styles.navItem} aria-current={pathname === item.href ? "page" : undefined}
       >{item.label}</Link>)}
       <span ref={indicatorRef} className={styles.navIndicator} aria-hidden="true" />
@@ -117,9 +129,11 @@ export function AppHeader({ timezone, exchangeTimezone, onTimezoneChange }: {
       </div>
       <div className={styles.services}>
         <ServiceStatus name={providerName} status={status} title={connectionStatusLabel(status, providerName)} />
-        <ServiceStatus name="Auditor engine" status={engineStatus} title={engineError || "Quant Strategy Auditor engine"} />
+        <button type="button" tabIndex={-1} className={styles.serviceRetry} disabled={!engineError && engineStatus !== "disconnected"} aria-label="Auditor engine status, retry when offline" title={engineError || "Auditor service health"} onClick={() => activateAuditor(true)}><ServiceStatus name="Auditor engine" status={engineStatus} title={engineError || "Auditor service health"} /></button>
+        <button type="button" tabIndex={-1} className={styles.serviceRetry} disabled={backtest.status !== "disconnected"} aria-label="Backtest engine status, retry when offline" title={backtest.error || "Backtest service health; model connection is configured separately"} onClick={() => activateBacktest(true)}><ServiceStatus name="Backtest engine" status={backtest.status} title={backtest.error || "Backtest service health; model connection is configured separately"} /></button>
       </div>
     </div>
-    {engineError && pathname === "/auditor" && <p className={styles.engineError} role="alert">{engineError} <button type="button" tabIndex={-1} onClick={() => activateAuditor(true)}>Retry</button></p>}
+    {pathname === "/auditor" && <EngineErrorNotice error={engineError} id={engine.noticeId} expires={engine.noticeExpires} dismissed={engine.noticeDismissed} />}
+    {pathname === "/backtest" && <EngineErrorNotice error={backtest.error} id={backtest.noticeId} expires={backtest.noticeExpires} dismissed={backtest.noticeDismissed} onRetry={activateBacktest} onDismiss={dismissBacktestError} />}
   </header>;
 }

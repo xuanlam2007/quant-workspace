@@ -29,16 +29,18 @@ import {
   logicalIndexToCoordinate,
   type ILineToolsPlugin,
   type LineToolExport,
+  type LineToolPartialOptionsMap,
   type LineToolType,
 } from "lightweight-charts-line-tools-core";
 import {
-  fetchHistory,
+  fetchHistory as fetchMarketHistory,
   fetchSymbolInfo,
   mergeBars,
   symbolPriceFormat,
   type Bar,
   type SymbolInfo,
 } from "@/lib/dchart-api";
+import type { ChartReplay, ReplayDrawing } from "@/lib/backtest";
 import { connectPriceFeed, type ConnStatus, type PriceTick } from "@/lib/dchart-socket";
 import { bucketStart, mergeTick } from "@/lib/bar-builder";
 import { createRealtimeTickBuffer } from "@/lib/realtime-tick-buffer";
@@ -219,19 +221,40 @@ function drawingHistoryStorageKey(drawingKey: string) {
   return `${drawingKey}:history`;
 }
 
-export default function Chart({ active = true }: { active?: boolean }) {
+export default function Chart({ active = true, replay }: { active?: boolean; replay?: ChartReplay }) {
   const [generation, setGeneration] = useState(0);
   const loadLayout = useCallback((id: string) => {
     activateNamedLayout(id);
     setGeneration((value) => value + 1);
   }, []);
-  return <div id="app"><ChartInstance key={generation} active={active} onLoadLayout={loadLayout}/></div>;
+  return <div id={replay ? "backtest-chart-app" : "app"}><ChartInstance key={`${generation}-${replay ? "replay" : "live"}`} active={active} replay={replay} onLoadLayout={loadLayout}/></div>;
 }
 
-function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout: (id: string) => void }) {
+function ChartInstance({ active, onLoadLayout, replay }: { active: boolean; onLoadLayout: (id: string) => void; replay?: ChartReplay }) {
+  const replayRef = useRef(replay);
+  replayRef.current = replay;
+  const replayMode = !!replay;
+  const replayCutoff = replay?.frame?.cutoff;
+  const replayFrame = replay?.frame;
+  const replaySession = replay?.session;
+  const onReplayReady = replay?.onReady;
+  const fetchHistory = useCallback(async (requestedSymbol: string, requestedResolution: string, from: number, to: number, signal?: AbortSignal): Promise<Bar[]> => {
+    const current = replayRef.current;
+    if (!current) return fetchMarketHistory(requestedSymbol, requestedResolution, from, to, signal);
+    signal?.throwIfAborted();
+    const frame = current.frame;
+    if (!frame || requestedResolution !== "1") return [];
+    if (requestedSymbol === current.symbol) return frame.bars.filter(bar => bar.time >= from && bar.time <= to).map(bar => ({ ...bar, time: bar.time as Bar["time"] }));
+    const start = Math.max(from, frame.bars[0]?.time ?? frame.cutoff);
+    const end = Math.min(to, frame.cutoff - 60);
+    if (end <= start) return [];
+    const bars = await fetchMarketHistory(requestedSymbol, "1", start, end, signal);
+    const cutoff = Math.min(frame.cutoff, replayRef.current?.frame?.cutoff ?? 0);
+    return bars.filter(bar => Number(bar.time) + 60 <= cutoff);
+  }, []);
   const [documentVisible, setDocumentVisible] = useState(true);
   const activeRef = useRef(active);
-  activeRef.current = active;
+  activeRef.current = active && !replay?.busy;
   const renderingRef = useRef(active && documentVisible);
   renderingRef.current = active && documentVisible;
   const suspendRealtimeRef = useRef<() => void>(() => undefined);
@@ -354,7 +377,8 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
     promise: Promise<Bar[]>;
   } | null>(null);
 
-  const [symbol, setSymbol] = useState(DEFAULT_SYMBOL);
+  const [selectedSymbol, setSymbol] = useState(DEFAULT_SYMBOL);
+  const symbol = replay?.symbol ?? selectedSymbol;
   const [compareSymbols, setCompareSymbols] = useState<string[]>([]);
   const [comparisonSettings, setComparisonSettings] = useState<Record<string, ComparisonSettings>>({});
   const [comparisonSettingsRestored, setComparisonSettingsRestored] = useState(false);
@@ -373,7 +397,8 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
   const [recentCompareSymbols, setRecentCompareSymbols] = useState<string[]>([]);
   const [resolvedSymbol, setResolvedSymbol] = useState<{ symbol: string; info: SymbolInfo }>();
   const [symbolRestored, setSymbolRestored] = useState(false);
-  const [resolution, setResolution] = useState(DEFAULT_RESOLUTION);
+  const [selectedResolution, setResolution] = useState(DEFAULT_RESOLUTION);
+  const resolution = replayMode ? "1" : selectedResolution;
   const [resolutionRestored, setResolutionRestored] = useState(false);
   const [intervalQuery, setIntervalQuery] = useState<string | null>(null);
   const [goToDateRange, setGoToDateRange] = useState<{ from: number; to: number } | null>(null);
@@ -381,6 +406,7 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
   const navigateHistoryRef = useRef<(from: number, to?: number) => Promise<void>>(async () => { throw new Error("Dữ liệu đang tải, vui lòng thử lại"); });
   const crosshairDrawingPointRef = useRef<{ timestamp: number; price: number } | null>(null);
   const openGoToDate = useCallback(() => {
+    if (replayRef.current) return;
     const range = chartRef.current?.timeScale().getVisibleRange();
     const bars = [...barsByTimeRef.current.values()];
     const from = bars.find((bar) => !range || Number(bar.time) >= Number(range.from));
@@ -543,9 +569,9 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
     const saved = readAxisSettings();
     setScaleMode(saved.mode);
     setScaleSideOverride(saved.side);
-    setAutoScale(saved.autoScale);
+    setAutoScale(replayRef.current ? true : saved.autoScale);
     setMainScaleInverted(saved.inverted);
-    setScaleLocked(saved.locked);
+    setScaleLocked(replayRef.current ? false : saved.locked);
     setSeriesOnlyScale(saved.seriesOnly);
     setCountdownVisible(saved.countdown);
     setAxisLabels(saved.labels);
@@ -558,7 +584,7 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
   }, []);
 
   useEffect(() => {
-    if (!axisSettingsRestored) return;
+    if (!axisSettingsRestored || replayMode) return;
     writeAxisSettings({
       mode: scaleMode, side: mainScaleSide, autoScale, inverted: mainScaleInverted,
       locked: scaleLocked, seriesOnly: seriesOnlyScale, countdown: countdownVisible,
@@ -567,7 +593,7 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
       volumeSide: volumeScaleSideOverride, indicatorSides: indicatorScaleSideOverrides,
       sourceSides: Object.fromEntries(sourceScaleOverridesRef.current),
     });
-  }, [axisSettingsRestored, scaleMode, mainScaleSide, autoScale, mainScaleInverted, scaleLocked, seriesOnlyScale, countdownVisible, axisLabels, axisLines, chartAppearance.topMargin, chartAppearance.bottomMargin, volumeScaleSideOverride, indicatorScaleSideOverrides, paneRevision]);
+  }, [axisSettingsRestored, scaleMode, mainScaleSide, autoScale, mainScaleInverted, scaleLocked, seriesOnlyScale, countdownVisible, axisLabels, axisLines, chartAppearance.topMargin, chartAppearance.bottomMargin, volumeScaleSideOverride, indicatorScaleSideOverrides, paneRevision, replayMode]);
 
   useEffect(() => {
     const disableTabNavigation = (event: KeyboardEvent) => {
@@ -582,6 +608,7 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
   }, []);
 
   useEffect(() => {
+    if (replayMode) { setSymbolRestored(true); setCompareSymbols([]); return; }
     try {
       const restoredSymbol = normalizeStoredSymbol(localStorage.getItem(SYMBOL_STORAGE_KEY));
       setSymbol(restoredSymbol);
@@ -600,10 +627,10 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
     } finally {
       setSymbolRestored(true);
     }
-  }, []);
+  }, [replayMode]);
 
   useEffect(() => {
-    if (!symbolRestored) return;
+    if (!symbolRestored || replayMode) return;
     try {
       localStorage.setItem(SYMBOL_STORAGE_KEY, symbol);
       localStorage.setItem(COMPARE_SYMBOLS_STORAGE_KEY, JSON.stringify(compareSymbols));
@@ -611,9 +638,10 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
     } catch {
       return;
     }
-  }, [compareSymbols, recentCompareSymbols, symbol, symbolRestored]);
+  }, [compareSymbols, recentCompareSymbols, symbol, symbolRestored, replayMode]);
 
   useEffect(() => {
+    if (replayMode) { setResolutionRestored(true); return; }
     try {
       setResolution(normalizeStoredResolution(localStorage.getItem(RESOLUTION_STORAGE_KEY)));
     } catch {
@@ -621,16 +649,16 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
     } finally {
       setResolutionRestored(true);
     }
-  }, []);
+  }, [replayMode]);
 
   useEffect(() => {
-    if (!resolutionRestored) return;
+    if (!resolutionRestored || replayMode) return;
     try {
       localStorage.setItem(RESOLUTION_STORAGE_KEY, resolution);
     } catch {
       return;
     }
-  }, [resolution, resolutionRestored]);
+  }, [resolution, resolutionRestored, replayMode]);
 
   const handleTimezoneChange = useCallback((newTimezone: string) => {
     setChartTimezone(newTimezone);
@@ -734,6 +762,7 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!activeRef.current) return;
+      if (replayRef.current) return;
       if (e.defaultPrevented || document.querySelector('[role="dialog"]')) return;
       const target = e.target as HTMLElement | null;
       if (
@@ -829,7 +858,7 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
   textDialogOpenRef.current = textDialogOpen;
 
   useEffect(() => {
-    if (!symbolRestored || !resolutionRestored) return;
+    if (!symbolRestored || !resolutionRestored || replayMode) return;
     const controller = new AbortController();
     const { from, to } = rangeForResolution(resolution, rangeDays);
     const request = {
@@ -845,9 +874,18 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
       controller.abort();
       if (preloadedHistoryRef.current === request) preloadedHistoryRef.current = null;
     };
-  }, [rangeDays, resolution, resolutionRestored, symbol, symbolRestored]);
+  }, [rangeDays, resolution, resolutionRestored, symbol, symbolRestored, replayMode, fetchHistory]);
   useEffect(() => {
     if (!symbolRestored) return;
+    if (replayMode) {
+      setResolvedSymbol({ symbol, info: { name: symbol, description: symbol, type: "futures", exchange: symbol === "DEMO" ? "DEMO" : "HNX", timezone: "Asia/Bangkok", session: "0000-0000", minMove: symbol === "DEMO" ? .01 : .1, priceScale: symbol === "DEMO" ? 100 : 10, supportedResolutions: ["1"] } });
+      if (symbol === "DEMO") return;
+      const metadataController = new AbortController();
+      void fetchSymbolInfo(symbol, metadataController.signal).then(info => {
+        if (!metadataController.signal.aborted) setResolvedSymbol({ symbol, info: { ...info, supportedResolutions: ["1"] } });
+      }).catch(() => undefined);
+      return () => metadataController.abort();
+    }
     const controller = new AbortController();
     setDataError(undefined);
     setVisibleBar(undefined);
@@ -870,7 +908,7 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
         setHistoryLoading(false);
       });
     return () => controller.abort();
-  }, [symbol, symbolRestored]);
+  }, [symbol, symbolRestored, replayMode]);
 
   const openTextDialog = useCallback((drawing: LineToolExport<LineToolType>) => {
     const snapshot = structuredClone(drawing);
@@ -1486,8 +1524,94 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
     };
   }, [recordDrawingState]);
 
+  const replayStudyRefresh = useRef(updateStudySeries);
+  replayStudyRefresh.current = updateStudySeries;
+  const replayInitialized = useRef(false);
+  const renderedReplaySession = useRef<number | undefined>(undefined);
+  // Chụp canvas của chart, không lấy DOM toolbar hoặc browser chrome.
+  const captureChartCanvas = useCallback(() => chartRef.current?.takeScreenshot(), []);
+  useEffect(() => {
+    if (!replayMode || !onReplayReady) return;
+    drawingKeyRef.current = `backtest.drawings.${replaySession}`;
+    onReplayReady({
+      screenshot: () => {
+        const canvas = captureChartCanvas();
+        if (!canvas) throw new Error("Chart chưa sẵn sàng.");
+        return canvas.toDataURL("image/png");
+      },
+      drawings: () => {
+        const lines = JSON.parse(lineToolsRef.current?.exportLineTools() || "[]") as LineToolExport<LineToolType>[];
+        return lines.filter(line => ["TrendLine", "HorizontalLine", "Ray", "ExtendedLine"].includes(line.toolType)).map(line => ({ id: line.id, tool: line.toolType as ReplayDrawing["tool"], points: line.points, label: String((line.options as { text?: { value?: string } }).text?.value || "") }));
+      },
+      apply: drawings => {
+        for (const drawing of drawings) {
+          // Giữ kiểu options của plugin để tránh lỗi index signature trong DeepPartial.
+          const options = { ...drawingPreset(drawing.tool), text: { value: drawing.label } } as LineToolPartialOptionsMap[typeof drawing.tool];
+          lineToolsRef.current?.createOrUpdateLineTool(drawing.tool, drawing.points, options, drawing.id.startsWith("ai-") ? drawing.id : `ai-${drawing.id}`);
+        }
+        recordDrawingState(lineToolsRef.current?.exportLineTools() || "[]");
+      },
+      reset: () => lineToolsRef.current?.removeAllLineTools(),
+    });
+    return () => onReplayReady(null);
+  }, [replayMode, onReplayReady, replaySession, recordDrawingState, captureChartCanvas]);
+
+  useEffect(() => {
+    if (!replayMode || !chartRef.current) return;
+    // Mỗi bước replay bật lại auto scale để nến mới nằm trong vùng giá đang hiển thị.
+    autoScaleRef.current = true;
+    scaleLockedRef.current = false;
+    setAutoScale(true);
+    setScaleLocked(false);
+    chartRef.current.panes().forEach(pane => {
+      for (const side of ["left", "right"] as const) chartRef.current?.priceScale(side, pane.paneIndex()).setAutoScale(true);
+    });
+    if (renderedReplaySession.current !== replaySession) {
+      renderedReplaySession.current = replaySession;
+      replayInitialized.current = false;
+      resetChartView();
+      loadedAxisContextRef.current = null;
+      zoomHistoryRef.current = [];
+      setZoomHistoryCount(0);
+      hiddenDrawingsRef.current = null;
+      lineToolsRef.current?.removeAllLineTools();
+      drawingHistoryRef.current = ["[]"];
+      drawingRedoHistoryRef.current = [];
+      syncDrawingHistoryAvailability();
+      setSelectedDrawing(null);
+      setEditingTextDrawing(null);
+      setTextDialogOpen(false);
+      lockedCrosshairRef.current = null;
+      setCrosshairLocked(false);
+    }
+    const bars = (replayFrame?.bars || []).map(bar => ({ ...bar, time: bar.time as Bar["time"] }));
+    barsByTimeRef.current = new Map(bars.map(bar => [Number(bar.time), bar]));
+    previousCloseByTimeRef.current = new Map(bars.slice(1).map((bar, index) => [Number(bar.time), bars[index].close]));
+    currentBarRef.current = bars.at(-1);
+    chartStyleRendererRef.current?.setBars(bars);
+    seriesRef.current?.applyOptions({ title: symbol });
+    volumeSeriesRef.current?.setData(bars.map((bar, index) => ({ time: bar.time, value: bar.volume, color: volumeColorForBar(bar, bars[index - 1]?.close) })));
+    const settings = maSettingsRef.current;
+    volumeMaSeriesRef.current?.setData(volumeMa(bars, settings.length, "SMA", 1));
+    volumeSmaSeriesRef.current?.setData(volumeMa(bars, settings.length, settings.type, settings.smoothingLength));
+    replayStudyRefresh.current(bars);
+    setVisibleBar(bars.at(-1));
+    setHistoryLoading(false);
+    refreshHighLowRef.current();
+    refreshSelectionMarkersRef.current();
+    syncCompareSeries();
+    if (bars.length && !replayInitialized.current) { seriesRef.current?.priceScale().setAutoScale(true); chartRef.current.timeScale().fitContent(); replayInitialized.current = true; }
+    else if (followLatestRef.current) chartRef.current.timeScale().scrollToRealTime();
+    navigateHistoryRef.current = async target => {
+      const index = bars.findIndex(bar => Number(bar.time) >= target);
+      if (index < 0) throw new Error("Chưa có dữ liệu tại mốc replay này.");
+      chartRef.current?.timeScale().setVisibleLogicalRange({ from: Math.max(0, index - 50), to: Math.min(bars.length + 5, index + 50) });
+    };
+  }, [replayMode, replayFrame, replaySession, symbol, setVisibleBar, syncCompareSeries, volumeColorForBar, resetChartView, syncDrawingHistoryAvailability]);
+
   // Tải lịch sử và kết nối lại dữ liệu trực tiếp khi mã hoặc khung thời gian đổi
   useEffect(() => {
+    if (replayMode) return;
     const series = seriesRef.current;
     const chart = chartRef.current;
     if (!series || !chart || !symbolInfo || !resolutionRestored || !axisSettingsRestored) return;
@@ -1971,7 +2095,7 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
       flushRealtimeRef.current = () => undefined;
       suspendRealtimeRef.current = () => undefined;
     };
-  }, [axisSettingsRestored, persistDrawingHistory, rangeDays, resolution, resolutionRestored, symbol, symbolInfo, syncCompareSeries, updateCompareSeries, syncDrawingHistoryAvailability]);
+  }, [axisSettingsRestored, persistDrawingHistory, rangeDays, resolution, resolutionRestored, symbol, symbolInfo, syncCompareSeries, updateCompareSeries, syncDrawingHistoryAvailability, replayMode, fetchHistory]);
 
   useEffect(() => {
     const chart = chartRef.current;
@@ -1995,7 +2119,7 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
     let cancelled = false;
     const controller = new AbortController();
     const feeds: ReturnType<typeof connectPriceFeed>[] = [];
-    const { from, to } = rangeForResolution(resolution, rangeDays);
+    const { from, to } = replayMode ? { from: replayRef.current?.frame?.bars[0]?.time ?? 0, to: replayCutoff ?? 0 } : rangeForResolution(resolution, rangeDays);
 
     compareSymbols.forEach((compareSymbol, index) => {
       let series = compareSeriesRef.current.get(compareSymbol);
@@ -2058,6 +2182,7 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
           ]);
         }
 
+        if (replayMode) return;
         const feed = connectPriceFeed(
           compareSymbol,
           (tick) => {
@@ -2110,7 +2235,7 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
       controller.abort();
       feeds.forEach((feed) => feed.close());
     };
-  }, [compareSymbols, rangeDays, resolution, syncCompareSeries, updateCompareSeries]);
+  }, [compareSymbols, rangeDays, resolution, syncCompareSeries, updateCompareSeries, replayMode, replayCutoff, fetchHistory]);
 
   useEffect(() => {
     compareSeriesRef.current.forEach((series, compareSymbol) => {
@@ -2132,6 +2257,7 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
   }, [comparisonSettings, comparisonStatus, resolution, syncCompareSeries]);
 
   useEffect(() => {
+    if (replayMode) return;
     const feed = connectPriceFeed(
       symbol,
       (tick) => realtimeTickHandlerRef.current(tick),
@@ -2143,7 +2269,7 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
       feed.close();
       if (feedRef.current === feed) feedRef.current = null;
     };
-  }, [symbol]);
+  }, [symbol, replayMode]);
 
   useEffect(() => {
     if (!active || !documentVisible) {
@@ -2349,10 +2475,12 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
 
   const layoutReady = axisSettingsRestored && appearanceRestored && chartStyleRestored && volumeSettingsRestored && indicatorSettingsRestored && referenceStudies.restored && !historyLoading;
   const flushLayout = useSavedLayout<MovableSeries>({
+    storageKey: replayMode ? "backtest.workspaceLayout.v1" : undefined,
+    restoreViewport: !replayMode,
     chartRef,
     ready: layoutReady,
     revision: paneRevision + referenceStudies.revision,
-    context: `${symbol}:${resolution}`,
+    context: replayMode ? `backtest:${symbol}:${replaySession}` : `${symbol}:${resolution}`,
     setRange: setVisiblePriceRange,
     transfer: transferSeriesGroup,
     changed: syncPaneLayout,
@@ -3025,7 +3153,7 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
       const chart = chartRef.current;
       const series = seriesRef.current;
       const bar = currentBarRef.current ?? [...barsByTimeRef.current.values()].at(-1);
-      const now = Date.now() / 1000;
+      const now = replayRef.current?.frame?.cutoff ?? Date.now() / 1000;
       if (!chart || !series || !bar || !isTradingSessionTime(now as Bar["time"], "1", symbolInfo?.session, symbolInfo?.timezone)) {
         setCountdown(null);
         return;
@@ -3043,7 +3171,7 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
     update();
     const timer = window.setInterval(update, 1000);
     return () => window.clearInterval(timer);
-  }, [active, documentVisible, countdownVisible, resolution, symbolInfo?.session, symbolInfo?.timezone]);
+  }, [active, documentVisible, countdownVisible, resolution, symbolInfo?.session, symbolInfo?.timezone, replayCutoff]);
 
   const startDrawing = (type: LineToolType) => {
     if (drawingsLocked || !lineToolsRef.current) return;
@@ -3272,6 +3400,7 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
   })();
 
   const applyRangePreset = (preset?: RangePreset) => {
+    if (replayMode) return;
     if (preset && rangeDays === preset.days) {
       setRangeDays(undefined);
       return;
@@ -3287,7 +3416,7 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
   };
 
   const downloadSnapshot = () => {
-    const canvas = chartRef.current?.takeScreenshot();
+    const canvas = captureChartCanvas();
     if (!canvas) return;
     const link = document.createElement("a");
     link.download = `${symbol}-${resolution}-${new Date().toISOString().slice(0, 10)}.png`;
@@ -3297,7 +3426,7 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
 
   const toggleFullscreen = async () => {
     if (document.fullscreenElement) await document.exitFullscreen();
-    else await document.getElementById("app")?.requestFullscreen();
+    else await document.getElementById(replayMode ? "backtest-chart-app" : "app")?.requestFullscreen();
   };
 
   const handleUndo = useCallback(() => {
@@ -3372,7 +3501,7 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
       }
       if (mod && event.shiftKey && !event.altKey && key === "s") {
         claim();
-        const canvas = chartRef.current?.takeScreenshot();
+        const canvas = captureChartCanvas();
         canvas?.toBlob((blob) => {
           if (blob && navigator.clipboard?.write) void navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]).catch(() => setDataError("Không thể sao chép ảnh vào bộ nhớ tạm"));
         });
@@ -3738,8 +3867,9 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
         onApply={settings => setComparisonSettings(previous => ({ ...previous, [comparisonSettingsSymbol]: settings }))}
         onClose={() => setComparisonSettingsSymbol(null)}
       />}
-      {active ? (<AppHeader connectionStatus={status} timezone={chartTimezone} exchangeTimezone={symbolInfo?.timezone} onTimezoneChange={handleTimezoneChange} />) : <div className="chart-header-placeholder" />}
+      {!replayMode && (active ? (<AppHeader connectionStatus={status} timezone={chartTimezone} exchangeTimezone={symbolInfo?.timezone} onTimezoneChange={handleTimezoneChange} />) : <div className="chart-header-placeholder" />)}
       {active ? (<ChartHeader
+        sourceLocked={replayMode}
         layoutReady={layoutReady}
         captureLayout={() => { flushLayout(); return captureWorkspace(); }}
         onLoadLayout={onLoadLayout}
@@ -3763,11 +3893,13 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
         isCompareModalOpen={isCompareModalOpen}
         initialSearchQuery={symbolSearchInitialQuery}
         onSymbolModalToggle={(open) => {
+          if (open && replayMode) return;
           setIsSymbolModalOpen(open);
           if (!open) setSymbolSearchInitialQuery("");
         }}
         onCompareModalToggle={setIsCompareModalOpen}
         onSymbolChange={(nextSymbol) => {
+          if (replayMode) { setDataError("Đổi mã tại phần nguồn Backtest và nạp lại dữ liệu."); setIsSymbolModalOpen(false); return; }
           setSymbol(nextSymbol);
           setCompareSymbols((current) => current.filter((compareSymbol) => compareSymbol !== nextSymbol));
           setIsSymbolModalOpen(false);
@@ -3793,6 +3925,7 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
           setCompareSymbols((current) => current.filter((item) => item !== compareSymbol));
         }}
         onResolutionChange={(nextResolution) => {
+          if (replayMode && nextResolution !== "1") { setDataError("Backtest AI dùng M1. Nguồn replay không đổi khi chọn interval khác."); setTimeframeMenuOpen(false); return; }
           setRangeDays(undefined);
           setResolution(nextResolution);
           setTimeframeMenuOpen(false);
@@ -3957,7 +4090,7 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
           />;
           }}</LiveMarketData>)}
           <main
-            id="chart"
+            id={replayMode ? "backtest-chart" : "chart"}
             ref={containerRef}
             className={zoomMode ? "chart--tool-active chart--zoom" : activeDrawingTool || eraserMode ? "chart--tool-active" : "chart--pan"}
             onContextMenuCapture={onAxisContextMenu}
@@ -4047,6 +4180,7 @@ function ChartInstance({ active, onLoadLayout }: { active: boolean; onLoadLayout
             />
           )}
           <ChartFooter
+            rangeLocked={replayMode}
             rangeDays={rangeDays}
             scaleMode={footerScaleMode}
             autoScale={footerAutoScale}

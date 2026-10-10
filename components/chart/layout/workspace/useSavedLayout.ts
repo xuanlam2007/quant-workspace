@@ -16,8 +16,8 @@ interface PersistentSeries {
   setSeriesOrder(order: number): void;
 }
 
-function readLayout(): Layout | null {
-  const saved = readSaved<Layout>(KEY);
+function readLayout(storageKey: string): Layout | null {
+  const saved = readSaved<Layout>(storageKey);
   if (!saved || saved.version !== 1 || !Array.isArray(saved.sources) || !Array.isArray(saved.panes) || !saved.panes.length || saved.panes.length > 100) return null;
   if (!saved.presentation || !Array.isArray(saved.presentation.collapsed) || !Array.isArray(saved.presentation.factors)) return null;
   if (saved.sources.some((source) => !source || typeof source.id !== "string" || !Number.isInteger(source.pane) || source.pane < 0 || source.pane >= saved.panes.length || typeof source.side !== "string" || typeof source.visible !== "boolean" || !Number.isFinite(source.order))) return null;
@@ -25,7 +25,9 @@ function readLayout(): Layout | null {
   return saved;
 }
 
-export function useSavedLayout<S extends PersistentSeries>({ chartRef, ready, revision, sources, transfer, changed, context, setRange }: {
+export function useSavedLayout<S extends PersistentSeries>({ chartRef, ready, revision, sources, transfer, changed, context, setRange, storageKey = KEY, restoreViewport = true }: {
+  storageKey?: string;
+  restoreViewport?: boolean;
   chartRef: RefObject<IChartApi | null>;
   ready: boolean;
   revision: number;
@@ -35,8 +37,8 @@ export function useSavedLayout<S extends PersistentSeries>({ chartRef, ready, re
   context: string;
   setRange: (scale: IPriceScaleApi, range: { from: number; to: number }) => void;
 }) {
-  const current = useRef({ ready, sources, transfer, changed, context, setRange });
-  current.current = { ready, sources, transfer, changed, context, setRange };
+  const current = useRef({ ready, sources, transfer, changed, context, setRange, storageKey, restoreViewport });
+  current.current = { ready, sources, transfer, changed, context, setRange, storageKey, restoreViewport };
   const restoredChart = useRef<IChartApi | null>(null);
   const saved = useRef<Layout | null | undefined>(undefined);
   const lastWritten = useRef("");
@@ -51,7 +53,7 @@ export function useSavedLayout<S extends PersistentSeries>({ chartRef, ready, re
       const controller = paneController(chart);
       if (!controller) { frame = requestAnimationFrame(restore); return; }
       if (restoredChart.current === chart) return;
-      if (saved.current === undefined) saved.current = readLayout();
+      if (saved.current === undefined) saved.current = readLayout(current.current.storageKey);
       const layout = saved.current;
       if (layout) {
         const available = current.current.sources();
@@ -82,12 +84,12 @@ export function useSavedLayout<S extends PersistentSeries>({ chartRef, ready, re
             for (const side of ["left", "right"] as const) {
               const scale = chart.priceScale(side, pane.paneIndex());
               const { range, ...options } = layout.panes[index][side];
-              scale.applyOptions(options);
-              if (layout.context === current.current.context && !options.autoScale && range && Number.isFinite(range.from) && Number.isFinite(range.to) && range.from < range.to) current.current.setRange(scale, range);
+              scale.applyOptions(current.current.restoreViewport ? options : { ...options, autoScale: true });
+              if (current.current.restoreViewport && layout.context === current.current.context && !options.autoScale && range && Number.isFinite(range.from) && Number.isFinite(range.to) && range.from < range.to) current.current.setRange(scale, range);
             }
           });
           controller.restore(layout.presentation);
-          if (layout.context === current.current.context && layout.time && Number.isFinite(layout.time.barSpacing) && layout.time.barSpacing > 0 && Number.isFinite(layout.time.rightOffset)) chart.timeScale().applyOptions(layout.time);
+          if (current.current.restoreViewport && layout.context === current.current.context && layout.time && Number.isFinite(layout.time.barSpacing) && layout.time.barSpacing > 0 && Number.isFinite(layout.time.rightOffset)) chart.timeScale().applyOptions(layout.time);
           restoredChart.current = chart;
         });
         return;
@@ -119,11 +121,11 @@ export function useSavedLayout<S extends PersistentSeries>({ chartRef, ready, re
     const { barSpacing, rightOffset } = chart.timeScale().options();
     const layout = { version: 1 as const, context: current.current.context, time: { barSpacing, rightOffset }, sources, panes, presentation: controller.snapshot() };
     const serialized = JSON.stringify(layout);
-    if (strict) localStorage.setItem(KEY, serialized);
+    if (strict) localStorage.setItem(current.current.storageKey, serialized);
     if (serialized !== lastWritten.current) {
-      if (!strict) writeSaved(KEY, layout);
+      if (!strict) writeSaved(current.current.storageKey, layout);
       lastWritten.current = serialized;
-      window.dispatchEvent(new Event(WORKSPACE_CHANGED));
+      if (current.current.storageKey === KEY) window.dispatchEvent(new Event(WORKSPACE_CHANGED));
     }
   };
   useEffect(() => {
