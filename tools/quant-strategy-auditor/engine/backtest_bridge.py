@@ -126,11 +126,15 @@ def register_backtest(app, analyzer, config, config_path):
     adapter = root / "private" / "backtest" / "runner.py"
     busy = asyncio.Lock()
 
+    def strategy_documents():
+        reference = {**config, "strategy_documents": config.get("backtest_strategy_documents", config.get("strategy_documents", []))}
+        return load_strategy_documents(reference, config_path)
+
     @app.get("/api/backtest/status")
     def status():
-        documents, errors = load_strategy_documents(config, config_path)
+        documents, errors = strategy_documents()
         connection = analyzer.status()
-        return {"adapter_ready": adapter.is_file(), "strategy_available": bool(documents and not errors), "strategy_documents": [item["name"] for item in documents], "provider": connection["provider"], "connected": connection.get("connected"), "model": connection.get("model", ""), "effort": connection.get("effort", ""), "busy": busy.locked(), "order_mode": "sample-close-next-update"}
+        return {"adapter_ready": adapter.is_file(), "strategy_available": bool(documents and not errors), "strategy_documents": [item["name"] for item in documents], "strategy_error": "Không đọc được tài liệu chiến lược. Nhập lại Markdown." if errors else "", "provider": connection["provider"], "connected": connection.get("connected"), "error": connection.get("error", ""), "terminal_error": connection.get("terminal_error", ""), "model": connection.get("model", ""), "effort": connection.get("effort", ""), "busy": busy.locked(), "order_mode": "sample-close-next-update"}
 
     @app.post("/api/backtest/analyze")
     async def analyze(payload: BacktestFrame):
@@ -141,9 +145,9 @@ def register_backtest(app, analyzer, config, config_path):
             raise HTTPException(409, "CLI đang xử lý quan sát khác. Chờ lượt đó xong.")
         if not adapter.is_file():
             raise HTTPException(503, "Chưa cài bộ kết nối AI riêng cho Backtest.")
-        if analyzer.settings["provider"] != "CODEX" or not analyzer.connection.get("connected"):
-            raise HTTPException(409, "Chọn Codex trong cấu hình Backtest và kiểm tra kết nối trước khi phân tích.")
-        documents, errors = load_strategy_documents(config, config_path)
+        if not analyzer.connection.get("connected"):
+            raise HTTPException(409, "Kiểm tra kết nối CLI đã chọn trong Backtest trước khi phân tích.")
+        documents, errors = strategy_documents()
         if errors or not documents:
             raise HTTPException(409, "Thêm tài liệu chiến lược riêng trước khi yêu cầu AI quyết định.")
         revision = analyzer._catalog_revision
@@ -173,7 +177,7 @@ def register_backtest(app, analyzer, config, config_path):
                         try:
                             if revision != analyzer._catalog_revision or settings != analyzer.settings or not analyzer.connection.get("connected"):
                                 raise HTTPException(409, "Kết nối AI đã thay đổi. Hãy phân tích lại khung replay.")
-                            latest, latest_errors = load_strategy_documents(config, config_path)
+                            latest, latest_errors = strategy_documents()
                             if latest_errors or hashes != [document["sha256"] for document in latest]:
                                 raise HTTPException(409, "Chiến lược đã thay đổi. Hãy phân tích lại khung replay.")
                             if revision != analyzer._catalog_revision or settings != analyzer.settings or not analyzer.connection.get("connected"):
@@ -198,13 +202,15 @@ def register_backtest(app, analyzer, config, config_path):
                         raise
                     if revision != analyzer._catalog_revision or settings != analyzer.settings or not analyzer.connection.get("connected"):
                         raise HTTPException(409, "Kết nối AI đã thay đổi. Kết quả này không được áp dụng.")
-                    current, current_errors = load_strategy_documents(config, config_path)
+                    current, current_errors = strategy_documents()
                     if current_errors or hashes != [document["sha256"] for document in current]:
                         raise HTTPException(409, "Chiến lược đã thay đổi. Hãy phân tích lại khung replay.")
                     result = BacktestDecision.model_validate(output)
                     if any(point.timestamp >= payload.cutoff for drawing in result.drawings for point in drawing.points):
                         raise HTTPException(422, "AI đề xuất điểm vẽ thuộc tương lai, kết quả bị loại bỏ.")
-                    return {"decision": result.model_dump(), "cutoff": payload.cutoff, "model": settings, "strategy_versions": hashes}
+                    if analyzer.terminal:
+                        analyzer.terminal.write("backtest.validated", cutoff=payload.cutoff, action=result.action, order_type=result.order_type)
+                    return {"decision": result.model_dump(), "cutoff": payload.cutoff, "model": settings, "strategy_versions": hashes, "terminal_error": analyzer.terminal.error if analyzer.terminal else ""}
                 except HTTPException:
                     raise
                 except RuntimeError as error:
