@@ -7,6 +7,7 @@ import { GO_TO_DATE_ICON } from "../chart/layout/navigation/GoToDateDialog";
 import { LoadingText } from "../ui/Loading";
 import BacktestChart from "./BacktestChart";
 import BacktestConnectionSummary from "./BacktestConnectionSummary";
+import AuditorConnection from "../auditor/AuditorConnection";
 import styles from "./BacktestWorkspace.module.css";
 
 const unchanged = () => {};
@@ -26,7 +27,7 @@ export default function BacktestLoading() {
       <p className={styles.help}>Nạp lịch sử từ kết nối chart dùng nến M1. Dữ liệu giây thật: nhập JSON với symbol, granularity: 1s và bars gồm time (Unix giây bắt đầu mẫu), open, high, low, close, volume. Mỗi file là một ngày, một mã; volume là lượng của từng mẫu. Timestamp theo giây không chứng minh độ chi tiết mỗi giây.</p>
     </section>
     <div className={styles.toolbar}>
-      <button type="button" tabIndex={-1} className={styles.primary} disabled><Icon name="play" />Chạy replay</button>
+      <button type="button" tabIndex={-1} className={`${styles.primary} ${styles.replayToggle}`} disabled><Icon name="play" />Chạy replay</button>
       <button type="button" tabIndex={-1} disabled>Phút tiếp theo</button>
       <button type="button" tabIndex={-1} disabled><Icon name="refresh" />Chạy lại từ đầu</button>
       <div className={styles.inline}><label>Tốc độ</label><ChartSelect id="backtest-loading-speed" label="Tốc độ replay" value={1} disabled onChange={unchanged} options={[{ value: 1, label: "1 phút / giây" }]} /></div>
@@ -40,8 +41,9 @@ export default function BacktestLoading() {
       </div>
       <aside className={styles.aside}>
         <section className={`${styles.panel} ${styles.aiPanel}`}>
-          <div className={styles.panelHeading}><h2>AI Backtest</h2><button type="button" tabIndex={-1} className={styles.iconButton} disabled aria-label="Làm mới trạng thái AI"><Icon name="refresh" /></button></div>
-          <BacktestConnectionSummary loading ready={false} />
+          <BacktestConnectionSummary loading ready={false} refreshing />
+          <AuditorConnection context="backtest" className={styles.connectionConfig} status={null} loading pending="" disabled onSave={unchanged} onCheck={unchanged} onOpenTerminal={unchanged} />
+          <button type="button" tabIndex={-1} disabled>Nhập chiến lược Markdown</button>
           <div className={styles.aiActions}>
             <button type="button" tabIndex={-1} disabled>Kiểm tra kết nối AI</button>
             <button type="button" tabIndex={-1} className={`${styles.primary} ${styles.full}`} disabled>Phân tích chart hiện tại</button>
