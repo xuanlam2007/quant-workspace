@@ -98,7 +98,7 @@ class AudioRpc:
         self.process.stdout.close()
 
 
-def run_codex_audio(executable, folder, prompt, settings, audio, image=None, schema=None, timeout=120, frames=None):
+def run_codex_audio(executable, folder, prompt, settings, audio, image=None, schema=None, timeout=120, frames=None, on_output=None):
     source = Path(audio)
     if source.suffix.lower() not in (".webm", ".ogg", ".m4a", ".wav", ".mp3") or not 0 < source.stat().st_size <= 3 * 1024 * 1024:
         raise ValueError("Expected a supported, nonempty audio recording under 3 MB")
@@ -132,6 +132,8 @@ def run_codex_audio(executable, folder, prompt, settings, audio, image=None, sch
             "config": {"mcp_servers": disabled_mcp, "web_search": "disabled", "features.shell_tool": False},
         })
         thread_id = thread["thread"]["id"]
+        if on_output:
+            on_output("stdout", {"type": "thread.started", "thread_id": thread_id})
         params = {"threadId": thread_id, "input": inputs}
         if settings.get("effort"):
             params["effort"] = settings["effort"]
@@ -146,6 +148,8 @@ def run_codex_audio(executable, folder, prompt, settings, audio, image=None, sch
             if params.get("threadId") != thread_id:
                 continue
             method = message.get("method")
+            if on_output:
+                on_output("stdout", message)
             if method == "item/completed" and params.get("turnId") == turn_id:
                 item = params.get("item", {})
                 if item.get("type") == "agentMessage" and item.get("phase") != "commentary":
