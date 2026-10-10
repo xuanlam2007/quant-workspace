@@ -19,6 +19,7 @@ from pydantic import Field, ValidationError
 from .request_security import StrictRequest, empty_body, install_request_security, workspace_origin
 from .core import TradePairManager, SessionLogger
 from .cli_analyzer import CliLearningAnalyzer, find_cli, observer_settings
+from .ai_request_terminal import AiRequestTerminal
 from .learning_context import load_strategy_documents
 from .observed_trades import FillReviewPayload, auto_record_candidates, identify_candidates, recorded_trades
 from .desktop_listener import DesktopListener, list_windows, window_details
@@ -151,6 +152,7 @@ def create_app(config_path: str = "config.json") -> FastAPI:
     pair_manager = TradePairManager(fee_per_pair=guardrails.get("fee_per_closed_pair", 0.45))
     logger = SessionLogger(os.path.join(os.path.dirname(config_path), config.get("storage", {}).get("sessions_dir", "sessions")))
     analyzer = CliLearningAnalyzer(config.get("ai_connection"))
+    analyzer.terminal = AiRequestTerminal("auditor", config.get("terminal_type", "ORCA"))
     state = {"mode": config.get("mode", "DESKTOP"), "target_window_title": "", "target_window_id": 0, "browser_source_id": "", "strategy_mode": config["strategy_mode"], "recording_status": "stopped", "recording_error": "", "auto_start_recording": config.get("auto_start_recording", True), "capture_generation": 0}
     clients = []
     main_loop = None
@@ -479,6 +481,7 @@ def create_app(config_path: str = "config.json") -> FastAPI:
         except HTTPException:
             config["terminal_type"] = previous
             raise
+        analyzer.terminal.host = config["terminal_type"] if config["terminal_type"] in ("ORCA", "WT", "WINDOWS") else "ORCA"
         return terminal_config()
 
     @app.post("/api/terminal/open")
