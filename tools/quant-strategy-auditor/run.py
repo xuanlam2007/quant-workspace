@@ -40,11 +40,14 @@ def launch_desktop_window(url: str):
         import webbrowser
         webbrowser.open(url)
 
-def serve(managed=False):
-    from engine.server import create_app
+def serve(managed=False, engine="auditor"):
+    if engine == "backtest":
+        from engine.backtest_server import create_app
+    else:
+        from engine.server import create_app
     config_file = os.path.join(current_dir, "config.json")
     app = create_app(config_path=config_file)
-    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=8765, log_level="info"))
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=8766 if engine == "backtest" else 8765, log_level="info"))
     if managed:
         def wait_for_parent():
             sys.stdin.readline()
@@ -53,8 +56,8 @@ def serve(managed=False):
     server.run()
 
 
-def watch(managed=False):
-    lock = open(os.path.join(current_dir, ".engine.lock"), "a+b")
+def watch(managed=False, engine="auditor"):
+    lock = open(os.path.join(current_dir, ".backtest-engine.lock" if engine == "backtest" else ".engine.lock"), "a+b")
     if lock.tell() == 0:
         lock.write(b"0")
         lock.flush()
@@ -68,13 +71,18 @@ def watch(managed=False):
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
         lock.close()
-        print("Auditor watcher is already running.", flush=True)
+        print(f"{engine} watcher is already running.", flush=True)
         return
 
     stopped = threading.Event()
+    retry_requested = threading.Event()
     if managed:
         def wait_for_launcher():
-            sys.stdin.readline()
+            for line in sys.stdin:
+                if line.strip() == "retry":
+                    retry_requested.set()
+                else:
+                    break
             stopped.set()
         threading.Thread(target=wait_for_launcher, daemon=True).start()
 
@@ -84,7 +92,7 @@ def watch(managed=False):
 
     def launch():
         return subprocess.Popen(
-            [sys.executable, __file__, "--worker"], stdin=subprocess.PIPE,
+            [sys.executable, __file__, "--worker", "--engine", engine], stdin=subprocess.PIPE,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
 
@@ -103,12 +111,13 @@ def watch(managed=False):
     try:
         previous = revision()
         child = launch()
-        print("Auditor auto-reload enabled. Watching engine Python files.", flush=True)
+        print(f"{engine} auto-reload enabled. Watching engine Python files.", flush=True)
         while not stopped.wait(0.75):
             current = revision()
-            if current != previous:
+            if current != previous or retry_requested.is_set():
+                retry_requested.clear()
                 previous = current
-                print("Reloading auditor after a Python code change...", flush=True)
+                print(f"Reloading {engine} after a source change or retry request...", flush=True)
                 stop(child)
                 child = launch()
             elif child.poll() is not None:
@@ -126,19 +135,20 @@ def watch(managed=False):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--watch", action="store_true")
+    parser.add_argument("--engine", choices=["auditor", "backtest"], default="auditor")
     parser.add_argument("--managed", action="store_true")
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     options = parser.parse_args()
     if options.worker:
-        serve(managed=True)
+        serve(managed=True, engine=options.engine)
         return
-    url = os.getenv("AUDITOR_UI_URL", "http://localhost:3000/auditor")
+    url = os.getenv("BACKTEST_UI_URL" if options.engine == "backtest" else "AUDITOR_UI_URL", f"http://localhost:3000/{options.engine}")
     
     print("=" * 60)
-    print("  QUANT STRATEGY AUDITOR | DISCRETIONARY EXECUTION ENGINE")
+    print(f"  QUANT | {options.engine.upper()} ENGINE")
     print(f"  Workspace: {url}")
     print("  Start Next.js separately with npm run dev.")
-    print(f"  WebSocket:  ws://127.0.0.1:8765/ws")
+    print(f"  API: http://127.0.0.1:{8766 if options.engine == 'backtest' else 8765}")
     print("=" * 60)
 
     # Chạy luồng mở cửa sổ giao diện người dùng
@@ -148,9 +158,9 @@ def main():
 
     # Khởi động máy chủ uvicorn
     if options.watch:
-        watch(managed=options.managed)
+        watch(managed=options.managed, engine=options.engine)
     else:
-        serve(managed=options.managed)
+        serve(managed=options.managed, engine=options.engine)
 
 if __name__ == "__main__":
     main()

@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import re
 import threading
+import copy
 from html import escape
 from uuid import uuid4
 from datetime import datetime
@@ -287,9 +288,9 @@ class SessionLogger:
         event["session_id"] = self.session_id
         event["logged_at"] = datetime.now().isoformat()
         with self._lock:
-            self.events.append(event)
             with open(self.events_file, "a", encoding="utf-8") as f:
                 f.write(json.dumps(event, ensure_ascii=False) + "\n")
+            self.events.append(event)
 
     def update_event(self, event_id: str, updates: Dict[str, Any], date: Optional[str] = None, session_id: Optional[str] = None):
         with self._lock:
@@ -298,7 +299,7 @@ class SessionLogger:
             if not os.path.isfile(events_file):
                 return False
             if is_active:
-                events = self.events
+                events = copy.deepcopy(self.events)
             else:
                 with open(events_file, encoding="utf-8") as f:
                     events = [json.loads(line) for line in f if line.strip()]
@@ -310,8 +311,25 @@ class SessionLogger:
                         for item in events:
                             f.write(json.dumps(item, ensure_ascii=False) + "\n")
                     os.replace(temp, events_file)
+                    if is_active:
+                        for original in self.events:
+                            if original.get("id") == event_id:
+                                original.update(updates)
+                                break
                     return True
             return False
+
+    def append_to_session(self, event: Dict[str, Any], date: str, session_id: str):
+        with self._lock:
+            folder = self.session_path(date, session_id)
+            if not os.path.isdir(folder):
+                return False
+            event.update(id=f"evt_{uuid4().hex}", date=date, session_id=session_id, logged_at=datetime.now().isoformat())
+            with open(os.path.join(folder, "events.jsonl"), "a", encoding="utf-8") as file:
+                file.write(json.dumps(event, ensure_ascii=False) + "\n")
+            if date == self.current_date and session_id == self.session_id:
+                self.events.append(event)
+            return True
 
     def export_reports(self, summary: Dict[str, Any]) -> Dict[str, str]:
         if not self.session_id:
@@ -325,8 +343,13 @@ class SessionLogger:
             action = escape(str(ev.get("action", "")))
             price = escape(str(ev.get("price", "-")))
             timestamp = escape(str(ev.get("timestamp", "")))
-            transcript = escape(str(ev.get("voice_transcript", "") or ev.get("reason", "")))
+            transcript = escape(str(ev.get("voice_transcript", "") or ev.get("reason", "") or ev.get("ai_transcript", "")))
             thesis = escape(str(ev.get("ai_thesis", "") or ev.get("ai_error", "")))
+            question = escape(str(ev.get("ai_question", "")))
+            teaching_html = "".join(f"<p>Trader: {escape(str(item.get('answer', '')))}</p>" for item in ev.get("teaching", []))
+            fills_html = "".join("<p>" + escape(f"{item.get('status', '')}: {item.get('action', '?')} {item.get('contracts', '?')} @ {item.get('price', '?')} ({item.get('timestamp', '')}), {item.get('execution_id', '')}") + "</p>" for item in ev.get("observed_fills", []))
+            audio_rel = "audio/" + os.path.basename(ev["audio_path"]) if ev.get("audio_path") else ""
+            audio_tag = f"<audio controls src='{escape(audio_rel, quote=True)}'></audio>" if audio_rel else ""
             img_rel = os.path.relpath(ev.get("frame_path", ""), self.session_folder) if ev.get("frame_path") else ""
             warnings = ev.get("warnings", [])
             warn_html = "".join([f"<span class='badge warn'>{escape(str(w['message']))}</span>" for w in warnings])
@@ -339,9 +362,9 @@ class SessionLogger:
                 <td class="mono">{timestamp}</td>
                 <td><span class="badge {badge_class}">{ev_type} {action}</span></td>
                 <td class="mono">{price}</td>
-                <td>{transcript or "<em>Không có ghi chú</em>"}{'<p>AGY: ' + thesis + '</p>' if thesis else ''}</td>
-                <td>{warn_html or "<span class='badge ok'>Hợp lệ</span>"}</td>
-                <td>{img_tag}</td>
+                <td>{transcript or "<em>Không có ghi chú</em>"}{'<p>AI: ' + thesis + '</p>' if thesis else ''}{'<p>Câu hỏi: ' + question + '</p>' if question else ''}{teaching_html}{fills_html}</td>
+                <td>{warn_html or "<span class='badge neutral'>Quan sát</span>"}</td>
+                <td>{img_tag}{audio_tag}</td>
             </tr>
             """)
 

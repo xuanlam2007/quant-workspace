@@ -61,7 +61,6 @@ class DesktopListener:
         self.is_running = False
         self.last_error = ""
         self._mouse_listener = None
-        self._hotkey_listener = None
         self._capture_lock = threading.Lock()
 
     def source(self):
@@ -77,7 +76,7 @@ class DesktopListener:
         self.is_running = True
         generation = self.generation
         try:
-            from pynput import mouse, keyboard
+            from pynput import mouse
 
             def emit(event):
                 if not self.is_running or generation != self.generation or window_api().GetForegroundWindow() != self.target_window_id:
@@ -102,9 +101,6 @@ class DesktopListener:
             self._mouse_listener = mouse.Listener(on_click=on_click)
             self._mouse_listener.daemon = True
             self._mouse_listener.start()
-            self._hotkey_listener = keyboard.GlobalHotKeys({"<ctrl>+<alt>+s": lambda: emit({"type": "REJECTED_SETUP", "action": "REJECT", "reason": "Global reject shortcut"})})
-            self._hotkey_listener.daemon = True
-            self._hotkey_listener.start()
         except Exception as error:
             self.stop()
             self.last_error = str(error)
@@ -112,10 +108,9 @@ class DesktopListener:
 
     def stop(self):
         self.is_running = False
-        for listener in (self._mouse_listener, self._hotkey_listener):
-            if listener:
-                listener.stop()
-        self._mouse_listener = self._hotkey_listener = None
+        if self._mouse_listener:
+            self._mouse_listener.stop()
+        self._mouse_listener = None
         # Chờ ảnh đang chụp hoàn tất trước khi xác nhận tạm dừng.
         with self._capture_lock:
             pass
