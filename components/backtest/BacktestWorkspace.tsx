@@ -210,15 +210,19 @@ export default function BacktestWorkspace({ active }: { active: boolean }) {
           </section>
         </div>
         <aside className={styles.aside}>
-          <section className={styles.panel}><div className={styles.panelHeading}><h2>AI Backtest</h2><button type="button" tabIndex={-1} disabled={busy || statusLoading} aria-label="Làm mới trạng thái AI" onClick={() => void refreshStatus()}><Icon name="refresh" /></button></div>
+          <section className={`${styles.panel} ${styles.aiPanel}`}><div className={styles.panelHeading}><h2>AI Backtest</h2><button type="button" tabIndex={-1} className={styles.iconButton} disabled={busy || statusLoading} aria-label="Làm mới trạng thái AI" onClick={() => void refreshStatus()}><Icon name="refresh" /></button></div>
             <BacktestConnectionSummary loading={statusLoading && !status} ready={canAnalyze} status={status} />
-            <button type="button" tabIndex={-1} disabled={busy || statusLoading} aria-busy={statusLoading} onClick={() => void checkConnection()}>Kiểm tra kết nối AI</button>
-            <button type="button" tabIndex={-1} className={`${styles.primary} ${styles.full}`} disabled={!frame?.bars.length || !canAnalyze || busy || loading} onClick={() => { setPlaying(false); void analyze(); }}>Phân tích chart hiện tại</button>
-            {busy && <button type="button" tabIndex={-1} onClick={() => { request.current?.abort(); setPlaying(false); }}>Dừng chờ kết quả</button>}
-            <label className={styles.inline}><input type="checkbox" tabIndex={-1} checked={autoAi} disabled={busy || !canAnalyze} onChange={event => setAutoAi(event.target.checked)} />AI phân tích khi replay</label>
-            <div className={styles.sourceField}><label htmlFor="backtest-cadence">Khoảng phân tích</label><ChartSelect id="backtest-cadence" label="Khoảng phân tích" value={cadence} disabled={busy} onChange={setCadence} options={[{ value: 1, label: "Mỗi phút" }, { value: 3, label: "Mỗi 3 phút" }, { value: 5, label: "Mỗi 5 phút" }]} /></div>
-            <label>Giây trong nến (dữ liệu giây)<input tabIndex={-1} type="number" min={55} max={60} value={second} disabled={busy || !!entries.length || cursor >= 0 || data?.granularity === "1m"} onChange={event => setSecond(Math.max(55, Math.min(60, Number(event.target.value) || 55)))} /></label>
-            <p className={styles.help}>Backtest dùng kết nối AI riêng, không cần khởi động Auditor. Khoảng phân tích là cấu hình thử nghiệm, không tự thay quy tắc chiến lược.</p>
+            <div className={styles.aiActions}>
+              <button type="button" tabIndex={-1} disabled={busy || statusLoading} aria-busy={statusLoading} onClick={() => void checkConnection()}>Kiểm tra kết nối AI</button>
+              <button type="button" tabIndex={-1} className={`${styles.primary} ${styles.full}`} disabled={!frame?.bars.length || !canAnalyze || busy || loading} onClick={() => { setPlaying(false); void analyze(); }}>Phân tích chart hiện tại</button>
+              {busy && <button type="button" tabIndex={-1} onClick={() => { request.current?.abort(); setPlaying(false); }}>Dừng chờ kết quả</button>}
+            </div>
+            <div className={styles.aiSettings}>
+              <label className={`${styles.inline} ${styles.aiToggle}`}><input type="checkbox" tabIndex={-1} checked={autoAi} disabled={busy || !canAnalyze} onChange={event => setAutoAi(event.target.checked)} />AI phân tích khi replay</label>
+              <div className={styles.sourceField}><label htmlFor="backtest-cadence">Khoảng phân tích</label><ChartSelect id="backtest-cadence" label="Khoảng phân tích" value={cadence} disabled={busy} onChange={setCadence} options={[{ value: 1, label: "Mỗi phút" }, { value: 3, label: "Mỗi 3 phút" }, { value: 5, label: "Mỗi 5 phút" }]} /></div>
+              <label className={styles.aiSecond}><span>Giây trong nến<small>Dữ liệu giây</small></span><input tabIndex={-1} type="number" min={55} max={60} value={second} disabled={busy || !!entries.length || cursor >= 0 || data?.granularity === "1m"} onChange={event => setSecond(Math.max(55, Math.min(60, Number(event.target.value) || 55)))} /></label>
+            </div>
+            <p className={`${styles.help} ${styles.aiHint}`}>Backtest dùng kết nối AI riêng, không cần khởi động Auditor. Khoảng phân tích là cấu hình thử nghiệm, không tự thay quy tắc chiến lược.</p>
           </section>
           <section className={styles.panel}><h2>Lệnh mô phỏng</h2><div className={styles.metrics}><div><span>Cặp đóng</span><strong>{ledger.pairs.length}</strong></div><div><span>Phí (điểm)</span><strong>{fees.toFixed(2)}</strong></div><div><span>Sau phí</span><strong className={gross - fees < 0 ? styles.negative : styles.positive}>{(gross - fees).toFixed(2)}</strong></div></div>
             <p>{ledger.position ? `${ledger.position.side} 1 @ ${ledger.position.price.toFixed(2)}` : "Chưa có vị thế"}</p>

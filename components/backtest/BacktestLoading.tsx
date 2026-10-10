@@ -39,15 +39,19 @@ export default function BacktestLoading() {
         <section className={styles.panel}><div className={styles.panelHeading}><h2>Quyết định và drawing</h2><button type="button" tabIndex={-1} disabled><Icon name="export" />Xuất kết quả riêng</button></div><p className={styles.help}>AI nhận ảnh chart, các line, giá/volume đã replay và tài liệu chiến lược riêng.</p><div className={styles.journal} /></section>
       </div>
       <aside className={styles.aside}>
-        <section className={styles.panel}>
-          <div className={styles.panelHeading}><h2>AI Backtest</h2><button type="button" tabIndex={-1} disabled aria-label="Làm mới trạng thái AI"><Icon name="refresh" /></button></div>
+        <section className={`${styles.panel} ${styles.aiPanel}`}>
+          <div className={styles.panelHeading}><h2>AI Backtest</h2><button type="button" tabIndex={-1} className={styles.iconButton} disabled aria-label="Làm mới trạng thái AI"><Icon name="refresh" /></button></div>
           <BacktestConnectionSummary loading ready={false} />
-          <button type="button" tabIndex={-1} disabled>Kiểm tra kết nối AI</button>
-          <button type="button" tabIndex={-1} className={`${styles.primary} ${styles.full}`} disabled>Phân tích chart hiện tại</button>
-          <label className={styles.inline}><input type="checkbox" tabIndex={-1} disabled />AI phân tích khi replay</label>
-          <div className={styles.sourceField}><label>Khoảng phân tích</label><ChartSelect id="backtest-loading-cadence" label="Khoảng phân tích" value={1} disabled onChange={unchanged} options={[{ value: 1, label: "Mỗi phút" }]} /></div>
-          <label>Giây trong nến (dữ liệu giây)<input tabIndex={-1} type="number" value={55} disabled /></label>
-          <p className={styles.help}>Backtest dùng kết nối AI riêng, không cần khởi động Auditor. Khoảng phân tích là cấu hình thử nghiệm, không tự thay quy tắc chiến lược.</p>
+          <div className={styles.aiActions}>
+            <button type="button" tabIndex={-1} disabled>Kiểm tra kết nối AI</button>
+            <button type="button" tabIndex={-1} className={`${styles.primary} ${styles.full}`} disabled>Phân tích chart hiện tại</button>
+          </div>
+          <div className={styles.aiSettings}>
+            <label className={`${styles.inline} ${styles.aiToggle}`}><input type="checkbox" tabIndex={-1} disabled />AI phân tích khi replay</label>
+            <div className={styles.sourceField}><label htmlFor="backtest-loading-cadence">Khoảng phân tích</label><ChartSelect id="backtest-loading-cadence" label="Khoảng phân tích" value={1} disabled onChange={unchanged} options={[{ value: 1, label: "Mỗi phút" }]} /></div>
+            <label className={styles.aiSecond}><span>Giây trong nến<small>Dữ liệu giây</small></span><input tabIndex={-1} type="number" value={55} disabled /></label>
+          </div>
+          <p className={`${styles.help} ${styles.aiHint}`}>Backtest dùng kết nối AI riêng, không cần khởi động Auditor. Khoảng phân tích là cấu hình thử nghiệm, không tự thay quy tắc chiến lược.</p>
         </section>
         <section className={styles.panel}><h2>Lệnh mô phỏng</h2><div className={styles.metrics}><div><span>Cặp đóng</span><strong>0</strong></div><div><span>Phí (điểm)</span><strong>0.00</strong></div><div><span>Sau phí</span><strong className={styles.positive}>0.00</strong></div></div>
           <p>Chưa có vị thế</p><label className={styles.inline}><input type="checkbox" tabIndex={-1} disabled />Áp dụng lệnh AI tự động</label>

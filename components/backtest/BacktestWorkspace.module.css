@@ -58,6 +58,23 @@
 .aside { display: grid; gap: 14px; min-width: 0; }
 .panel { padding: 16px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; display: grid; gap: 12px; min-width: 0; }
 .panelHeading { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.aiPanel { gap: 16px; }
+.workspace .iconButton { width: 38px; height: 38px; padding: 0; flex: none; }
+.aiActions { display: grid; gap: 8px; min-width: 0; }
+.aiActions > button { width: 100%; height: 42px; min-height: 42px; }
+.aiSettings { display: grid; gap: 12px; min-width: 0; }
+.workspace .aiToggle { min-height: 32px; color: #d1d4dc; cursor: pointer; transition: color 140ms ease; }
+.aiToggle:hover:not(:has(input:disabled)) { color: #edf2f7; }
+.aiToggle:has(input:disabled) { color: var(--muted); cursor: default; }
+.aiToggle input { margin: 0; flex: none; }
+.workspace .aiSecond { display: grid; grid-template-columns: minmax(0, 1fr) 88px; align-items: center; gap: 12px; }
+.aiSecond span { min-width: 0; }
+.aiSecond small { display: block; margin-top: 2px; font-size: 11px; color: var(--muted); }
+.workspace .aiSecond input { width: 100%; height: 42px; text-align: center; font-variant-numeric: tabular-nums; transition: border-color 140ms ease, background-color 140ms ease; }
+.aiSecond input:hover:not(:disabled) { border-color: #50647c; }
+.aiSecond input:disabled { opacity: .45; cursor: default; }
+.aiSettings :global(.chart-select) > button { height: 42px; min-height: 42px; }
+.aiHint { border-top: 1px solid var(--border); padding-top: 12px; line-height: 1.65; overflow-wrap: anywhere; }
 .connectionSummary { display: grid; gap: 8px; min-width: 0; justify-items: start; }
 .connectionValue { min-width: 0; width: 100%; height: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 12px; }
 .connectionSummary .badge { box-sizing: border-box; height: 30px; }
