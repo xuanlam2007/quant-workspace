@@ -1,5 +1,7 @@
 "use client";
 
+import GlobalNotice from "@/components/ui/GlobalNotice";
+
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { RESOLUTIONS } from "../../config/chart-config";
@@ -319,20 +321,20 @@ export function LayoutSaveLoad({ symbol, resolution, ready, capture, onLoad, onO
             </div>)}
             {!rows.length && !error && <div className="layout-dialog__empty">{query ? "Không tìm thấy bố cục" : "Chưa có bố cục đã lưu"}</div>}
           </div>
-          {error && <div className="layout-dialog__error" role="alert">{error}<button type="button" tabIndex={-1} onClick={refresh}>Thử lại</button></div>}
+          {error && <GlobalNotice message={error}><button type="button" tabIndex={-1} onClick={refresh}>Thử lại</button></GlobalNotice>}
         </> : <form onSubmit={(event) => { event.preventDefault(); submit(); }}>
           <label className="layout-dialog__name">Điền tên định dạng biểu đồ mới:<input ref={input} tabIndex={-1} value={name} maxLength={64} autoComplete="off" aria-label="Tên bố cục" disabled={busy} onChange={(event) => setName(event.target.value)}/></label>
-          {error && <p className="layout-dialog__error" role="alert">{error}</p>}
+          {error && <GlobalNotice message={error} />}
           <div className="layout-dialog__actions"><button type="button" tabIndex={-1} disabled={busy} onClick={close}>Hủy bỏ</button><button type="submit" tabIndex={-1} className="primary" disabled={!name.trim() || busy || !ready}>{slow ? <span className="layout-spinner"/> : "Lưu"}</button></div>
         </form>}
       </div>
       {confirm && <div className="layout-confirm-backdrop"><div className="layout-dialog layout-dialog--confirm" role="alertdialog" aria-modal="true" aria-labelledby="layout-confirm-title">
         <div className="layout-dialog__header"><h2 id="layout-confirm-title">{confirm.type === "delete" ? "Xóa bố cục" : "Ghi đè bố cục"}</h2><button type="button" tabIndex={-1} className="layout-dialog__close" aria-label="Đóng" disabled={busy} onClick={() => setConfirm(null)}><Icon svg={LAYOUT_ICONS.close}/></button></div>
         <p>{confirm.type === "delete" ? `Bạn có thực sự muốn xóa Bố cục Biểu đồ ${confirm.entry.name}?` : `Bố cục “${confirm.entry.name}” đã tồn tại. Bạn có muốn ghi đè không?`}</p>
-        {error && <p className="layout-dialog__error" role="alert">{error}</p>}
+        {error && <GlobalNotice message={error} />}
         <div className="layout-dialog__actions"><button type="button" tabIndex={-1} disabled={busy} onClick={() => setConfirm(null)}>Hủy bỏ</button><button type="button" tabIndex={-1} className="primary" disabled={busy} autoFocus onClick={() => confirm.type === "delete" ? remove() : void save(name, confirm.entry.id)}>{confirm.type === "delete" ? "Xóa" : "Ghi đè"}</button></div>
       </div></div>}
     </div>, host)}
-    {host && error && !dialog && createPortal(<div className="layout-save__error" role="alert">{error}<button type="button" tabIndex={-1} aria-label="Đóng" onClick={() => setError("")}><Icon svg={LAYOUT_ICONS.close}/></button></div>, host)}
+    {error && !dialog && <GlobalNotice message={error} onDismiss={() => setError("")} />}
   </div>;
 }
