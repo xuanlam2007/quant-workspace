@@ -53,9 +53,9 @@ export function replayMinutes(data: ReplayData): number[] {
 
 export function replayLogicalRange(barCount: number, plotWidth: number): { from: number; to: number } | null {
   if (barCount <= 0 || plotWidth <= 0) return null;
-  // Giữ bar spacing tối đa 6 px như bundle, thu nhỏ khi toàn bộ nến đã mở vượt viewport.
+  // Giữ overview với bar spacing 9 px, thu nhỏ khi nến đã mở vượt viewport.
   const to = barCount - 1 + 6;
-  return { from: Math.min(-0.5, to + 1 - plotWidth / 6), to };
+  return { from: Math.min(-0.5, to + 1 - plotWidth / 9), to };
 }
 
 export function replayFrame(data: ReplayData, index: number, evaluationSecond = 55): ReplayFrame {
