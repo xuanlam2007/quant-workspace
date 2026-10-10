@@ -1,5 +1,7 @@
 "use client";
 
+import GlobalNotice from "@/components/ui/GlobalNotice";
+
 import { LoadingIndicator } from "./ui/Loading";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createChartRenderScheduler } from "@/lib/chart-render-scheduler";
@@ -999,7 +1001,7 @@ function ChartInstance({ active, onLoadLayout, replay }: { active: boolean; onLo
         secondsVisible: false,
         borderVisible: true,
         borderColor: "#787b86",
-        barSpacing: replayRef.current ? 6 : 14,
+        barSpacing: replayRef.current ? 9 : 14,
         minBarSpacing: replayRef.current ? 0.01 : 0.5,
         rightOffset: 6,
         fixRightEdge: false,
@@ -4162,7 +4164,7 @@ function ChartInstance({ active, onLoadLayout, replay }: { active: boolean; onLo
             </div>
           )}
           {olderHistoryLoading && !historyLoading && !dataError && <div className="chart-history-loading"><LoadingIndicator label="Đang tải lịch sử biểu đồ" /></div>}
-          {dataError && <div className="chart-data-error" role="alert">{dataError}</div>}
+          {dataError && <GlobalNotice message={dataError} />}
           {mainPanePlotVisible && selectedDrawing && chartRef.current && seriesRef.current && lineToolsRef.current && (selectedDrawing.toolType !== "PriceNote" || priceNoteVisible(selectedDrawing.options as PriceNoteOptions, resolution)) && (
             <DrawingAxisRangeHighlight
               drawing={selectedDrawing}
