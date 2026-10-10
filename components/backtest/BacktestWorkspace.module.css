@@ -26,8 +26,18 @@
 .source { display: grid; gap: 10px; border-bottom: 1px solid var(--border); padding-bottom: 16px; }
 .sourceRow { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; }
 .sourceRow > button, .toolbar > button { height: 42px; min-height: 42px; padding-top: 0; padding-bottom: 0; }
+.sourceRow > button:nth-of-type(1) { width: 128px; flex: 0 0 128px; }
+.sourceRow > button:nth-of-type(2) { width: 140px; flex: 0 0 140px; }
+.sourceRow > button:nth-of-type(3) { width: 140px; flex: 0 0 140px; }
 .toolbar > .inline { height: 42px; align-items: center; }
 .toolbar > .inline > label { margin: 0; line-height: 20px; }
+.toolbar > .replayToggle { width: 132px; flex: 0 0 132px; }
+.toolbar > button:nth-child(2) { width: 116px; flex: 0 0 116px; }
+.toolbar > button:nth-child(3) { width: 148px; flex: 0 0 148px; }
+.toolbar > .inline > :global(.chart-select) { width: 136px; flex: 0 0 136px; }
+.workspace :global(.chart-select) > button { padding-block: 0; align-items: center; }
+.workspace :global(.chart-select) > button > span { display: flex; align-items: center; height: 100%; line-height: 20px; }
+.workspace :global(.chart-select) > button > svg { display: block; flex: none; }
 .sourceField { display: grid; gap: 6px; min-width: 0; }
 .sourceRow > .sourceField { flex: 0 1 194px; }
 .workspace .sourcePicker { width: 100%; height: 42px; justify-content: space-between; border-color: #434651; background: #1e222d; color: #d1d4dc; }
@@ -58,7 +68,12 @@
 .aside { display: grid; gap: 14px; min-width: 0; }
 .panel { padding: 16px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; display: grid; gap: 12px; min-width: 0; }
 .panelHeading { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-.aiPanel { gap: 16px; }
+.aiPanel { gap: 16px; container-type: inline-size; }
+.connectionConfig { display: grid; gap: 10px; min-width: 0; border-top: 1px solid var(--border); padding-top: 12px; }
+.connectionConfig > div { margin-top: 0; }
+.connectionConfig > div:last-of-type { margin-top: 4px; }
+.connectionConfig :global(.chart-select) > button { min-width: 0; width: 100%; height: 38px; }
+.connectionConfig button[aria-label="Làm mới model"] { width: 38px; min-width: 38px; height: 38px; padding: 0; }
 .workspace .iconButton { width: 38px; height: 38px; padding: 0; flex: none; }
 .aiActions { display: grid; gap: 8px; min-width: 0; }
 .aiActions > button { width: 100%; height: 42px; min-height: 42px; }
@@ -75,9 +90,22 @@
 .aiSecond input:disabled { opacity: .45; cursor: default; }
 .aiSettings :global(.chart-select) > button { height: 42px; min-height: 42px; }
 .aiHint { border-top: 1px solid var(--border); padding-top: 12px; line-height: 1.65; overflow-wrap: anywhere; }
-.connectionSummary { display: grid; gap: 8px; min-width: 0; justify-items: start; }
-.connectionValue { min-width: 0; width: 100%; height: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 12px; }
-.connectionSummary .badge { box-sizing: border-box; height: 30px; }
+.connectionSummary { display: grid; gap: 12px; min-width: 0; }
+.connectionHeader { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 38px; }
+.connectionTitle { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; min-width: 0; }
+.connectionTitle h2 { white-space: nowrap; }
+.connectionTitle .badge { box-sizing: border-box; min-height: 24px; padding: 2px 7px; white-space: nowrap; flex: none; transition: color 140ms ease, border-color 140ms ease, background-color 140ms ease; }
+.connectionDetails { display: grid; gap: 4px; margin: 0; min-width: 0; }
+.connectionRow { display: grid; grid-template-columns: 76px minmax(0, 1fr); align-items: center; gap: 12px; height: 22px; font-size: 12px; }
+.connectionRow dt { color: var(--muted); }
+.connectionRow dd { margin: 0; min-width: 0; color: #d1d4dc; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.connectionRefresh svg { display: block; transform-origin: center; }
+.connectionRefresh[aria-busy=true] svg { animation: connectionRefreshSpin 900ms linear infinite; }
+@keyframes connectionRefreshSpin { to { transform: rotate(360deg); } }
+@container (max-width: 240px) {
+  .connectionHeader { align-items: flex-start; min-height: 46px; }
+  .connectionTitle { flex-direction: column; align-items: flex-start; flex-wrap: nowrap; gap: 4px; }
+}
 .panel .full { width: 100%; }
 .notice { padding: 10px 14px; border-radius: 6px; border: 1px solid #f1c77950; background: #f1c77908; color: #f1c779; display: flex; align-items: start; gap: 10px; }
 .notice button { margin-left: auto; min-height: 24px; padding: 0 6px; background: transparent; }
