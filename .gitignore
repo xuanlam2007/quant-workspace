@@ -50,3 +50,4 @@ __pycache__/
 htmlcov/
 .DS_Store
 Thumbs.db
+tools/quant-strategy-auditor/engine/prompts/backtest_system.md
