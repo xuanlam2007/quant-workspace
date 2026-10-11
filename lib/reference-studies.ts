@@ -114,7 +114,7 @@ export function referenceColor(color = "#2196f3", transparency = 0) {
 
 const normalizePeriod = (period: string) => period.replace(/^1([DWM])$/, "$1");
 
-export async function calculateReferenceStudy(definition: ReferenceDefinition, settings: ReferenceSettings, bars: Bar[], symbol: string, resolution: string, info?: SymbolInfo, signal?: AbortSignal): Promise<ReferenceResult> {
+export async function calculateReferenceStudy(definition: ReferenceDefinition, settings: ReferenceSettings, bars: Bar[], symbol: string, resolution: string, info?: SymbolInfo, signal?: AbortSignal, replayOnly = false): Promise<ReferenceResult> {
   if (!bars.length) return { points: [], graphics: [] };
   const { studyRuntime, projectStudyTimes } = await loadReferenceStudies();
   const datasets = new Map<string, Bar[]>([[`${symbol}:${normalizePeriod(resolution)}`, bars]]);
@@ -162,6 +162,8 @@ export async function calculateReferenceStudy(definition: ReferenceDefinition, s
       if (failure) throw new Error(failure);
       break;
     }
+    // Replay không được tải symbol hoặc timeframe ngoài dữ liệu đã hiển thị.
+    if (replayOnly) throw new Error("Chỉ báo cần nguồn khác chưa có trong replay. Không tải dữ liệu ngoài cutoff.");
     if (pass === 3) throw new Error("Không thể tải dữ liệu bổ sung cho chỉ báo");
     await Promise.all([...missing].map(async ([key, request]) => {
       const extra = await fetchHistory(request.symbol, request.resolution, request.from, Number(bars.at(-1)!.time) + 86400, signal);

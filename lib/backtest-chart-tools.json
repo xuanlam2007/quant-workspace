@@ -1,0 +1,2138 @@
+{
+  "drawings": {
+    "TrendLine": 2,
+    "Arrow": 2,
+    "Ray": 2,
+    "ExtendedLine": 2,
+    "HorizontalLine": 1,
+    "HorizontalRay": 1,
+    "VerticalLine": 1,
+    "CrossLine": 1,
+    "Rectangle": 2,
+    "FibRetracement": 2,
+    "Text": 1,
+    "Callout": 2,
+    "PriceLabel": 1,
+    "PriceNote": 2,
+    "PriceRange": 2,
+    "LongShortPosition": 3
+  },
+  "indicators": [
+    {
+      "name": "Accumulation/Distribution",
+      "inputs": []
+    },
+    {
+      "name": "Accumulative Swing Index",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "float",
+          "min": 0.1,
+          "max": 100000,
+          "default": 10
+        }
+      ]
+    },
+    {
+      "name": "Advance/Decline",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 10
+        }
+      ]
+    },
+    {
+      "name": "Arnaud Legoux Moving Average",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 0,
+          "max": 5000,
+          "default": 9
+        },
+        {
+          "id": "in_1",
+          "type": "float",
+          "min": -1000000000000,
+          "max": 1000000000000,
+          "default": 0.85
+        },
+        {
+          "id": "in_2",
+          "type": "float",
+          "min": -1000000000000,
+          "max": 1000000000000,
+          "default": 6
+        }
+      ]
+    },
+    {
+      "name": "Aroon",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 14
+        }
+      ]
+    },
+    {
+      "name": "Average Price",
+      "inputs": []
+    },
+    {
+      "name": "Average Directional Index",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": -1000000000000,
+          "max": 1000000000000,
+          "default": 14
+        },
+        {
+          "id": "in_1",
+          "type": "integer",
+          "min": -1000000000000,
+          "max": 1000000000000,
+          "default": 14
+        }
+      ]
+    },
+    {
+      "name": "Average True Range",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 14
+        }
+      ]
+    },
+    {
+      "name": "Awesome Oscillator",
+      "inputs": []
+    },
+    {
+      "name": "Accelerator Oscillator",
+      "inputs": []
+    },
+    {
+      "name": "Balance of Power",
+      "inputs": []
+    },
+    {
+      "name": "Bollinger Bands",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 10000,
+          "default": 20
+        },
+        {
+          "id": "in_1",
+          "type": "float",
+          "min": 0.001,
+          "max": 50,
+          "default": 2
+        }
+      ]
+    },
+    {
+      "name": "Bollinger Bands %B",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 10000,
+          "default": 20
+        },
+        {
+          "id": "in_1",
+          "type": "float",
+          "min": 0.001,
+          "max": 50,
+          "default": 2
+        }
+      ]
+    },
+    {
+      "name": "Bollinger Bands Width",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 10000,
+          "default": 20
+        },
+        {
+          "id": "in_1",
+          "type": "float",
+          "min": 0.001,
+          "max": 50,
+          "default": 2
+        }
+      ]
+    },
+    {
+      "name": "Chaikin Money Flow",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 20
+        }
+      ]
+    },
+    {
+      "name": "Chaikin Oscillator",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 3
+        },
+        {
+          "id": "in_1",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 10
+        }
+      ]
+    },
+    {
+      "name": "Chaikin Volatility",
+      "inputs": [
+        {
+          "id": "periods",
+          "type": "integer",
+          "default": 10
+        },
+        {
+          "id": "rocLookback",
+          "type": "integer",
+          "default": 10
+        }
+      ]
+    },
+    {
+      "name": "Chande Kroll Stop",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 4999,
+          "default": 10
+        },
+        {
+          "id": "in_1",
+          "type": "integer",
+          "min": 1,
+          "max": 1000000000000,
+          "default": 1
+        },
+        {
+          "id": "in_2",
+          "type": "integer",
+          "min": 1,
+          "max": 1000000000000,
+          "default": 9
+        }
+      ]
+    },
+    {
+      "name": "Chande Momentum Oscillator",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 9
+        }
+      ]
+    },
+    {
+      "name": "Chop Zone",
+      "inputs": []
+    },
+    {
+      "name": "Choppiness Index",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 14
+        }
+      ]
+    },
+    {
+      "name": "Commodity Channel Index",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 20
+        },
+        {
+          "id": "smoothingLine",
+          "type": "text",
+          "options": [
+            "SMA",
+            "EMA",
+            "WMA"
+          ],
+          "default": "SMA"
+        },
+        {
+          "id": "smoothingLength",
+          "type": "integer",
+          "min": 1,
+          "max": 10000,
+          "default": 20
+        }
+      ]
+    },
+    {
+      "name": "Connors RSI",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "default": 3
+        },
+        {
+          "id": "in_1",
+          "type": "integer",
+          "min": 1,
+          "default": 2
+        },
+        {
+          "id": "in_2",
+          "type": "integer",
+          "min": 1,
+          "default": 100
+        }
+      ]
+    },
+    {
+      "name": "Coppock Curve",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": -1000000000000,
+          "max": 5000,
+          "default": 10
+        },
+        {
+          "id": "in_1",
+          "type": "integer",
+          "min": 1,
+          "max": 4999,
+          "default": 14
+        },
+        {
+          "id": "in_2",
+          "type": "integer",
+          "min": 1,
+          "max": 4999,
+          "default": 11
+        }
+      ]
+    },
+    {
+      "name": "Correlation Coeff",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "symbol",
+          "default": ""
+        },
+        {
+          "id": "in_1",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 20
+        }
+      ]
+    },
+    {
+      "name": "Correlation - Log",
+      "inputs": [
+        {
+          "id": "instrument",
+          "type": "symbol",
+          "default": ""
+        },
+        {
+          "id": "instrument2",
+          "type": "symbol",
+          "default": ""
+        },
+        {
+          "id": "periods",
+          "type": "integer",
+          "default": 25
+        }
+      ]
+    },
+    {
+      "name": "Detrended Price Oscillator",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 1000000000000,
+          "default": 21
+        },
+        {
+          "id": "in_1",
+          "type": "bool",
+          "default": false
+        }
+      ]
+    },
+    {
+      "name": "Directional Movement Index",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 14
+        },
+        {
+          "id": "in_1",
+          "type": "integer",
+          "min": 1,
+          "max": 50,
+          "default": 14
+        }
+      ]
+    },
+    {
+      "name": "Donchian Channels",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 20
+        }
+      ]
+    },
+    {
+      "name": "Double Exponential Moving Average",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 10000,
+          "default": 9
+        }
+      ]
+    },
+    {
+      "name": "Ease of Movement",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 1000000000,
+          "default": 10000
+        },
+        {
+          "id": "in_1",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 14
+        }
+      ]
+    },
+    {
+      "name": "Elders Force Index",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 13
+        }
+      ]
+    },
+    {
+      "name": "EMA Cross",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 9
+        },
+        {
+          "id": "in_1",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 26
+        }
+      ]
+    },
+    {
+      "name": "Envelopes",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 20
+        },
+        {
+          "id": "in_1",
+          "type": "float",
+          "min": 0,
+          "default": 10
+        },
+        {
+          "id": "in_2",
+          "type": "float",
+          "min": 0,
+          "default": 10
+        },
+        {
+          "id": "in_3",
+          "type": "text",
+          "options": [
+            "Simple",
+            "Exponential",
+            "Weighted"
+          ],
+          "default": "Simple"
+        },
+        {
+          "id": "in_4",
+          "type": "source",
+          "options": [
+            "open",
+            "high",
+            "low",
+            "close",
+            "hl2",
+            "hlc3",
+            "ohlc4"
+          ],
+          "default": "close"
+        }
+      ]
+    },
+    {
+      "name": "Standard Error",
+      "inputs": [
+        {
+          "id": "length",
+          "type": "integer",
+          "min": 3,
+          "default": 14
+        }
+      ]
+    },
+    {
+      "name": "Standard Error Bands",
+      "inputs": [
+        {
+          "id": "periods",
+          "type": "integer",
+          "default": 21
+        },
+        {
+          "id": "errors",
+          "type": "float",
+          "default": 2
+        },
+        {
+          "id": "method",
+          "type": "text",
+          "options": [
+            "Simple",
+            "Exponential",
+            "Weighted"
+          ],
+          "default": "Simple"
+        },
+        {
+          "id": "averagePeriods",
+          "type": "integer",
+          "default": 3
+        }
+      ]
+    },
+    {
+      "name": "Fisher Transform",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 1000000000000,
+          "default": 9
+        }
+      ]
+    },
+    {
+      "name": "Historical Volatility",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 1000000000000,
+          "default": 10
+        }
+      ]
+    },
+    {
+      "name": "Hull MA",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 10000,
+          "default": 9
+        }
+      ]
+    },
+    {
+      "name": "Ichimoku Cloud",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 1000000000000,
+          "default": 9
+        },
+        {
+          "id": "in_1",
+          "type": "integer",
+          "min": 1,
+          "max": 1000000000000,
+          "default": 26
+        },
+        {
+          "id": "in_2",
+          "type": "integer",
+          "min": 1,
+          "max": 1000000000000,
+          "default": 52
+        },
+        {
+          "id": "in_3",
+          "type": "integer",
+          "min": 1,
+          "max": 1000000000000,
+          "default": 26
+        }
+      ]
+    },
+    {
+      "name": "Keltner Channels",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "id": "in_1",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 20
+        },
+        {
+          "id": "in_2",
+          "type": "float",
+          "min": -1000000000000,
+          "max": 1000000000000,
+          "default": 1
+        }
+      ]
+    },
+    {
+      "name": "Klinger Oscillator",
+      "inputs": []
+    },
+    {
+      "name": "Know Sure Thing",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 10
+        },
+        {
+          "id": "in_1",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 15
+        },
+        {
+          "id": "in_2",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 20
+        },
+        {
+          "id": "in_3",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 30
+        },
+        {
+          "id": "in_4",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 10
+        },
+        {
+          "id": "in_5",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 10
+        },
+        {
+          "id": "in_6",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 10
+        },
+        {
+          "id": "in_7",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 15
+        },
+        {
+          "id": "in_8",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 9
+        }
+      ]
+    },
+    {
+      "name": "Least Squares Moving Average",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 1000000000000,
+          "default": 25
+        },
+        {
+          "id": "in_1",
+          "type": "integer",
+          "min": -1000000000000,
+          "max": 1000000000000,
+          "default": 0
+        }
+      ]
+    },
+    {
+      "name": "Linear Regression Curve",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 9
+        }
+      ]
+    },
+    {
+      "name": "Linear Regression Slope",
+      "inputs": [
+        {
+          "id": "periods",
+          "type": "integer",
+          "min": 2,
+          "default": 14
+        }
+      ]
+    },
+    {
+      "name": "MA Cross",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 9
+        },
+        {
+          "id": "in_1",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 26
+        }
+      ]
+    },
+    {
+      "name": "MA with EMA Cross",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 10
+        },
+        {
+          "id": "in_1",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 10
+        }
+      ]
+    },
+    {
+      "name": "Mass Index",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 10
+        }
+      ]
+    },
+    {
+      "name": "McGinley Dynamic",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 1000000000000,
+          "default": 14
+        }
+      ]
+    },
+    {
+      "name": "Median Price",
+      "inputs": []
+    },
+    {
+      "name": "Momentum",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 10
+        },
+        {
+          "id": "in_1",
+          "type": "source",
+          "options": [
+            "open",
+            "high",
+            "low",
+            "close",
+            "hl2",
+            "hlc3",
+            "ohlc4"
+          ],
+          "default": "close"
+        }
+      ]
+    },
+    {
+      "name": "Money Flow Index",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 14
+        }
+      ]
+    },
+    {
+      "name": "Moving Average",
+      "inputs": [
+        {
+          "id": "symbol",
+          "type": "symbol",
+          "default": ""
+        },
+        {
+          "id": "length",
+          "type": "integer",
+          "min": 1,
+          "max": 10000,
+          "default": 9
+        },
+        {
+          "id": "source",
+          "type": "source",
+          "options": [
+            "open",
+            "high",
+            "low",
+            "close",
+            "hl2",
+            "hlc3",
+            "ohlc4"
+          ],
+          "default": "close"
+        },
+        {
+          "id": "offset",
+          "type": "integer",
+          "min": -10000,
+          "max": 10000,
+          "default": 0
+        },
+        {
+          "id": "smoothingLine",
+          "type": "text",
+          "options": [
+            "SMA",
+            "EMA",
+            "WMA"
+          ],
+          "default": "SMA"
+        },
+        {
+          "id": "smoothingLength",
+          "type": "integer",
+          "min": 1,
+          "max": 10000,
+          "default": 9
+        }
+      ]
+    },
+    {
+      "name": "Moving Average Channel",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 10000,
+          "default": 20
+        },
+        {
+          "id": "in_1",
+          "type": "integer",
+          "min": 1,
+          "max": 10000,
+          "default": 20
+        },
+        {
+          "id": "in_2",
+          "type": "integer",
+          "min": -10000,
+          "max": 10000,
+          "default": 0
+        },
+        {
+          "id": "in_3",
+          "type": "integer",
+          "min": -10000,
+          "max": 10000,
+          "default": 0
+        }
+      ]
+    },
+    {
+      "name": "Moving Average Convergence/Divergence",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 12
+        },
+        {
+          "id": "in_1",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 26
+        },
+        {
+          "id": "in_3",
+          "type": "source",
+          "options": [
+            "open",
+            "high",
+            "low",
+            "close",
+            "hl2",
+            "hlc3",
+            "ohlc4"
+          ],
+          "default": "close"
+        },
+        {
+          "id": "in_2",
+          "type": "integer",
+          "min": 1,
+          "max": 50,
+          "default": 9
+        }
+      ]
+    },
+    {
+      "name": "Moving Average Exponential",
+      "inputs": [
+        {
+          "id": "length",
+          "type": "integer",
+          "min": 1,
+          "max": 10000,
+          "default": 9
+        },
+        {
+          "id": "source",
+          "type": "source",
+          "options": [
+            "open",
+            "high",
+            "low",
+            "close",
+            "hl2",
+            "hlc3",
+            "ohlc4"
+          ],
+          "default": "close"
+        },
+        {
+          "id": "offset",
+          "type": "integer",
+          "min": -10000,
+          "max": 10000,
+          "default": 0
+        },
+        {
+          "id": "smoothingLine",
+          "type": "text",
+          "options": [
+            "SMA",
+            "EMA",
+            "WMA"
+          ],
+          "default": "SMA"
+        },
+        {
+          "id": "smoothingLength",
+          "type": "integer",
+          "min": 1,
+          "max": 10000,
+          "default": 9
+        }
+      ]
+    },
+    {
+      "name": "Moving Average Weighted",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 9
+        },
+        {
+          "id": "in_1",
+          "type": "source",
+          "options": [
+            "open",
+            "high",
+            "low",
+            "close",
+            "hl2",
+            "hlc3",
+            "ohlc4"
+          ],
+          "default": "close"
+        },
+        {
+          "id": "in_2",
+          "type": "integer",
+          "min": -10000,
+          "max": 10000,
+          "default": 0
+        }
+      ]
+    },
+    {
+      "name": "Moving Average Double",
+      "inputs": [
+        {
+          "id": "firstPeriods",
+          "type": "integer",
+          "min": 1,
+          "max": 10000,
+          "default": 14
+        },
+        {
+          "id": "secondPeriods",
+          "type": "integer",
+          "min": 1,
+          "max": 10000,
+          "default": 21
+        },
+        {
+          "id": "method",
+          "type": "text",
+          "options": [
+            "Simple",
+            "Exponential",
+            "Weighted"
+          ],
+          "default": "Simple"
+        }
+      ]
+    },
+    {
+      "name": "Moving Average Triple",
+      "inputs": [
+        {
+          "id": "firstPeriods",
+          "type": "integer",
+          "min": 1,
+          "max": 10000,
+          "default": 14
+        },
+        {
+          "id": "secondPeriods",
+          "type": "integer",
+          "min": 1,
+          "max": 10000,
+          "default": 21
+        },
+        {
+          "id": "thirdPeriods",
+          "type": "integer",
+          "min": 1,
+          "max": 10000,
+          "default": 35
+        },
+        {
+          "id": "method",
+          "type": "text",
+          "options": [
+            "Simple",
+            "Exponential",
+            "Weighted"
+          ],
+          "default": "Simple"
+        }
+      ]
+    },
+    {
+      "name": "Moving Average Adaptive",
+      "inputs": [
+        {
+          "id": "periods",
+          "type": "integer",
+          "min": 2,
+          "max": 10000,
+          "default": 10
+        }
+      ]
+    },
+    {
+      "name": "Moving Average Hamming",
+      "inputs": [
+        {
+          "id": "periods",
+          "type": "integer",
+          "min": 1,
+          "max": 10000,
+          "default": 10
+        }
+      ]
+    },
+    {
+      "name": "Moving Average Multiple",
+      "inputs": [
+        {
+          "id": "firstPeriods",
+          "type": "integer",
+          "min": 1,
+          "max": 10000,
+          "default": 14
+        },
+        {
+          "id": "secondPeriods",
+          "type": "integer",
+          "min": 1,
+          "max": 10000,
+          "default": 21
+        },
+        {
+          "id": "thirdPeriods",
+          "type": "integer",
+          "min": 1,
+          "max": 10000,
+          "default": 35
+        },
+        {
+          "id": "fourthPeriods",
+          "type": "integer",
+          "min": 1,
+          "max": 10000,
+          "default": 50
+        },
+        {
+          "id": "fifthPeriods",
+          "type": "integer",
+          "min": 1,
+          "max": 10000,
+          "default": 100
+        },
+        {
+          "id": "sixthPeriods",
+          "type": "integer",
+          "min": 1,
+          "max": 10000,
+          "default": 200
+        },
+        {
+          "id": "method",
+          "type": "text",
+          "options": [
+            "Simple",
+            "Exponential",
+            "Weighted"
+          ],
+          "default": "Simple"
+        }
+      ]
+    },
+    {
+      "name": "Majority Rule",
+      "inputs": [
+        {
+          "id": "rollingPeriod",
+          "type": "integer",
+          "min": 1,
+          "default": 14
+        }
+      ]
+    },
+    {
+      "name": "Net Volume",
+      "inputs": []
+    },
+    {
+      "name": "On Balance Volume",
+      "inputs": [
+        {
+          "id": "smoothingLine",
+          "type": "text",
+          "options": [
+            "SMA",
+            "EMA",
+            "WMA"
+          ],
+          "default": "SMA"
+        },
+        {
+          "id": "smoothingLength",
+          "type": "integer",
+          "min": 1,
+          "max": 10000,
+          "default": 9
+        }
+      ]
+    },
+    {
+      "name": "Parabolic SAR",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "float",
+          "min": -1000000000000,
+          "max": 1000000000000,
+          "default": 0.02
+        },
+        {
+          "id": "in_1",
+          "type": "float",
+          "min": -1000000000000,
+          "max": 1000000000000,
+          "default": 0.02
+        },
+        {
+          "id": "in_2",
+          "type": "float",
+          "min": -1000000000000,
+          "max": 1000000000000,
+          "default": 0.2
+        }
+      ]
+    },
+    {
+      "name": "Price Channel",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 20
+        },
+        {
+          "id": "in_1",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 0
+        }
+      ]
+    },
+    {
+      "name": "Price Oscillator",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 10
+        },
+        {
+          "id": "in_1",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 21
+        }
+      ]
+    },
+    {
+      "name": "Price Volume Trend",
+      "inputs": []
+    },
+    {
+      "name": "Rate Of Change",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 1000000000000,
+          "default": 9
+        }
+      ]
+    },
+    {
+      "name": "Relative Strength Index",
+      "inputs": [
+        {
+          "id": "length",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 14
+        },
+        {
+          "id": "smoothingLine",
+          "type": "text",
+          "options": [
+            "SMA",
+            "EMA",
+            "WMA"
+          ],
+          "default": "SMA"
+        },
+        {
+          "id": "smoothingLength",
+          "type": "integer",
+          "min": 1,
+          "max": 10000,
+          "default": 14
+        }
+      ]
+    },
+    {
+      "name": "Relative Vigor Index",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 10
+        }
+      ]
+    },
+    {
+      "name": "Relative Volatility Index",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 10
+        }
+      ]
+    },
+    {
+      "name": "SMI Ergodic Indicator/Oscillator",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 5
+        },
+        {
+          "id": "in_1",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 20
+        },
+        {
+          "id": "in_2",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 5
+        }
+      ]
+    },
+    {
+      "name": "Smoothed Moving Average",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 1000000000000,
+          "default": 7
+        },
+        {
+          "id": "in_1",
+          "type": "source",
+          "options": [
+            "open",
+            "high",
+            "low",
+            "close",
+            "hl2",
+            "hlc3",
+            "ohlc4"
+          ],
+          "default": "close"
+        }
+      ]
+    },
+    {
+      "name": "Standard Deviation",
+      "inputs": [
+        {
+          "id": "periods",
+          "type": "integer",
+          "default": 5
+        },
+        {
+          "id": "deviations",
+          "type": "float",
+          "default": 1
+        }
+      ]
+    },
+    {
+      "name": "Stochastic",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 10000,
+          "default": 14
+        },
+        {
+          "id": "in_1",
+          "type": "integer",
+          "min": 1,
+          "max": 10000,
+          "default": 1
+        },
+        {
+          "id": "in_2",
+          "type": "integer",
+          "min": 1,
+          "max": 10000,
+          "default": 3
+        }
+      ]
+    },
+    {
+      "name": "Stochastic RSI",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 10000,
+          "default": 14
+        },
+        {
+          "id": "in_1",
+          "type": "integer",
+          "min": 1,
+          "max": 10000,
+          "default": 14
+        },
+        {
+          "id": "in_2",
+          "type": "integer",
+          "min": 1,
+          "max": 10000,
+          "default": 3
+        },
+        {
+          "id": "in_3",
+          "type": "integer",
+          "min": 1,
+          "max": 10000,
+          "default": 3
+        }
+      ]
+    },
+    {
+      "name": "TRIX",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 18
+        }
+      ]
+    },
+    {
+      "name": "Triple EMA",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 10000,
+          "default": 9
+        }
+      ]
+    },
+    {
+      "name": "True Strength Index",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 4999,
+          "default": 25
+        },
+        {
+          "id": "in_1",
+          "type": "integer",
+          "min": 1,
+          "max": 4999,
+          "default": 13
+        },
+        {
+          "id": "in_2",
+          "type": "integer",
+          "min": 1,
+          "max": 4999,
+          "default": 13
+        }
+      ]
+    },
+    {
+      "name": "Trend Strength Index",
+      "inputs": [
+        {
+          "id": "periods",
+          "type": "integer",
+          "default": 14
+        }
+      ]
+    },
+    {
+      "name": "Typical Price",
+      "inputs": []
+    },
+    {
+      "name": "Ultimate Oscillator",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 1000000000000,
+          "default": 7
+        },
+        {
+          "id": "in_1",
+          "type": "integer",
+          "min": 1,
+          "max": 1000000000000,
+          "default": 14
+        },
+        {
+          "id": "in_2",
+          "type": "integer",
+          "min": 1,
+          "max": 1000000000000,
+          "default": 28
+        }
+      ]
+    },
+    {
+      "name": "Volatility Close-to-Close",
+      "inputs": [
+        {
+          "id": "periods",
+          "type": "integer",
+          "min": 2,
+          "default": 10
+        },
+        {
+          "id": "daysPerYear",
+          "type": "integer",
+          "min": 1,
+          "max": 366,
+          "default": 252
+        }
+      ]
+    },
+    {
+      "name": "Volatility Zero Trend Close-to-Close",
+      "inputs": [
+        {
+          "id": "periods",
+          "type": "integer",
+          "min": 0,
+          "max": 10000,
+          "default": 10
+        },
+        {
+          "id": "daysPerYear",
+          "type": "integer",
+          "default": 252
+        }
+      ]
+    },
+    {
+      "name": "Volatility O-H-L-C",
+      "inputs": [
+        {
+          "id": "periods",
+          "type": "integer",
+          "default": 10
+        },
+        {
+          "id": "marketClosedPercentage",
+          "type": "float",
+          "min": 0,
+          "max": 0.999,
+          "default": 0
+        },
+        {
+          "id": "daysPerYear",
+          "type": "integer",
+          "default": 252
+        }
+      ]
+    },
+    {
+      "name": "Volatility Index",
+      "inputs": [
+        {
+          "id": "periods",
+          "type": "integer",
+          "default": 10
+        },
+        {
+          "id": "atrMult",
+          "type": "float",
+          "default": 3
+        },
+        {
+          "id": "method",
+          "type": "text",
+          "options": [
+            "Exponential",
+            "Wilder Smoothing"
+          ],
+          "default": "Wilder Smoothing"
+        }
+      ]
+    },
+    {
+      "name": "VWAP",
+      "inputs": []
+    },
+    {
+      "name": "VWMA",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 10000,
+          "default": 20
+        }
+      ]
+    },
+    {
+      "name": "Volume Oscillator",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 4999,
+          "default": 5
+        },
+        {
+          "id": "in_1",
+          "type": "integer",
+          "min": 1,
+          "max": 4999,
+          "default": 10
+        }
+      ]
+    },
+    {
+      "name": "Vortex Indicator",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 2,
+          "max": 1000000000000,
+          "default": 14
+        }
+      ]
+    },
+    {
+      "name": "Willams %R",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 14
+        }
+      ]
+    },
+    {
+      "name": "Williams Alligator",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 21
+        },
+        {
+          "id": "in_1",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 13
+        },
+        {
+          "id": "in_2",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 8
+        },
+        {
+          "id": "in_3",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 8
+        },
+        {
+          "id": "in_4",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 5
+        },
+        {
+          "id": "in_5",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 3
+        }
+      ]
+    },
+    {
+      "name": "Williams Fractals",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 2,
+          "max": 1000000000000,
+          "default": 2
+        }
+      ]
+    },
+    {
+      "name": "Guppy Multiple Moving Average",
+      "inputs": [
+        {
+          "id": "traderEMA1Length",
+          "type": "integer",
+          "min": 1,
+          "max": 1000,
+          "default": 3
+        },
+        {
+          "id": "traderEMA2Length",
+          "type": "integer",
+          "min": 1,
+          "max": 1000,
+          "default": 5
+        },
+        {
+          "id": "traderEMA3Length",
+          "type": "integer",
+          "min": 1,
+          "max": 1000,
+          "default": 8
+        },
+        {
+          "id": "traderEMA4Length",
+          "type": "integer",
+          "min": 1,
+          "max": 1000,
+          "default": 10
+        },
+        {
+          "id": "traderEMA5Length",
+          "type": "integer",
+          "min": 1,
+          "max": 1000,
+          "default": 12
+        },
+        {
+          "id": "traderEMA6Length",
+          "type": "integer",
+          "min": 1,
+          "max": 1000,
+          "default": 15
+        },
+        {
+          "id": "investorEMA1Length",
+          "type": "integer",
+          "min": 1,
+          "max": 1000,
+          "default": 30
+        },
+        {
+          "id": "investorEMA2Length",
+          "type": "integer",
+          "min": 1,
+          "max": 1000,
+          "default": 35
+        },
+        {
+          "id": "investorEMA3Length",
+          "type": "integer",
+          "min": 1,
+          "max": 1000,
+          "default": 40
+        },
+        {
+          "id": "investorEMA4Length",
+          "type": "integer",
+          "min": 1,
+          "max": 1000,
+          "default": 45
+        },
+        {
+          "id": "investorEMA5Length",
+          "type": "integer",
+          "min": 1,
+          "max": 1000,
+          "default": 50
+        },
+        {
+          "id": "investorEMA6Length",
+          "type": "integer",
+          "min": 1,
+          "max": 1000,
+          "default": 60
+        }
+      ]
+    },
+    {
+      "name": "52 Week High/Low",
+      "inputs": [
+        {
+          "id": "highestSource",
+          "type": "text",
+          "options": [
+            "close",
+            "high"
+          ],
+          "default": "close"
+        },
+        {
+          "id": "lowestSource",
+          "type": "text",
+          "options": [
+            "close",
+            "low"
+          ],
+          "default": "close"
+        }
+      ]
+    },
+    {
+      "name": "Volume",
+      "inputs": [
+        {
+          "id": "symbol",
+          "type": "symbol",
+          "default": ""
+        },
+        {
+          "id": "length",
+          "type": "integer",
+          "min": 1,
+          "max": 2000,
+          "default": 20
+        },
+        {
+          "id": "col_prev_close",
+          "type": "bool",
+          "default": false
+        },
+        {
+          "id": "smoothingLine",
+          "type": "text",
+          "options": [
+            "SMA",
+            "EMA",
+            "WMA"
+          ],
+          "default": "SMA"
+        },
+        {
+          "id": "smoothingLength",
+          "type": "integer",
+          "min": 1,
+          "max": 10000,
+          "default": 9
+        }
+      ]
+    },
+    {
+      "name": "ZigZag",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "float",
+          "min": 0.001,
+          "max": 100,
+          "default": 5
+        },
+        {
+          "id": "in_1",
+          "type": "integer",
+          "min": 2,
+          "max": 1000,
+          "default": 10
+        }
+      ]
+    },
+    {
+      "name": "SuperTrend",
+      "inputs": [
+        {
+          "id": "in_0",
+          "type": "integer",
+          "min": 1,
+          "max": 100,
+          "default": 10
+        },
+        {
+          "id": "in_1",
+          "type": "float",
+          "min": 1,
+          "max": 100,
+          "default": 3
+        }
+      ]
+    },
+    {
+      "name": "Pivot Points Standard",
+      "inputs": [
+        {
+          "id": "kind",
+          "type": "text",
+          "options": [
+            "Traditional",
+            "Fibonacci",
+            "Woodie",
+            "Classic",
+            "DeMark",
+            "Camarilla"
+          ],
+          "default": "Traditional"
+        },
+        {
+          "id": "showHistoricalPivots",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "id": "pivTimeFrame",
+          "type": "text",
+          "options": [
+            "Auto",
+            "Daily",
+            "Weekly",
+            "Monthly",
+            "Yearly"
+          ],
+          "default": "Auto"
+        },
+        {
+          "id": "lookBack",
+          "type": "integer",
+          "min": 1,
+          "max": 5000,
+          "default": 15
+        }
+      ]
+    },
+    {
+      "name": "Spread",
+      "inputs": [
+        {
+          "id": "source",
+          "type": "text",
+          "options": [
+            "open",
+            "high",
+            "low",
+            "close",
+            "hl2",
+            "hlc3",
+            "ohlc4"
+          ],
+          "default": "close"
+        },
+        {
+          "id": "symbol2",
+          "type": "symbol",
+          "default": ""
+        }
+      ]
+    },
+    {
+      "name": "Ratio",
+      "inputs": [
+        {
+          "id": "source",
+          "type": "text",
+          "options": [
+            "open",
+            "high",
+            "low",
+            "close",
+            "hl2",
+            "hlc3",
+            "ohlc4"
+          ],
+          "default": "close"
+        },
+        {
+          "id": "symbol2",
+          "type": "symbol",
+          "default": ""
+        }
+      ]
+    }
+  ]
+}

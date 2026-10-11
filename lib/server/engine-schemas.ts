@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { replayDrawingPoints, validateReplayIndicator, type ReplayIndicator } from "../backtest.ts";
 
 const empty = z.strictObject({});
 const id = z.string().min(1).max(80).regex(/^[a-zA-Z0-9_-]+$/);
@@ -15,12 +16,14 @@ const sessionBody = z.strictObject({ date, session_id: session });
 const drawing = z.strictObject({ tool: z.string().min(1).max(80).regex(/^[a-zA-Z][a-zA-Z0-9]*$/), points: z.array(point).min(1).max(20), label: z.string().max(500).optional() });
 const action = z.enum(["HOLD", "OPEN_LONG", "OPEN_SHORT", "CLOSE", "CANCEL"]);
 const orderType = z.enum(["MARKET", "LIMIT", "STOP_LIMIT"]);
-const replayDrawing = z.strictObject({ id, tool: z.enum(["TrendLine", "HorizontalLine", "Ray", "ExtendedLine"]), points: z.array(point).min(1).max(2), label: z.string().max(160) });
+const replayDrawing = z.strictObject({ id, tool: z.enum(Object.keys(replayDrawingPoints) as [keyof typeof replayDrawingPoints, ...(keyof typeof replayDrawingPoints)[]]), points: z.array(point).min(1).max(3), label: z.string().max(160) }).refine(drawing => drawing.points.length === replayDrawingPoints[drawing.tool], { message: "Drawing point count does not match its tool" });
+const indicatorFields = { id, name: z.string().min(1).max(100), inputs: z.array(z.strictObject({ id: z.string().min(1).max(80), value: z.union([z.string().max(160), z.number().finite(), z.boolean()]) })).max(30), visible: z.boolean(), operation: z.enum(["upsert", "remove"]) };
+const replayIndicator = z.strictObject({ ...indicatorFields, status: z.enum(["ready", "loading", "error"]).optional(), error: z.string().max(200).optional() }).refine(indicator => { try { validateReplayIndicator(indicator as ReplayIndicator); return true; } catch { return false; } }, { message: "Invalid replay indicator" });
 
 export const backtestFrameSchema = z.strictObject({
   symbol: z.string().min(1).max(40).regex(/^[a-zA-Z0-9_.-]+$/), cutoff: time, granularity: z.enum(["1s", "1m"]),
   bars: z.array(z.strictObject({ time, open: price, high: price, low: price, close: price, volume: z.number().finite().nonnegative() })).min(1).max(2000),
-  image: z.string().max(12 * 1024 * 1024), drawings: z.array(replayDrawing).max(100),
+  image: z.string().max(12 * 1024 * 1024), drawings: z.array(replayDrawing).max(100), indicators: z.array(replayIndicator).max(30).optional(),
   position: z.strictObject({ side: z.enum(["LONG", "SHORT"]), price, time }).nullable(),
   orders: z.array(z.strictObject({ id: z.string().max(80), side: z.enum(["BUY", "SELL"]), purpose: z.enum(["OPEN", "CLOSE"]), type: orderType,
     stop: price.nullable(), limit: price.nullable(), submitted: time, triggered: time.nullable(), status: z.enum(["waiting", "triggered", "filled", "cancelled"]), filled: time.nullable(), price: price.nullable() })).max(300),
