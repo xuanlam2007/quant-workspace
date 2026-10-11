@@ -13,7 +13,7 @@ from engine.observer_guard import decide
 
 class AgyBacktestTests(unittest.TestCase):
     def test_chart_read_and_backtest_schema_are_required(self):
-        output = {"action": "HOLD", "order_type": "MARKET", "stop_price": None, "limit_price": None, "reason": "Fixture", "question": "", "drawings": []}
+        output = {"action": "HOLD", "order_type": "MARKET", "stop_price": None, "limit_price": None, "reason": "Fixture", "question": "", "drawings": [], "indicators": [{"id": "rsi", "name": "Relative Strength Index", "inputs": [{"id": "length", "value": 14}], "visible": True, "operation": "upsert"}]}
         with tempfile.TemporaryDirectory() as folder:
             image = Path(folder) / "chart.png"
             image.write_bytes(b"fixture image")
@@ -31,6 +31,7 @@ class AgyBacktestTests(unittest.TestCase):
             with patch("engine.cli_analyzer.find_cli", return_value="agy.exe"), patch("engine.cli_analyzer.run_cli", side_effect=run):
                 response = analyzer._run("Fixture", analyzer.settings, image=image, structured=True, response_schema=BacktestDecision.model_json_schema())
             self.assertEqual(BacktestDecision.model_validate_json(response).action, "HOLD")
+            self.assertEqual(BacktestDecision.model_validate_json(response).indicators[0].name, "Relative Strength Index")
 
     def test_backtest_finish_does_not_grant_external_tools_or_paths(self):
         output = {"action": "HOLD", "order_type": "MARKET", "stop_price": None, "limit_price": None, "reason": "Fixture", "question": "", "drawings": []}
@@ -39,6 +40,12 @@ class AgyBacktestTests(unittest.TestCase):
         self.assertEqual(decide({"toolCall": {"name": "finish", "args": {**output, "command": "trade"}}}, [], "backtest")["decision"], "deny")
         self.assertEqual(decide({"toolCall": {"name": "finish", "args": output}}, [])["decision"], "deny")
         self.assertEqual(decide({"toolCall": {"name": "view_file", "args": {"AbsolutePath": "config.json"}}}, [], "backtest")["decision"], "deny")
+
+    def test_finish_repair_does_not_relax_guard_argument_types(self):
+        output = {"action": "HOLD", "order_type": "MARKET", "stop_price": None, "limit_price": None, "reason": "Fixture", "question": "", "drawings": []}
+        for changes in ({"stop_price": "null"}, {"drawings": {}}, {"question": None}, {"action": "TRADE"}, {"shell": "forbidden"}):
+            self.assertEqual(decide({"toolCall": {"name": "finish", "args": {**output, **changes}}}, [], "backtest")["decision"], "deny")
+        self.assertEqual(decide({"toolCall": {"name": "finish", "args": output}}, [], "backtest")["decision"], "allow")
 
 
 if __name__ == "__main__":

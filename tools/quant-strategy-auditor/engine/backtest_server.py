@@ -38,7 +38,7 @@ def create_app(config_path="config.json", preferences_path=None):
     preferences_path = Path(preferences_path) if preferences_path else STRATEGY_FOLDER.parent / "config.json"
     if preferences_path.is_file():
         preferences = json.loads(preferences_path.read_text(encoding="utf-8-sig"))
-        config.update({key: preferences[key] for key in ("backtest_ai_connection", "backtest_strategy_documents") if key in preferences})
+        config.update({key: preferences[key] for key in ("backtest_ai_connection", "backtest_strategy_documents", "backtest_strategy_folder") if key in preferences})
     # Chỉ đọc cấu hình riêng; không tạo recorder, session hoặc worker của Auditor.
     saved = config.get("backtest_ai_connection", config.get("ai_connection", {})) or {}
     settings = saved if saved.get("provider") in ("CODEX", "AGY") else {"provider": "CODEX"}

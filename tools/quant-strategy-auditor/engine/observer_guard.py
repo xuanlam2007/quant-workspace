@@ -9,7 +9,7 @@ def decide(payload, allowed_paths, response_kind="observation"):
     arguments = call.get("args", {})
     if response_kind == "backtest" and call.get("name") == "finish":
         fields = {"action", "order_type", "stop_price", "limit_price", "reason", "question", "drawings"}
-        if fields <= arguments.keys() and arguments.keys() <= fields | {"toolAction", "toolSummary"} and arguments.get("action") in ("HOLD", "OPEN_LONG", "OPEN_SHORT", "CLOSE", "CANCEL") and arguments.get("order_type") in ("MARKET", "LIMIT", "STOP_LIMIT") and all(isinstance(arguments.get(key), str) for key in ("reason", "question")) and isinstance(arguments.get("drawings"), list) and len(arguments["drawings"]) <= 30 and all(arguments.get(key) is None or type(arguments.get(key)) in (int, float) for key in ("stop_price", "limit_price")):
+        if fields <= arguments.keys() and arguments.keys() <= fields | {"toolAction", "toolSummary", "indicators"} and arguments.get("action") in ("HOLD", "OPEN_LONG", "OPEN_SHORT", "CLOSE", "CANCEL") and arguments.get("order_type") in ("MARKET", "LIMIT", "STOP_LIMIT") and all(isinstance(arguments.get(key), str) for key in ("reason", "question")) and isinstance(arguments.get("drawings"), list) and len(arguments["drawings"]) <= 30 and isinstance(arguments.get("indicators", []), list) and len(arguments.get("indicators", [])) <= 10 and all(arguments.get(key) is None or type(arguments.get(key)) in (int, float) for key in ("stop_price", "limit_price")):
             return {"decision": "allow", "reason": "Return a simulated Backtest decision only"}
         return {"decision": "deny", "reason": "Invalid Backtest response"}
     # finish chỉ trả kết quả có cấu trúc của CLI, không thực hiện hành động bên ngoài.

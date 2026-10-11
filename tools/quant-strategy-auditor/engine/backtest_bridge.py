@@ -2,13 +2,18 @@ import asyncio
 import base64
 import binascii
 import importlib.util
+import json
+import math
 import tempfile
 from pathlib import Path
 from typing import Literal
 from fastapi import HTTPException
 from pydantic import Field, model_validator
 from .request_security import StrictRequest
-from .learning_context import load_strategy_documents
+from .backtest_strategy import load_backtest_documents
+from .cli_diagnostics import CliRequestError
+
+CHART_TOOLS = json.loads((Path(__file__).resolve().parents[3] / "lib" / "backtest-chart-tools.json").read_text(encoding="utf-8"))
 
 
 class StrictModel(StrictRequest):
@@ -31,15 +36,58 @@ class DrawingPoint(StrictModel):
 
 class ReplayDrawing(StrictModel):
     id: str = Field(min_length=1, max_length=80, pattern=r"^[a-zA-Z0-9_-]+$")
-    tool: Literal["TrendLine", "HorizontalLine", "Ray", "ExtendedLine"]
-    points: list[DrawingPoint] = Field(min_length=1, max_length=2)
+    tool: Literal["TrendLine", "Arrow", "Ray", "ExtendedLine", "HorizontalLine", "HorizontalRay", "VerticalLine", "CrossLine", "Rectangle", "FibRetracement", "Text", "Callout", "PriceLabel", "PriceNote", "PriceRange", "LongShortPosition"]
+    points: list[DrawingPoint] = Field(min_length=1, max_length=3)
     label: str = Field(max_length=160)
 
     @model_validator(mode="after")
     def point_count(self):
-        if len(self.points) != (1 if self.tool == "HorizontalLine" else 2):
+        if len(self.points) != CHART_TOOLS["drawings"][self.tool]:
             raise ValueError("Drawing point count does not match its tool")
         return self
+
+
+class IndicatorInput(StrictModel):
+    id: str = Field(min_length=1, max_length=80)
+    value: str | float | bool = Field(union_mode="smart")
+
+
+class ReplayIndicator(StrictModel):
+    id: str = Field(min_length=1, max_length=80, pattern=r"^[a-zA-Z0-9_-]+$")
+    name: str = Field(min_length=1, max_length=100, json_schema_extra={"enum": [entry["name"] for entry in CHART_TOOLS["indicators"]]})
+    inputs: list[IndicatorInput] = Field(max_length=30)
+    visible: bool
+    operation: Literal["upsert", "remove"]
+
+    @model_validator(mode="after")
+    def registered_inputs(self):
+        definition = next((entry for entry in CHART_TOOLS["indicators"] if entry["name"] == self.name), None)
+        if definition is None:
+            raise ValueError("Unknown replay indicator")
+        seen = set()
+        for item in self.inputs:
+            spec = next((entry for entry in definition["inputs"] if entry["id"] == item.id), None)
+            if spec is None or item.id in seen:
+                raise ValueError("Unknown or duplicate indicator input")
+            seen.add(item.id)
+            value = item.value
+            kind = spec["type"]
+            if kind in ("integer", "float", "time"):
+                if type(value) not in (int, float) or not math.isfinite(value) or kind != "float" and value != int(value) or "min" in spec and value < spec["min"] or "max" in spec and value > spec["max"]:
+                    raise ValueError("Invalid numeric indicator input")
+            elif kind == "bool":
+                if type(value) is not bool:
+                    raise ValueError("Invalid boolean indicator input")
+            elif not isinstance(value, str) or len(value) > 160:
+                raise ValueError("Invalid text indicator input")
+            if "options" in spec and value not in spec["options"]:
+                raise ValueError("Invalid indicator input option")
+        return self
+
+
+class ReplayIndicatorState(ReplayIndicator):
+    status: Literal["ready", "loading", "error"] | None = None
+    error: str = Field(default="", max_length=200)
 
 
 class BacktestDecision(StrictModel):
@@ -50,6 +98,7 @@ class BacktestDecision(StrictModel):
     reason: str = Field(max_length=6000)
     question: str = Field(max_length=2000)
     drawings: list[ReplayDrawing] = Field(max_length=30)
+    indicators: list[ReplayIndicator] = Field(default_factory=list, max_length=10)
 
     @model_validator(mode="after")
     def order_prices(self):
@@ -94,6 +143,7 @@ class BacktestFrame(StrictModel):
     bars: list[ReplayBar] = Field(min_length=1, max_length=2000)
     image: str = Field(max_length=12 * 1024 * 1024)
     drawings: list[ReplayDrawing] = Field(max_length=100)
+    indicators: list[ReplayIndicatorState] = Field(default_factory=list, max_length=30)
     position: ReplayPosition | None
     orders: list[ReplayOrder] = Field(max_length=300)
     teaching: str = Field(max_length=6000)
@@ -124,17 +174,18 @@ class BacktestFrame(StrictModel):
 def register_backtest(app, analyzer, config, config_path):
     root = Path(__file__).resolve().parents[3]
     adapter = root / "private" / "backtest" / "runner.py"
+    if not adapter.is_file():
+        adapter = Path(__file__).with_name("backtest_agent.py")
     busy = asyncio.Lock()
 
     def strategy_documents():
-        reference = {**config, "strategy_documents": config.get("backtest_strategy_documents", config.get("strategy_documents", []))}
-        return load_strategy_documents(reference, config_path)
+        return load_backtest_documents(config, config_path)
 
     @app.get("/api/backtest/status")
     def status():
         documents, errors = strategy_documents()
         connection = analyzer.status()
-        return {"adapter_ready": adapter.is_file(), "strategy_available": bool(documents and not errors), "strategy_documents": [item["name"] for item in documents], "strategy_error": "Không đọc được tài liệu chiến lược. Nhập lại Markdown." if errors else "", "provider": connection["provider"], "connected": connection.get("connected"), "error": connection.get("error", ""), "terminal_error": connection.get("terminal_error", ""), "model": connection.get("model", ""), "effort": connection.get("effort", ""), "busy": busy.locked(), "order_mode": "sample-close-next-update"}
+        return {"adapter_ready": adapter.is_file(), "strategy_available": bool(documents), "strategy_required": False, "system_prompt": "backtest-trader-v1", "strategy_documents": [item["name"] for item in documents], "strategy_error": "Một số tài liệu không đọc được hoặc vượt giới hạn. AI dùng các tài liệu đọc được; nếu không có, AI tự xây dựng cách giao dịch." if errors else "", "provider": connection["provider"], "connected": connection.get("connected"), "error": connection.get("error", ""), "terminal_error": connection.get("terminal_error", ""), "model": connection.get("model", ""), "effort": connection.get("effort", ""), "busy": busy.locked(), "order_mode": "sample-close-next-update"}
 
     @app.post("/api/backtest/analyze")
     async def analyze(payload: BacktestFrame):
@@ -148,8 +199,6 @@ def register_backtest(app, analyzer, config, config_path):
         if not analyzer.connection.get("connected"):
             raise HTTPException(409, "Kiểm tra kết nối CLI đã chọn trong Backtest trước khi phân tích.")
         documents, errors = strategy_documents()
-        if errors or not documents:
-            raise HTTPException(409, "Thêm tài liệu chiến lược riêng trước khi yêu cầu AI quyết định.")
         revision = analyzer._catalog_revision
         settings = dict(analyzer.settings)
         hashes = [document["sha256"] for document in documents]
@@ -178,7 +227,7 @@ def register_backtest(app, analyzer, config, config_path):
                             if revision != analyzer._catalog_revision or settings != analyzer.settings or not analyzer.connection.get("connected"):
                                 raise HTTPException(409, "Kết nối AI đã thay đổi. Hãy phân tích lại khung replay.")
                             latest, latest_errors = strategy_documents()
-                            if latest_errors or hashes != [document["sha256"] for document in latest]:
+                            if latest_errors != errors or hashes != [document["sha256"] for document in latest]:
                                 raise HTTPException(409, "Chiến lược đã thay đổi. Hãy phân tích lại khung replay.")
                             if revision != analyzer._catalog_revision or settings != analyzer.settings or not analyzer.connection.get("connected"):
                                 raise HTTPException(409, "Kết nối AI đã thay đổi. Hãy phân tích lại khung replay.")
@@ -203,7 +252,7 @@ def register_backtest(app, analyzer, config, config_path):
                     if revision != analyzer._catalog_revision or settings != analyzer.settings or not analyzer.connection.get("connected"):
                         raise HTTPException(409, "Kết nối AI đã thay đổi. Kết quả này không được áp dụng.")
                     current, current_errors = strategy_documents()
-                    if current_errors or hashes != [document["sha256"] for document in current]:
+                    if current_errors != errors or hashes != [document["sha256"] for document in current]:
                         raise HTTPException(409, "Chiến lược đã thay đổi. Hãy phân tích lại khung replay.")
                     result = BacktestDecision.model_validate(output)
                     if any(point.timestamp >= payload.cutoff for drawing in result.drawings for point in drawing.points):
@@ -213,6 +262,8 @@ def register_backtest(app, analyzer, config, config_path):
                     return {"decision": result.model_dump(), "cutoff": payload.cutoff, "model": settings, "strategy_versions": hashes, "terminal_error": analyzer.terminal.error if analyzer.terminal else ""}
                 except HTTPException:
                     raise
+                except CliRequestError as error:
+                    raise HTTPException(502, error.safe_message) from None
                 except RuntimeError as error:
                     if str(error) == "Selected CLI is processing another request":
                         raise HTTPException(409, "CLI đang xử lý quan sát khác. Chờ lượt đó xong rồi thử lại.") from None
