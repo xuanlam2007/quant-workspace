@@ -13,6 +13,8 @@ from .cli_catalog import discover_catalog
 from .codex_audio import run_codex_audio
 from .cli_process import cli_environment, observer_workspace, run_cli
 from .ai_request_terminal import cli_failure
+from .cli_diagnostics import CliRequestError
+from .cli_usage import RequestUsage
 
 
 def observer_settings(settings):
@@ -90,23 +92,38 @@ class CliLearningAnalyzer:
 
     def _run(self, prompt, settings, image=None, audio=None, structured=False, timeout=120, frames=None, response_schema=None):
         monitor = self.terminal if structured else None
+        scope = getattr(self.terminal, "scope", "auditor")
+        usage = RequestUsage(settings, prompt, scope, "analysis" if structured else "connection", image, audio, frames)
+        response = ""
+        status = "failed"
+
+        def progress(kind, line):
+            usage.progress(kind, line)
+            if monitor:
+                monitor.progress(kind, line)
         if monitor:
             try:
                 monitor.begin(settings)
             except OSError:
                 monitor = None
         try:
-            response = self._run_request(prompt, settings, image, audio, structured, timeout, frames, response_schema, monitor)
+            response = self._run_request(prompt, settings, image, audio, structured, timeout, frames, response_schema, monitor, progress)
             if monitor:
                 monitor.write("request.completed", result=response[:64000], truncated=len(response) > 64000)
+            status = "completed"
             return response
         except Exception as error:
             if monitor:
-                message = "AI request timed out. Evidence remains available for retry." if isinstance(error, subprocess.TimeoutExpired) else "AI request failed. Check the application notification for the diagnostic."
-                monitor.write("request.failed", message=message)
+                if isinstance(error, CliRequestError):
+                    monitor.write("request.failed", code=error.code, tool=error.tool, message=error.safe_message)
+                else:
+                    message = "AI request timed out. Evidence remains available for retry." if isinstance(error, subprocess.TimeoutExpired) else "AI request failed. Check the application notification for the diagnostic."
+                    monitor.write("request.failed", message=message)
             raise
+        finally:
+            usage.finish(status, response)
 
-    def _run_request(self, prompt, settings, image=None, audio=None, structured=False, timeout=120, frames=None, response_schema=None, monitor=None):
+    def _run_request(self, prompt, settings, image=None, audio=None, structured=False, timeout=120, frames=None, response_schema=None, monitor=None, on_output=None):
         executable = find_cli(settings["provider"])
         if not executable:
             raise RuntimeError(f"{settings['provider']} CLI was not found. Install it and sign in through Terminal.")
@@ -114,11 +131,11 @@ class CliLearningAnalyzer:
         with observer_workspace() as folder:
             environment = cli_environment()
             if settings["provider"] == "CODEX" and audio:
-                return run_codex_audio(executable, folder, prompt, settings, audio, image, RESPONSE_SCHEMA if structured else None, timeout, frames=frames, **({"on_output": monitor.progress} if monitor else {}))
+                return run_codex_audio(executable, folder, prompt, settings, audio, image, RESPONSE_SCHEMA if structured else None, timeout, frames=frames, **({"on_output": on_output} if on_output else {}))
             if settings["provider"] == "CODEX":
                 output = Path(folder) / "response.txt"
                 command = [executable, "exec", "--ignore-user-config", "--sandbox", "read-only", "--ephemeral", "--skip-git-repo-check", "--color", "never", "-o", str(output), "-c", "features.shell_tool=false", "-c", 'web_search="disabled"']
-                if monitor:
+                if monitor or on_output:
                     command += ["--json"]
                 if settings.get("effort"):
                     command += ["-c", f"model_reasoning_effort={json.dumps(settings['effort'])}"]
@@ -170,7 +187,7 @@ class CliLearningAnalyzer:
                     schema.write_text(json.dumps(response_schema or RESPONSE_SCHEMA), encoding="utf-8")
                     command += ["--json-schema", str(schema)]
                 stdin = json.dumps({"event": "user", "message": {"content": prompt}}, ensure_ascii=False) + "\n"
-            result = run_cli(command, input=stdin, cwd=folder, env=environment, text=True, encoding="utf-8", errors="replace", timeout=timeout, terminal_event="result" if settings["provider"] == "AGY" else None, creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0, **({"on_output": monitor.progress} if monitor else {}))
+            result = run_cli(command, input=stdin, cwd=folder, env=environment, text=True, encoding="utf-8", errors="replace", timeout=timeout, terminal_event="result" if settings["provider"] == "AGY" else None, creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0, **({"on_output": on_output or monitor.progress} if on_output or monitor else {}))
             if result.returncode:
                 message = cli_failure(settings["provider"], result.returncode, result.stderr)
                 if monitor:
@@ -181,7 +198,7 @@ class CliLearningAnalyzer:
                 events = [json.loads(line) for line in response.splitlines() if line.strip()]
                 results = [event["result"] for event in events if event.get("event") == "result"]
                 if not results or results[-1].get("status") != "SUCCESS":
-                    raise RuntimeError("AGY did not return a successful final result. Check Terminal and retry.")
+                    raise CliRequestError("final_result")
                 envelope = results[-1]
                 response = json.dumps(envelope["structured_output"], ensure_ascii=False) if structured and "structured_output" in envelope else envelope.get("response", "").strip()
                 read_files = set()
@@ -192,7 +209,7 @@ class CliLearningAnalyzer:
                     if step.get("tool_name") == "view_file" and step.get("state") == "DONE" and not info.get("error") and isinstance(target, str):
                         read_files.add(Path(target).resolve())
                 if files and not all(path.resolve() in read_files for path in files):
-                    raise RuntimeError("AGY did not read the supplied media. The evidence is saved; retry with a media-capable model.")
+                    raise CliRequestError("evidence_read", "view_file")
             if not response:
                 raise RuntimeError("The CLI returned no response")
             return response

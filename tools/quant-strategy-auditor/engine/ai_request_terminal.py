@@ -10,6 +10,11 @@ import time
 from pathlib import Path
 from uuid import uuid4
 
+if __package__:
+    from .cli_diagnostics import SAFE_TOOLS, agy_step_error
+else:
+    from cli_diagnostics import SAFE_TOOLS, agy_step_error
+
 
 def cli_failure(provider, code, diagnostic):
     text = str(diagnostic).lower()
@@ -92,6 +97,13 @@ class AiRequestTerminal:
         category = item.get("type") or item.get("state")
         if isinstance(category, str) and re.fullmatch(r"[a-zA-Z0-9_/-]{1,80}", category):
             fields["stage"] = category
+        if name == "step_update":
+            if isinstance(item.get("tool_name"), str) and item["tool_name"] in SAFE_TOOLS:
+                fields["tool"] = item["tool_name"]
+            info = item.get("tool_info") or {}
+            if item.get("state") == "ERROR" or isinstance(info, dict) and info.get("error"):
+                error = agy_step_error(item)
+                fields.update(code=error.code, message=error.safe_message)
         # Chỉ ghi metadata đã chọn; không ghi prompt, credentials hoặc tool arguments.
         self.write(name, **fields)
 

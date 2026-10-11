@@ -10,6 +10,7 @@ from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from engine.cli_process import observer_workspace, run_cli
+from engine.cli_diagnostics import CliRequestError
 
 
 class CliProcessTests(unittest.TestCase):
@@ -100,5 +101,40 @@ class CliProcessTests(unittest.TestCase):
     def test_stream_tool_failure_does_not_wait_for_repeated_retries(self):
         program = "import sys,time; sys.stdin.readline(); print('{\"event\":\"step_update\",\"step_update\":{\"state\":\"ERROR\"}}',flush=True); time.sleep(20)"
         with observer_workspace() as folder:
-            with self.assertRaisesRegex(RuntimeError, "đọc minh chứng"):
+            with self.assertRaisesRegex(CliRequestError, "tool step failed"):
                 run_cli([sys.executable, "-c", program], input='{"event":"user"}\n', timeout=5, terminal_event="result", cwd=folder, text=True, encoding="utf-8")
+
+    def run_stream(self, events):
+        lines = "".join(json.dumps(event) + "\n" for event in events)
+        program = f"import sys,time; sys.stdin.readline(); sys.stdout.write({lines!r}); sys.stdout.flush(); time.sleep(20)"
+        with observer_workspace() as folder:
+            return run_cli([sys.executable, "-c", program], input='{"event":"user"}\n', timeout=5, terminal_event="result", cwd=folder, text=True, encoding="utf-8")
+
+    def failed_finish(self, diagnostic):
+        return {"event": "step_update", "step_update": {"tool_name": "finish", "state": "ERROR", "tool_info": {"error": diagnostic}}}
+
+    def test_finish_schema_error_can_be_corrected_in_same_stream(self):
+        result = self.run_stream([self.failed_finish("argument validation failed"), self.failed_finish("Invalid Backtest response"), {"event": "result", "result": {"status": "SUCCESS", "structured_output": {"action": "HOLD"}}}])
+        self.assertIn('"SUCCESS"', result.stdout)
+
+    def test_finish_schema_repairs_are_bounded(self):
+        with self.assertRaises(CliRequestError) as error:
+            self.run_stream([self.failed_finish("schema validation failed")] * 3)
+        self.assertEqual(error.exception.code, "structured_output")
+
+    def test_finish_auth_and_permission_failures_are_not_retried(self):
+        for diagnostic, code in (("unauthenticated", "authentication"), ("permission denied", "tool_denied"), ("quota exceeded", "usage_limit"), ("unexpected failure", "finish_failed")):
+            with self.subTest(code=code), self.assertRaises(CliRequestError) as error:
+                self.run_stream([self.failed_finish(diagnostic), {"event": "result", "result": {"status": "SUCCESS"}}])
+            self.assertEqual(error.exception.code, code)
+
+    def test_media_error_cannot_use_finish_repair_allowance(self):
+        with self.assertRaises(CliRequestError) as error:
+            self.run_stream([{"event": "step_update", "step_update": {"tool_name": "view_file", "state": "ERROR", "tool_info": {"error": "schema validation failed"}}}])
+        self.assertEqual(error.exception.code, "evidence_read")
+
+    def test_invalid_stream_shape_is_rejected(self):
+        for event in ([], {"step_update": "invalid"}, {"step_update": {"tool_info": "invalid"}}):
+            with self.subTest(event=event), self.assertRaises(CliRequestError) as error:
+                self.run_stream([event])
+            self.assertEqual(error.exception.code, "stream_format")

@@ -125,7 +125,7 @@ class LearningPromptTests(unittest.TestCase):
                 self.assertEqual(analyzer._run("Listen", legacy, audio=media), "heard")
             result = type("Result", (), {"returncode": 0, "stderr": "", "stdout": json.dumps({"event": "result", "result": {"status": "SUCCESS", "response": "invented"}})})()
             with patch("engine.cli_analyzer.find_cli", return_value="agy.exe"), patch("engine.cli_analyzer.run_cli", return_value=result):
-                with self.assertRaisesRegex(RuntimeError, "did not read"):
+                with self.assertRaisesRegex(RuntimeError, "could not be read"):
                     analyzer._run("Listen", analyzer.settings, audio=media)
 
     def test_changed_settings_and_account_stop_queued_analysis(self):

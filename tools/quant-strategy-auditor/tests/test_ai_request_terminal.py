@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from engine.ai_request_terminal import AiRequestTerminal, cli_failure
 from engine.cli_analyzer import CliLearningAnalyzer
 from engine.cli_process import run_cli
+from engine.cli_diagnostics import CliRequestError, agy_step_error
 
 
 class AiRequestTerminalTests(unittest.TestCase):
@@ -82,3 +83,27 @@ class AiRequestTerminalTests(unittest.TestCase):
             self.assertIn("Analysis can continue", monitor.error)
             self.assertNotIn("private/path", monitor.error)
             self.assertFalse(monitor.launching)
+
+    def test_finish_diagnostic_logs_safe_category_without_arguments(self):
+        with tempfile.TemporaryDirectory() as folder:
+            monitor = AiRequestTerminal("backtest", folder=folder)
+            monitor.progress("stdout", {"event": "step_update", "step_update": {"tool_name": "finish", "state": "ERROR", "tool_info": {"parameters": {"reason": "private strategy"}, "error": "schema validation failed secret-token C:/private/config"}}})
+            content = (Path(folder) / "current.jsonl").read_text(encoding="utf-8")
+            self.assertIn('"tool": "finish"', content)
+            self.assertIn('"code": "structured_output"', content)
+            for private in ("private strategy", "secret-token", "C:/private/config"):
+                self.assertNotIn(private, content)
+
+    def test_request_failure_keeps_safe_diagnostic(self):
+        analyzer = CliLearningAnalyzer({"provider": "AGY"})
+        analyzer.terminal = Mock()
+        failure = CliRequestError("structured_output", "finish")
+        with patch.object(analyzer, "_run_request", side_effect=failure), self.assertRaises(CliRequestError):
+            analyzer._run("private prompt", analyzer.settings, structured=True)
+        analyzer.terminal.write.assert_called_once_with("request.failed", code="structured_output", tool="finish", message=failure.safe_message)
+
+    def test_unknown_tool_and_sensitive_errors_never_reach_diagnostic(self):
+        failure = agy_step_error({"tool_name": "private-tool-name", "tool_info": {"error": "secret-token C:/private/config"}})
+        self.assertIsNone(failure.tool)
+        self.assertNotIn("secret-token", failure.safe_message)
+        self.assertNotIn("private-tool-name", failure.safe_message)

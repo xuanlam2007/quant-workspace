@@ -9,6 +9,7 @@ import tempfile
 import threading
 import time
 from contextlib import contextmanager
+from .cli_diagnostics import CliRequestError, agy_step_error
 
 
 def cli_environment():
@@ -138,6 +139,7 @@ def run_cli(command, *, input, timeout, terminal_event=None, on_output=None, **k
             deadline = time.monotonic() + timeout
             stdout, stderr, size = [], "", 0
             finished = set()
+            finish_repairs = 0
             try:
                 def write():
                     try:
@@ -185,10 +187,22 @@ def run_cli(command, *, input, timeout, terminal_event=None, on_output=None, **k
                     stdout.append(line)
                     if not terminal_event:
                         continue
-                    event = json.loads(line)
+                    try:
+                        event = json.loads(line)
+                    except ValueError:
+                        raise CliRequestError("stream_format") from None
+                    if not isinstance(event, dict):
+                        raise CliRequestError("stream_format")
                     step = event.get("step_update", {})
-                    if step.get("state") == "ERROR" or step.get("tool_info", {}).get("error"):
-                        raise RuntimeError("AGY gặp lỗi khi đọc minh chứng. Ghi âm và ảnh vẫn được lưu; kiểm tra Terminal rồi thử lại.")
+                    if not isinstance(step, dict) or not isinstance(step.get("tool_info") or {}, dict):
+                        raise CliRequestError("stream_format")
+                    if step.get("state") == "ERROR" or (step.get("tool_info") or {}).get("error"):
+                        error = agy_step_error(step)
+                        # Cho CLI sửa tối đa hai lỗi schema trong cùng lượt, giữ nguyên guard và deadline.
+                        if error.tool == "finish" and error.code == "structured_output" and finish_repairs < 2:
+                            finish_repairs += 1
+                            continue
+                        raise error
                     if event.get("event") == terminal_event:
                         return subprocess.CompletedProcess(command, 0, "".join(stdout), stderr)
             finally:
