@@ -55,7 +55,6 @@
 .chartCaption { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chartCaption span { margin-left: 8px; font-size: 11px; font-weight: 400; color: var(--muted); }
 .chartCanvas { height: clamp(340px, calc(100dvh - 285px), 760px); min-width: 0; }
-.chartPanel[data-busy=true] .chartCanvas { pointer-events: none; }
 .fullChart { height: clamp(460px, calc(100dvh - 285px), 850px); }
 .fullChart :global(#backtest-chart-app) { height: 100%; display: flex; flex-direction: column; min-height: 0; --bg: #10131a; --panel: #161a23; --border: #262b38; --muted: #9ca8bf; --accent: #93c5fd; }
 .fullChart :global(#backtest-chart-app:fullscreen) { height: 100dvh; background: #131722; }
@@ -99,8 +98,10 @@
 .connectionRow { display: grid; grid-template-columns: 76px minmax(0, 1fr); align-items: center; gap: 12px; height: 22px; font-size: 12px; }
 .connectionRow dt { color: var(--muted); }
 .connectionRow dd { margin: 0; min-width: 0; color: #d1d4dc; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.connectionRefresh svg { display: block; transform-origin: center; }
-.connectionRefresh[aria-busy=true] svg { animation: connectionRefreshSpin 900ms linear infinite; }
+.workspace .connectionRefresh { display: grid; place-items: center; gap: 0; line-height: 0; }
+.connectionRefreshIcon { display: grid; place-items: center; width: 18px; height: 18px; flex: none; transform-origin: 50% 50%; }
+.connectionRefreshIcon svg { display: block; width: 18px; height: 18px; }
+.connectionRefresh[aria-busy=true] .connectionRefreshIcon { animation: connectionRefreshSpin 900ms linear infinite; }
 @keyframes connectionRefreshSpin { to { transform: rotate(360deg); } }
 @container (max-width: 240px) {
   .connectionHeader { align-items: flex-start; min-height: 46px; }
@@ -134,3 +135,20 @@
 @media (max-width: 1100px) { .layout { grid-template-columns: minmax(0, 1fr); } .aside { grid-template-columns: repeat(2, minmax(0, 1fr)); } .chartCanvas, .fullChart { height: 460px; } }
 @media (max-width: 650px) { .container { padding: 14px 12px; } .aside { grid-template-columns: 1fr; } .heading { align-items: start; } .heading h1 { font-size: 18px; } .chartCaption span { display: none; } .toolbar { padding: 10px; } .clock { margin-left: 0; text-align: left; } }
 @media (prefers-reduced-motion: reduce) { .workspace *, .workspace *::before, .workspace *::after { animation: none !important; transition: none !important; } .workspace button:not(:where(.fullChart *)):active:not(:disabled) { transform: none; } }
+
+.tradeOverlay { position: absolute; top: 84px; left: 68px; z-index: 3; width: 250px; max-width: calc(100% - 88px); border: 1px solid #363a45; border-radius: 8px; background: #1e222df5; box-shadow: 0 2px 8px #0003; overflow: hidden; font: 12px/18px var(--font-ui); animation: tradeEnter 160ms ease-out; }
+.tradeQuotes { display: grid; grid-template-columns: minmax(0, 1fr) 42px minmax(0, 1fr); }
+.tradeOverlay .tradeQuotes button { display: grid; gap: 2px; padding: 7px 10px; border: 0; border-radius: 0; background: transparent; cursor: pointer; transition: background-color 140ms ease; font: inherit; }
+.tradeOverlay .tradeQuotes button:hover:not(:disabled) { background: #ffffff0a; }
+.tradeOverlay .tradeQuotes button:disabled { cursor: default; }
+.tradeLong { color: #089981; }
+.tradeShort { color: #f23645; }
+.tradeQuotes strong { font-variant-numeric: tabular-nums; font-weight: 500; }
+.tradeQuantity { display: grid; align-content: center; justify-items: center; border-inline: 1px solid #363a45; color: #d1d4dc; }
+.tradeQuantity span { color: #9598a1; font-size: 11px; }
+.tradeFeedback { display: flex; align-items: center; justify-content: space-between; gap: 6px; min-height: 28px; padding: 3px 8px; border-top: 1px solid #363a45; color: #b2b5be; font-size: 11px; }
+.tradeFeedback button { padding: 1px 6px; border: 1px solid #434651; border-radius: 3px; background: transparent; color: #d1d4dc; cursor: pointer; font: inherit; transition: background-color 140ms ease; }
+.tradeFeedback button:hover:not(:disabled) { background: #ffffff0a; }
+.tradeFeedback button:disabled { opacity: .45; cursor: default; }
+@keyframes tradeEnter { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) { .tradeOverlay { animation: none; } .tradeOverlay button { transition: none; } }

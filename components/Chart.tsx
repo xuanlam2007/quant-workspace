@@ -42,7 +42,8 @@ import {
   type Bar,
   type SymbolInfo,
 } from "@/lib/dchart-api";
-import { replayLogicalRange, type ChartReplay, type ReplayDrawing } from "@/lib/backtest";
+import { paperOrderMarkers, paperOrderLevels, replayDrawingPoints, replayIndicatorCatalog, validateReplayIndicator, replayLogicalRange, type ChartReplay, type ReplayDrawing, type ReplayFrame, type ReplayIndicatorState } from "@/lib/backtest";
+import { loadReferenceStudies, referenceDefaults } from "@/lib/reference-studies";
 import { connectPriceFeed, type ConnStatus, type PriceTick } from "@/lib/dchart-socket";
 import { bucketStart, mergeTick } from "@/lib/bar-builder";
 import { createRealtimeTickBuffer } from "@/lib/realtime-tick-buffer";
@@ -256,7 +257,7 @@ function ChartInstance({ active, onLoadLayout, replay }: { active: boolean; onLo
   }, []);
   const [documentVisible, setDocumentVisible] = useState(true);
   const activeRef = useRef(active);
-  activeRef.current = active && !replay?.busy;
+  activeRef.current = active;
   const renderingRef = useRef(active && documentVisible);
   renderingRef.current = active && documentVisible;
   const suspendRealtimeRef = useRef<() => void>(() => undefined);
@@ -274,6 +275,7 @@ function ChartInstance({ active, onLoadLayout, replay }: { active: boolean; onLo
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const volumeMaSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const volumeSmaSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const replayOrderMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const mainSelectionMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const volumeSelectionMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const refreshSelectionMarkersRef = useRef<() => void>(() => undefined);
@@ -817,7 +819,11 @@ function ChartInstance({ active, onLoadLayout, replay }: { active: boolean; onLo
       && (pane !== volumePane || pane === seriesRef.current?.getPane());
   }, []);
   const referenceStudies = useReferenceStudies(chartRef, barsByTimeRef, symbol, resolution, symbolInfo, chartStyle, studyLabelsVisible,
-    () => setVisibleBar((bar) => bar ? { ...bar } : currentBarRef.current));
+    () => setVisibleBar((bar) => bar ? { ...bar } : currentBarRef.current), replayMode, seriesRef);
+  const replayStudiesRef = useRef(referenceStudies);
+  replayStudiesRef.current = referenceStudies;
+  const replayBuiltinsRef = useRef(activeStudies);
+  replayBuiltinsRef.current = activeStudies;
   const { instances: referenceStudyInstances, update: updateReferenceStudies, setSettingsId: setReferenceSettingsId } = referenceStudies;
   const secondaryLeftVisible = (activeStudies.includes("macd") && indicatorScaleSides.macd === "left")
     || (activeStudies.includes("rsi") && indicatorScaleSides.rsi === "left");
@@ -1095,6 +1101,7 @@ function ChartInstance({ active, onLoadLayout, replay }: { active: boolean; onLo
     volumeMaSeriesRef.current = volumeMaSeries;
     volumeSmaSeriesRef.current = volumeSmaSeries;
     mainSelectionMarkersRef.current = createSeriesMarkers(series, [], { zOrder: "top" });
+    replayOrderMarkersRef.current = createSeriesMarkers(series, [], { zOrder: "aboveSeries", autoScale: true });
     volumeSelectionMarkersRef.current = createSeriesMarkers(volumeSeries, [], { zOrder: "top" });
     timelineSeriesRef.current = timelineSeries;
 
@@ -1525,6 +1532,7 @@ function ChartInstance({ active, onLoadLayout, replay }: { active: boolean; onLo
       chartRef.current = null;
       seriesRef.current = null;
       mainSelectionMarkersRef.current = null;
+      replayOrderMarkersRef.current = null;
       volumeSelectionMarkersRef.current = null;
       volumeSeriesRef.current = null;
       volumeMaSeriesRef.current = null;
@@ -1545,31 +1553,77 @@ function ChartInstance({ active, onLoadLayout, replay }: { active: boolean; onLo
 
   const replayStudyRefresh = useRef(updateStudySeries);
   replayStudyRefresh.current = updateStudySeries;
+  const renderedReplayFrame = useRef<ReplayFrame | null>(null);
   const renderedReplaySession = useRef<number | undefined>(undefined);
   // Chụp canvas của chart, không lấy DOM toolbar hoặc browser chrome.
   const captureChartCanvas = useCallback(() => chartRef.current?.takeScreenshot(), []);
   useEffect(() => {
     if (!replayMode || !onReplayReady) return;
     drawingKeyRef.current = `backtest.drawings.${replaySession}`;
+    const drawings = () => {
+      const lines = JSON.parse(lineToolsRef.current?.exportLineTools() || "[]") as LineToolExport<LineToolType>[];
+      return lines.filter(line => /^[a-zA-Z0-9_-]{1,80}$/.test(line.id) && Object.hasOwn(replayDrawingPoints, line.toolType) && line.points.length === replayDrawingPoints[line.toolType as ReplayDrawing["tool"]] && line.points.every(point => Number.isInteger(point.timestamp) && point.timestamp >= 0 && point.timestamp < (renderedReplayFrame.current?.cutoff || 0) && Number.isFinite(point.price) && point.price > 0)).map(line => ({ id: line.id, tool: line.toolType as ReplayDrawing["tool"], points: line.points, label: String((line.options as { priceNote?: { value?: string } }).priceNote?.value || (line.options as { text?: { value?: string } }).text?.value || "").slice(0, 160) })).slice(-100);
+    };
+    const indicators = (): ReplayIndicatorState[] => {
+      const names = { volume: "Volume", ma: "Moving Average", ema: "Moving Average Exponential", macd: "Moving Average Convergence/Divergence", rsi: "Relative Strength Index", boll: "Bollinger Bands" };
+      const builtins: ReplayIndicatorState[] = replayBuiltinsRef.current.map(id => ({ id: `user-${id}`, name: names[id], inputs: [], visible: true, operation: "upsert", status: "ready" }));
+      const references = [...replayStudiesRef.current.instances.current.values()].filter(instance => replayIndicatorCatalog.some(entry => entry.name === instance.name)).map((instance): ReplayIndicatorState => ({
+        id: instance.id.replace(/^reference:/, ""), name: instance.name, visible: instance.visible, operation: "upsert", status: instance.error ? "error" : instance.loading ? "loading" : "ready",
+        error: instance.error ? "Chỉ báo chưa tính được từ dữ liệu replay hiện tại." : "",
+        inputs: Object.entries(instance.settings?.inputs || {}).map(([id, value]) => ({ id, value })).filter(input => {
+          try { validateReplayIndicator({ id: "snapshot", name: instance.name, inputs: [input], visible: instance.visible, operation: "upsert" }); return true; }
+          catch { return false; }
+        }),
+      }));
+      return [...builtins, ...references].slice(-30);
+    };
     onReplayReady({
+      capture: () => {
+        const canvas = captureChartCanvas();
+        const frame = renderedReplayFrame.current;
+        if (!canvas || !frame) throw new Error("Chart chưa sẵn sàng.");
+        return { frame, image: canvas.toDataURL("image/png"), drawings: drawings(), indicators: indicators() };
+      },
       screenshot: () => {
         const canvas = captureChartCanvas();
         if (!canvas) throw new Error("Chart chưa sẵn sàng.");
         return canvas.toDataURL("image/png");
       },
-      drawings: () => {
-        const lines = JSON.parse(lineToolsRef.current?.exportLineTools() || "[]") as LineToolExport<LineToolType>[];
-        return lines.filter(line => ["TrendLine", "HorizontalLine", "Ray", "ExtendedLine"].includes(line.toolType)).map(line => ({ id: line.id, tool: line.toolType as ReplayDrawing["tool"], points: line.points, label: String((line.options as { text?: { value?: string } }).text?.value || "") }));
-      },
-      apply: drawings => {
+      drawings,
+      apply: async (drawings, indicators = []) => {
+        const session = renderedReplaySession.current;
+        indicators.forEach(validateReplayIndicator);
         for (const drawing of drawings) {
           // Giữ kiểu options của plugin để tránh lỗi index signature trong DeepPartial.
           const options = { ...drawingPreset(drawing.tool), text: { value: drawing.label } } as LineToolPartialOptionsMap[typeof drawing.tool];
-          lineToolsRef.current?.createOrUpdateLineTool(drawing.tool, drawing.points, options, drawing.id.startsWith("ai-") ? drawing.id : `ai-${drawing.id}`);
+          if (drawing.tool === "PriceNote") Object.assign(options, { priceNote: { ...priceNoteSettings(options as PriceNoteOptions), value: drawing.label, showLabel: true } });
+          lineToolsRef.current?.createOrUpdateLineTool(drawing.tool, drawing.points, options, (drawing.id.startsWith("ai-") ? drawing.id : `ai-${drawing.id}`).slice(0, 80));
         }
         recordDrawingState(lineToolsRef.current?.exportLineTools() || "[]");
+        if (!indicators.length) return;
+        const { bundledStudies } = await loadReferenceStudies();
+        for (const indicator of indicators) {
+          if (session !== renderedReplaySession.current || !chartRef.current) throw new Error("Replay đã đổi phiên. Bỏ thao tác chỉ báo cũ.");
+          const studies = replayStudiesRef.current;
+          const id = `reference:${indicator.id.startsWith("ai-") ? indicator.id : `ai-${indicator.id}`}`;
+          const existing = studies.instances.current.get(id);
+          if (indicator.operation === "remove") { studies.remove(id); continue; }
+          if (!existing && [...studies.instances.current.keys()].filter(key => key.startsWith("reference:ai-")).length >= 10) throw new Error("AI đã có 10 chỉ báo. Gỡ chỉ báo cũ trước khi thêm.");
+          const definition = bundledStudies.find(entry => entry.name === indicator.name);
+          if (!definition) throw new Error(`Chỉ báo không được hỗ trợ: ${indicator.name}`);
+          const settings = existing?.name === indicator.name && existing.settings ? structuredClone(existing.settings) : referenceDefaults(definition);
+          indicator.inputs.forEach(input => { settings.inputs[input.id] = input.value; });
+          if (existing?.name === indicator.name) { existing.visible = indicator.visible; await studies.apply(id, settings); }
+          else { if (existing) studies.remove(id); await studies.add(indicator.name, { id, name: indicator.name, settings, visible: indicator.visible }); }
+          if (session !== renderedReplaySession.current || !chartRef.current) throw new Error("Replay đã đổi phiên. Bỏ thao tác chỉ báo cũ.");
+          const applied = studies.instances.current.get(id);
+          if (applied?.error) throw new Error(`${indicator.name}: ${applied.error}`);
+        }
       },
-      reset: () => lineToolsRef.current?.removeAllLineTools(),
+      reset: () => {
+        lineToolsRef.current?.removeAllLineTools();
+        for (const id of replayStudiesRef.current.instances.current.keys()) if (id.startsWith("reference:ai-")) replayStudiesRef.current.remove(id);
+      },
     });
     return () => onReplayReady(null);
   }, [replayMode, onReplayReady, replaySession, recordDrawingState, captureChartCanvas]);
@@ -1592,6 +1646,7 @@ function ChartInstance({ active, onLoadLayout, replay }: { active: boolean; onLo
       setZoomHistoryCount(0);
       hiddenDrawingsRef.current = null;
       lineToolsRef.current?.removeAllLineTools();
+      for (const id of replayStudiesRef.current.instances.current.keys()) if (id.startsWith("reference:ai-")) replayStudiesRef.current.remove(id);
       drawingHistoryRef.current = ["[]"];
       drawingRedoHistoryRef.current = [];
       syncDrawingHistoryAvailability();
@@ -1621,12 +1676,25 @@ function ChartInstance({ active, onLoadLayout, replay }: { active: boolean; onLo
       const range = replayLogicalRange(bars.length, chartRef.current.timeScale().width());
       if (range) chartRef.current.timeScale().setVisibleLogicalRange(range);
     }
+    renderedReplayFrame.current = replayFrame || null;
     navigateHistoryRef.current = async target => {
       const index = bars.findIndex(bar => Number(bar.time) >= target);
       if (index < 0) throw new Error("Chưa có dữ liệu tại mốc replay này.");
       chartRef.current?.timeScale().setVisibleLogicalRange({ from: Math.max(0, index - 50), to: Math.min(bars.length + 5, index + 50) });
     };
   }, [replayMode, replayFrame, replaySession, symbol, setVisibleBar, syncCompareSeries, volumeColorForBar, resetChartView, syncDrawingHistoryAvailability]);
+
+  const replayOrders = replay?.orders;
+  const replayGranularity = replay?.granularity;
+  useEffect(() => {
+    if (!replayMode || !replayFrame) return;
+    replayOrderMarkersRef.current?.setMarkers(paperOrderMarkers(replayOrders || [], replayFrame, replayGranularity).map(marker => ({ ...marker, time: marker.time as Time })));
+    const series = seriesRef.current;
+    if (!series) return;
+    const levels: IPriceLine[] = [];
+    for (const level of paperOrderLevels(replayOrders || [], replayFrame, replayGranularity)) levels.push(series.createPriceLine({ ...level, lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true }));
+    return () => { if (seriesRef.current === series) levels.forEach(level => series.removePriceLine(level)); };
+  }, [replayMode, replayFrame, replayOrders, replayGranularity]);
 
   // Tải lịch sử và kết nối lại dữ liệu trực tiếp khi mã hoặc khung thời gian đổi
   useEffect(() => {
@@ -2344,8 +2412,8 @@ function ChartInstance({ active, onLoadLayout, replay }: { active: boolean; onLo
   type MovableSeries = ISeriesApi<"Candlestick"> | ISeriesApi<"Histogram"> | ISeriesApi<"Line"> | ReferenceSeries;
 
   const transferSeriesGroup = useCallback((group: MovableSeries[], targetPane: ReturnType<MovableSeries["getPane"]>) => {
-    const markerRefs = [mainSelectionMarkersRef, volumeSelectionMarkersRef];
-    const markedSeries = [seriesRef.current, volumeSeriesRef.current];
+    const markerRefs = [mainSelectionMarkersRef, volumeSelectionMarkersRef, replayOrderMarkersRef];
+    const markedSeries = [seriesRef.current, volumeSeriesRef.current, seriesRef.current];
     const suspended = markerRefs.flatMap((ref, index) => {
       const series = markedSeries[index];
       if (!series || !group.includes(series) || !ref.current) return [];
@@ -2366,7 +2434,7 @@ function ChartInstance({ active, onLoadLayout, replay }: { active: boolean; onLo
         chartRef.current?.removePane(sourcePane.paneIndex());
       }
       suspended.forEach(({ ref, series, markers }) => {
-        ref.current = createSeriesMarkers(series, markers, { zOrder: "top" });
+        ref.current = createSeriesMarkers(series, markers, ref === replayOrderMarkersRef ? { zOrder: "aboveSeries", autoScale: true } : { zOrder: "top" });
       });
     }
   }, []);

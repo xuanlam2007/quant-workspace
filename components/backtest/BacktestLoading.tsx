@@ -36,27 +36,27 @@ export default function BacktestLoading() {
     <div className={styles.layout}>
       <div className={styles.section}>
         <BacktestChart frame={null} symbol="M1" session={0} active={false} busy={false} />
-        <p className={styles.help}>Dữ liệu M1 chỉ mở nến sau khi đóng; không dựng tick hoặc diễn biến trong nến. Replay chờ lượt AI trong chế độ học, thời gian xử lý thực được ghi riêng.</p>
+        <p className={styles.help}>Dữ liệu M1 chỉ mở nến sau khi đóng; không dựng tick hoặc diễn biến trong nến. Replay chạy theo tốc độ đã chọn, không chờ AI. Lệnh nhận muộn chỉ có hiệu lực từ thời điểm nhận; thời gian xử lý được ghi riêng.</p>
         <section className={styles.panel}><div className={styles.panelHeading}><h2>Quyết định và drawing</h2><button type="button" tabIndex={-1} disabled><Icon name="export" />Xuất kết quả riêng</button></div><p className={styles.help}>AI nhận ảnh chart, các line, giá/volume đã replay và tài liệu chiến lược riêng.</p><div className={styles.journal} /></section>
       </div>
       <aside className={styles.aside}>
         <section className={`${styles.panel} ${styles.aiPanel}`}>
           <BacktestConnectionSummary loading ready={false} refreshing />
           <AuditorConnection context="backtest" className={styles.connectionConfig} status={null} loading pending="" disabled onSave={unchanged} onCheck={unchanged} onOpenTerminal={unchanged} />
-          <button type="button" tabIndex={-1} disabled>Nhập chiến lược Markdown</button>
+          <button type="button" tabIndex={-1} disabled><Icon name="refresh" />Quét lại chiến lược</button>
           <div className={styles.aiActions}>
             <button type="button" tabIndex={-1} disabled>Kiểm tra kết nối AI</button>
             <button type="button" tabIndex={-1} className={`${styles.primary} ${styles.full}`} disabled>Phân tích chart hiện tại</button>
           </div>
           <div className={styles.aiSettings}>
-            <label className={`${styles.inline} ${styles.aiToggle}`}><input type="checkbox" tabIndex={-1} disabled />AI phân tích khi replay</label>
+            <label className={`${styles.inline} ${styles.aiToggle}`}><input type="checkbox" tabIndex={-1} checked readOnly disabled />AI giao dịch khi replay</label>
             <div className={styles.sourceField}><label htmlFor="backtest-loading-cadence">Khoảng phân tích</label><ChartSelect id="backtest-loading-cadence" label="Khoảng phân tích" value={1} disabled onChange={unchanged} options={[{ value: 1, label: "Mỗi phút" }]} /></div>
             <label className={styles.aiSecond}><span>Giây trong nến<small>Dữ liệu giây</small></span><input tabIndex={-1} type="number" value={55} disabled /></label>
           </div>
-          <p className={`${styles.help} ${styles.aiHint}`}>Backtest dùng kết nối AI riêng, không cần khởi động Auditor. Khoảng phân tích là cấu hình thử nghiệm, không tự thay quy tắc chiến lược.</p>
+          <p className={`${styles.help} ${styles.aiHint}`}>System prompt Backtest điều khiển AI như trader mô phỏng. Markdown được tự quét và không bắt buộc; không có tài liệu thì AI tự xây dựng cách giao dịch. Quyết định được gửi vào lệnh mô phỏng khi bật áp dụng tự động.</p>
         </section>
         <section className={styles.panel}><h2>Lệnh mô phỏng</h2><div className={styles.metrics}><div><span>Cặp đóng</span><strong>0</strong></div><div><span>Phí (điểm)</span><strong>0.00</strong></div><div><span>Sau phí</span><strong className={styles.positive}>0.00</strong></div></div>
-          <p>Chưa có vị thế</p><label className={styles.inline}><input type="checkbox" tabIndex={-1} disabled />Áp dụng lệnh AI tự động</label>
+          <p>Chưa có vị thế</p><label className={styles.inline}><input type="checkbox" tabIndex={-1} checked readOnly disabled />Áp dụng lệnh AI tự động</label>
           <button type="button" tabIndex={-1} disabled>Áp dụng quyết định hiện tại</button><button type="button" tabIndex={-1} disabled>Hủy lệnh chờ</button>
           <label>Phí mỗi cặp (điểm)<input tabIndex={-1} type="number" value={.45} disabled /></label>
           <p className={styles.help}>Một vị thế, một hợp đồng. Stop-Limit kích hoạt theo giá đóng mẫu, chỉ xét khớp Limit từ mẫu tiếp theo. Không giả lập partial fill, sổ lệnh hoặc thanh khoản. Chưa tự đóng vị thế cuối phiên.</p>

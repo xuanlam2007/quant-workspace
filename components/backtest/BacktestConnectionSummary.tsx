@@ -4,7 +4,7 @@ import styles from "./BacktestWorkspace.module.css";
 
 export default function BacktestConnectionSummary({ loading, ready, status, refreshing = false, refreshDisabled = false, onRefresh }: {
   loading: boolean; ready: boolean;
-  status?: { model: string; effort: string; adapter_ready: boolean; strategy_available: boolean } | null;
+  status?: { model: string; effort: string; adapter_ready: boolean; strategy_available: boolean; strategy_documents?: string[] } | null;
   refreshing?: boolean; refreshDisabled?: boolean; onRefresh?: () => void;
 }) {
   const model = `${status?.model || "Mặc định CLI"}${status?.effort ? ` · ${status.effort}` : ""}`;
@@ -14,12 +14,12 @@ export default function BacktestConnectionSummary({ loading, ready, status, refr
         <h2>AI Backtest</h2>
         <span className={`${styles.badge} ${!loading && !ready ? styles.warning : ""}`} role="status" aria-live="polite" aria-atomic="true"><LoadingText loading={loading} width="auto">{ready ? "Sẵn sàng" : "Chưa sẵn sàng"}</LoadingText></span>
       </div>
-      <button type="button" tabIndex={-1} className={`${styles.iconButton} ${styles.connectionRefresh}`} disabled={refreshDisabled || refreshing || loading || !onRefresh} aria-label="Làm mới trạng thái AI" aria-busy={refreshing} title="Làm mới trạng thái AI" onClick={onRefresh}><Icon name="refresh" /></button>
+      <button type="button" tabIndex={-1} className={`${styles.iconButton} ${styles.connectionRefresh}`} disabled={refreshDisabled || refreshing || loading || !onRefresh} aria-label="Làm mới trạng thái AI" aria-busy={refreshing} title="Làm mới trạng thái AI" onClick={onRefresh}><span className={styles.connectionRefreshIcon} aria-hidden="true"><Icon name="refresh" /></span></button>
     </div>
     <dl className={styles.connectionDetails}>
       <div className={styles.connectionRow}><dt>Model</dt><dd title={model}><LoadingText loading={loading} width="100%">{model}</LoadingText></dd></div>
       <div className={styles.connectionRow}><dt>Bộ kết nối</dt><dd><LoadingText loading={loading} width="100%">{status?.adapter_ready ? "Khả dụng" : "Chưa khả dụng"}</LoadingText></dd></div>
-      <div className={styles.connectionRow}><dt>Chiến lược</dt><dd><LoadingText loading={loading} width="100%">{status?.strategy_available ? "Đã có tài liệu" : "Chưa có tài liệu"}</LoadingText></dd></div>
+      <div className={styles.connectionRow}><dt>Chiến lược</dt><dd><LoadingText loading={loading} width="100%">{status?.strategy_available ? `${status.strategy_documents?.length || 1} tài liệu` : "AI tự xây dựng"}</LoadingText></dd></div>
     </dl>
   </div>;
 }

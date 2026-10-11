@@ -27,7 +27,7 @@ export interface ReferenceStudyInstance {
   request?: AbortController;
 }
 
-export function useReferenceStudies(chartRef: RefObject<IChartApi | null>, barsRef: RefObject<Map<number, Bar>>, symbol: string, resolution: string, symbolInfo?: SymbolInfo, chartStyle: ChartStyle = 1, labelsVisible?: (series: ReferenceSeries) => boolean, onData?: () => void) {
+export function useReferenceStudies(chartRef: RefObject<IChartApi | null>, barsRef: RefObject<Map<number, Bar>>, symbol: string, resolution: string, symbolInfo?: SymbolInfo, chartStyle: ChartStyle = 1, labelsVisible?: (series: ReferenceSeries) => boolean, onData?: () => void, replayOnly = false, replayPriceSeries?: RefObject<ISeriesApi<"Candlestick"> | null>) {
   const dataListener = useRef(onData);
   dataListener.current = onData;
   const labelsPolicy = useRef(labelsVisible);
@@ -41,13 +41,13 @@ export function useReferenceStudies(chartRef: RefObject<IChartApi | null>, barsR
   const context = useRef({ symbol, resolution, symbolInfo, chartStyle });
   context.current = { symbol, resolution, symbolInfo, chartStyle };
   const refresh = useCallback(() => {
-    if (ready.current) {
+    if (ready.current && !replayOnly) {
       const saved = [...instances.current.values()].map(({ id, name, settings, visible }) => ({ id, name, settings, visible }));
       const serialized = JSON.stringify(saved);
       if (serialized !== lastSaved.current) { writeSaved(STORAGE_KEY, saved); lastSaved.current = serialized; }
     }
     setRevision((value) => value + 1);
-  }, []);
+  }, [replayOnly]);
   const calculate = useCallback(async (instance: ReferenceStudyInstance, bars?: Bar[], realtime = false) => {
     if (!instance.definition || !instance.settings || !instance.series || !instance.view) return;
     instance.request?.abort();
@@ -62,7 +62,7 @@ export function useReferenceStudies(chartRef: RefObject<IChartApi | null>, barsR
     if (instance.series.options().visible !== visible || !realtime) instance.series.applyOptions({ visible, lastValueVisible: false, baseLineVisible: false });
     try {
       const inputBars = bars ?? [...(barsRef.current?.values() ?? [])].sort((a, b) => Number(a.time) - Number(b.time));
-      const result = await calculateReferenceStudy(instance.definition, instance.settings, chartStudyBars(inputBars, current.chartStyle), current.symbol, current.resolution, current.symbolInfo, request.signal);
+      const result = await calculateReferenceStudy(instance.definition, instance.settings, chartStudyBars(inputBars, current.chartStyle), current.symbol, current.resolution, current.symbolInfo, request.signal, replayOnly);
       if (request.signal.aborted || !instances.current.has(instance.id)) return;
       const previousPoints = instance.points;
       const hadGraphics = instance.view.graphics.length > 0;
@@ -117,7 +117,7 @@ export function useReferenceStudies(chartRef: RefObject<IChartApi | null>, barsR
         else dataListener.current?.();
       }
     }
-  }, [barsRef, refresh]);
+  }, [barsRef, refresh, replayOnly]);
 
   const add = useCallback(async (name: string, saved?: SavedStudy) => {
     const instance: ReferenceStudyInstance = { id: saved?.id ?? `reference:${crypto.randomUUID()}`, name, settings: saved?.settings, points: [], loading: true, visible: saved?.visible ?? true };
@@ -135,11 +135,12 @@ export function useReferenceStudies(chartRef: RefObject<IChartApi | null>, barsR
       instance.settings.intervals = mergeSaved(defaults.intervals, saved?.settings?.intervals);
       instance.settings.precision = typeof instance.settings.precision === "number" && Number.isInteger(instance.settings.precision) && instance.settings.precision >= 0 && instance.settings.precision <= 12 ? instance.settings.precision : defaults.precision;
       instance.view = new ReferenceStudyView(definition, instance.settings);
+      const priceOverlay = replayOnly && definition.metainfo.is_price_study;
       instance.series = chart.addCustomSeries(instance.view, {
-        priceScaleId: "right", priceLineVisible: false, lastValueVisible: false,
+        priceScaleId: priceOverlay ? replayPriceSeries?.current?.options().priceScaleId ?? "right" : "right", priceLineVisible: false, lastValueVisible: false,
         priceFormat: definition.metainfo.format?.type === "volume" ? { type: "volume" } : { type: "price", precision: instance.settings.precision ?? 2, minMove: 10 ** -(instance.settings.precision ?? 2) },
-      }, chart.panes().length);
-      instance.series.getPane().setStretchFactor(1);
+      }, priceOverlay ? replayPriceSeries?.current?.getPane().paneIndex() ?? 0 : chart.panes().length);
+      if (!priceOverlay) instance.series.getPane().setStretchFactor(1);
       refresh();
       await calculate(instance);
     } catch (error) {
@@ -147,7 +148,7 @@ export function useReferenceStudies(chartRef: RefObject<IChartApi | null>, barsR
       instance.error = error instanceof Error ? error.message : String(error);
       refresh();
     }
-  }, [calculate, chartRef, refresh]);
+  }, [calculate, chartRef, refresh, replayOnly, replayPriceSeries]);
 
   useEffect(() => {
     let cancelled = false;
@@ -173,12 +174,12 @@ export function useReferenceStudies(chartRef: RefObject<IChartApi | null>, barsR
   }, [chartRef, refresh]);
   const clear = useCallback(() => { [...instances.current.keys()].forEach(remove); }, [remove]);
   const update = useCallback((bars?: Bar[], realtime = false) => { instances.current.forEach((instance) => { void calculate(instance, bars, realtime); }); }, [calculate]);
-  const apply = useCallback((id: string, settings: ReferenceSettings) => {
+  const apply = useCallback(async (id: string, settings: ReferenceSettings) => {
     const instance = instances.current.get(id);
     if (!instance) return;
     instance.settings = settings;
     instance.series?.applyOptions({ priceFormat: instance.definition?.metainfo.format?.type === "volume" ? { type: "volume" } : { type: "price", precision: settings.precision ?? 2, minMove: 10 ** -(settings.precision ?? 2) } });
-    void calculate(instance);
+    await calculate(instance);
   }, [calculate]);
   useEffect(() => { update(); }, [symbol, resolution, symbolInfo, chartStyle, update]);
   useEffect(() => () => { instances.current.forEach((instance) => instance.request?.abort()); instances.current.clear(); }, []);
