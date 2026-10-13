@@ -97,7 +97,7 @@ class CliProcess:
         self.process.wait(timeout=3)
 
 
-def run_cli(command, *, input, timeout, terminal_event=None, on_output=None, **kwargs):
+def run_cli(command, *, input, timeout, terminal_event=None, on_output=None, mcp_only=False, **kwargs):
     owner = CliProcess(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **kwargs)
     process = owner.process
     readers = []
@@ -140,6 +140,8 @@ def run_cli(command, *, input, timeout, terminal_event=None, on_output=None, **k
             stdout, stderr, size = [], "", 0
             finished = set()
             finish_repairs = 0
+            mcp_repairs = 0
+            policy_repairs = 0
             try:
                 def write():
                     try:
@@ -198,9 +200,18 @@ def run_cli(command, *, input, timeout, terminal_event=None, on_output=None, **k
                         raise CliRequestError("stream_format")
                     if step.get("state") == "ERROR" or (step.get("tool_info") or {}).get("error"):
                         error = agy_step_error(step)
+                        if mcp_only and error.code == "mcp_tool_policy" and error.tool in ("view_file", "run_command", "list_dir", "grep_search", "find_by_name", "task_boundary", "notify_user") and policy_repairs < 1:
+                            # Cho sửa một lần chọn nhầm tool; guard vẫn chặn thao tác và giữ deadline.
+                            policy_repairs += 1
+                            continue
                         # Cho CLI sửa tối đa hai lỗi schema trong cùng lượt, giữ nguyên guard và deadline.
                         if error.tool == "finish" and error.code == "structured_output" and finish_repairs < 2:
                             finish_repairs += 1
+                            continue
+                        parameters = (step.get("tool_info") or {}).get("parameters") or {}
+                        if error.code == "mcp_arguments" and isinstance(parameters, dict) and parameters.get("ServerName") == "quant-backtest_quant" and parameters.get("ToolName") in ("get_chart_state", "get_account_state", "get_chart_catalog", "capture_chart", "apply_chart") and mcp_repairs < 2:
+                            # Cho sửa schema tool trong cùng lượt, không lặp lại lệnh giao dịch.
+                            mcp_repairs += 1
                             continue
                         raise error
                     if event.get("event") == terminal_event:

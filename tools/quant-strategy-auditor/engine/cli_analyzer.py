@@ -5,6 +5,7 @@ import subprocess
 import threading
 import time
 import sys
+from copy import deepcopy
 from contextlib import contextmanager
 from pathlib import Path
 from .learning_context import build_learning_prompt
@@ -13,7 +14,7 @@ from .cli_catalog import discover_catalog
 from .codex_audio import run_codex_audio
 from .cli_process import cli_environment, observer_workspace, run_cli
 from .ai_request_terminal import cli_failure
-from .cli_diagnostics import CliRequestError
+from .cli_diagnostics import CliRequestError, agy_step_error
 from .cli_usage import RequestUsage
 
 
@@ -43,6 +44,30 @@ RESPONSE_SCHEMA = {
     },
     "required": ["observation", "question", "strategy_difference", "evidence_limitations", "transcript", "trade_observations"],
 }
+
+
+def codex_output_schema(schema):
+    result = deepcopy(schema)
+
+    def visit(node):
+        if not isinstance(node, dict):
+            return
+        node.pop("default", None)
+        if isinstance(node.get("properties"), dict):
+            # Codex strict output yêu cầu mọi field, kể cả field có default.
+            node["required"] = list(node["properties"])
+            node["additionalProperties"] = False
+        for key in ("properties", "$defs", "definitions"):
+            for child in node.get(key, {}).values():
+                visit(child)
+        for key in ("anyOf", "oneOf", "allOf", "prefixItems"):
+            for child in node.get(key, []):
+                visit(child)
+        for key in ("items", "additionalProperties"):
+            visit(node.get(key))
+
+    visit(result)
+    return result
 
 
 class CliLearningAnalyzer:
@@ -90,7 +115,7 @@ class CliLearningAnalyzer:
         finally:
             self._lock.release()
 
-    def _run(self, prompt, settings, image=None, audio=None, structured=False, timeout=120, frames=None, response_schema=None):
+    def _run(self, prompt, settings, image=None, audio=None, structured=False, timeout=120, frames=None, response_schema=None, quant_mcp=None):
         monitor = self.terminal if structured else None
         scope = getattr(self.terminal, "scope", "auditor")
         usage = RequestUsage(settings, prompt, scope, "analysis" if structured else "connection", image, audio, frames)
@@ -107,7 +132,7 @@ class CliLearningAnalyzer:
             except OSError:
                 monitor = None
         try:
-            response = self._run_request(prompt, settings, image, audio, structured, timeout, frames, response_schema, monitor, progress)
+            response = self._run_request(prompt, settings, image, audio, structured, timeout, frames, response_schema, monitor, progress, **({"quant_mcp": quant_mcp} if quant_mcp else {}))
             if monitor:
                 monitor.write("request.completed", result=response[:64000], truncated=len(response) > 64000)
             status = "completed"
@@ -123,7 +148,7 @@ class CliLearningAnalyzer:
         finally:
             usage.finish(status, response)
 
-    def _run_request(self, prompt, settings, image=None, audio=None, structured=False, timeout=120, frames=None, response_schema=None, monitor=None, on_output=None):
+    def _run_request(self, prompt, settings, image=None, audio=None, structured=False, timeout=120, frames=None, response_schema=None, monitor=None, on_output=None, quant_mcp=None):
         executable = find_cli(settings["provider"])
         if not executable:
             raise RuntimeError(f"{settings['provider']} CLI was not found. Install it and sign in through Terminal.")
@@ -135,6 +160,12 @@ class CliLearningAnalyzer:
             if settings["provider"] == "CODEX":
                 output = Path(folder) / "response.txt"
                 command = [executable, "exec", "--ignore-user-config", "--sandbox", "read-only", "--ephemeral", "--skip-git-repo-check", "--color", "never", "-o", str(output), "-c", "features.shell_tool=false", "-c", 'web_search="disabled"']
+                if quant_mcp:
+                    keys = ["QUANT_MCP_PORT", "QUANT_MCP_CAPABILITY"]
+                    environment.update({key: quant_mcp[key] for key in keys})
+                    command += ["-c", "mcp_servers.quant.command=" + json.dumps(sys.executable), "-c", "mcp_servers.quant.args=" + json.dumps([str(Path(__file__).with_name("quant_mcp_stdio.py").resolve())]), "-c", "mcp_servers.quant.env_vars=" + json.dumps(keys), "-c", "mcp_servers.quant.tool_timeout_sec=30", "-c", "mcp_servers.quant.required=true"]
+                    # Chỉ preapprove tool Quant đã giới hạn trong replay mô phỏng.
+                    command += ["-c", 'mcp_servers.quant.default_tools_approval_mode="approve"', "-c", "mcp_servers.quant.enabled_tools=" + json.dumps(["get_chart_state", "get_account_state", "get_chart_catalog", "capture_chart", "apply_chart", "submit_order"])]
                 if monitor or on_output:
                     command += ["--json"]
                 if settings.get("effort"):
@@ -148,7 +179,7 @@ class CliLearningAnalyzer:
                         command += ["--image", frame["path"]]
                 if structured:
                     schema = Path(folder) / "schema.json"
-                    schema.write_text(json.dumps(response_schema or RESPONSE_SCHEMA), encoding="utf-8")
+                    schema.write_text(json.dumps(codex_output_schema(response_schema or RESPONSE_SCHEMA)), encoding="utf-8")
                     command += ["--output-schema", str(schema)]
                 command += ["-"]
                 stdin = prompt
@@ -179,7 +210,33 @@ class CliLearningAnalyzer:
                 (guard_folder / "hooks.json").write_text(json.dumps(hooks), encoding="utf-8")
                 environment["QUANT_OBSERVER_MEDIA_PATHS"] = json.dumps([str(path) for path in files])
                 environment["QUANT_OBSERVER_RESPONSE_KIND"] = "backtest" if response_schema else "observation"
+                if quant_mcp:
+                    environment.update({key: quant_mcp[key] for key in ("QUANT_MCP_PORT", "QUANT_MCP_CAPABILITY")})
+                    tools = ["get_chart_state", "get_account_state", "get_chart_catalog", "capture_chart", "apply_chart", "submit_order"]
+                    server = {"command": sys.executable, "args": [str(Path(__file__).with_name("quant_mcp_stdio.py").resolve())], "trust": True, "enabledTools": tools}
+                    plugin_folder = guard_folder / "plugins" / "quant-backtest"
+                    plugin_folder.mkdir(parents=True)
+                    (plugin_folder / "plugin.json").write_text(json.dumps({"name": "quant-backtest", "description": "Request-scoped chart and simulated trading tools"}), encoding="utf-8")
+                    (plugin_folder / "mcp_config.json").write_text(json.dumps({"mcpServers": {"quant": server}}), encoding="utf-8")
+                    # Hook chỉ cho phép đúng tên tool Quant trong workspace tạm.
+                    environment["QUANT_OBSERVER_MCP_TOOLS"] = json.dumps(tools)
+                    agent_folder = guard_folder / "agents"
+                    agent_folder.mkdir()
+                    (agent_folder / "quant-backtest-trader.md").write_text(
+                        "---\nname: quant-backtest-trader\n"
+                        "description: Chart analysis and simulated trading through Quant MCP\n"
+                        "tools:\n  - call_mcp_tool\n  - finish\n"
+                        "mainAgent: true\nsubagent: false\nmodel: inherit\n"
+                        "commandExecutionPolicy: off\n---\n"
+                        "Use only call_mcp_tool with ServerName quant-backtest_quant and the registered Quant tools. "
+                        "Use capture_chart for visual evidence. Files, shell commands and external tools are unavailable. "
+                        "Follow the supplied trading instructions and cutoff. Return the required structured decision through finish. "
+                        "Keep the reason concise, with proper Vietnamese accents and no greeting or personal address.\n",
+                        encoding="utf-8",
+                    )
                 command = [executable, "--add-dir", folder, "--mode", "plan", "--sandbox", "--disable-slash-commands", "--input-format", "stream-json", "--output-format", "stream-json"]
+                if quant_mcp:
+                    command += ["--agent", "quant-backtest-trader"]
                 if settings.get("model"):
                     command += ["--model", settings["model"]]
                 if structured:
@@ -187,9 +244,9 @@ class CliLearningAnalyzer:
                     schema.write_text(json.dumps(response_schema or RESPONSE_SCHEMA), encoding="utf-8")
                     command += ["--json-schema", str(schema)]
                 stdin = json.dumps({"event": "user", "message": {"content": prompt}}, ensure_ascii=False) + "\n"
-            result = run_cli(command, input=stdin, cwd=folder, env=environment, text=True, encoding="utf-8", errors="replace", timeout=timeout, terminal_event="result" if settings["provider"] == "AGY" else None, creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0, **({"on_output": on_output or monitor.progress} if on_output or monitor else {}))
+            result = run_cli(command, input=stdin, cwd=folder, env=environment, text=True, encoding="utf-8", errors="replace", timeout=timeout, terminal_event="result" if settings["provider"] == "AGY" else None, mcp_only=bool(quant_mcp) and settings["provider"] == "AGY", creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0, **({"on_output": on_output or monitor.progress} if on_output or monitor else {}))
             if result.returncode:
-                message = cli_failure(settings["provider"], result.returncode, result.stderr)
+                message = cli_failure(settings["provider"], result.returncode, result.stderr + ("\n" + result.stdout if settings["provider"] == "CODEX" else ""))
                 if monitor:
                     monitor.write("provider.error", message=message)
                 raise RuntimeError(message)
@@ -211,6 +268,10 @@ class CliLearningAnalyzer:
                 if files and not all(path.resolve() in read_files for path in files):
                     raise CliRequestError("evidence_read", "view_file")
             if not response:
+                if settings["provider"] == "AGY":
+                    if quant_mcp and any(word in result.stderr.lower() for word in ("permission", "auto-denied", "approval")):
+                        raise agy_step_error({"tool_name": "call_mcp_tool", "tool_info": {"error": result.stderr}})
+                    raise CliRequestError("final_result")
                 raise RuntimeError("The CLI returned no response")
             return response
 

@@ -12,6 +12,7 @@ from pydantic import Field, model_validator
 from .request_security import StrictRequest
 from .backtest_strategy import load_backtest_documents
 from .cli_diagnostics import CliRequestError
+from .backtest_mcp import QuantTools, serve_tools
 
 CHART_TOOLS = json.loads((Path(__file__).resolve().parents[3] / "lib" / "backtest-chart-tools.json").read_text(encoding="utf-8"))
 
@@ -88,6 +89,18 @@ class ReplayIndicator(StrictModel):
 class ReplayIndicatorState(ReplayIndicator):
     status: Literal["ready", "loading", "error"] | None = None
     error: str = Field(default="", max_length=200)
+    values: list["IndicatorValues"] = Field(default_factory=list, max_length=30)
+
+
+class IndicatorValues(StrictModel):
+    time: int = Field(ge=0)
+    values: dict[str, float] = Field(max_length=100)
+
+    @model_validator(mode="after")
+    def finite_values(self):
+        if any(len(key) > 80 or not math.isfinite(value) for key, value in self.values.items()):
+            raise ValueError("Invalid indicator values")
+        return self
 
 
 class BacktestDecision(StrictModel):
@@ -114,6 +127,20 @@ class ReplayPosition(StrictModel):
     side: Literal["LONG", "SHORT"]
     price: float = Field(gt=0, allow_inf_nan=False)
     time: int = Field(ge=0)
+    quantity: int | None = Field(default=None, ge=1, le=1000)
+
+
+class ReplayTrailing(StrictModel):
+    amount: float = Field(gt=0, allow_inf_nan=False)
+    spread: float = Field(ge=0, allow_inf_nan=False)
+    anchor: float = Field(gt=0, allow_inf_nan=False)
+
+
+class ReplayBracket(StrictModel):
+    stopTrigger: float = Field(gt=0, allow_inf_nan=False)
+    stopLimit: float = Field(gt=0, allow_inf_nan=False)
+    takeTrigger: float = Field(gt=0, allow_inf_nan=False)
+    takeLimit: float = Field(gt=0, allow_inf_nan=False)
 
 
 class ReplayOrder(StrictModel):
@@ -128,6 +155,14 @@ class ReplayOrder(StrictModel):
     status: Literal["waiting", "triggered", "filled", "cancelled"]
     filled: int | None = Field(ge=0)
     price: float | None = Field(gt=0, allow_inf_nan=False)
+    quantity: int | None = Field(default=None, ge=1, le=1000)
+    strategy: Literal["normal", "stop", "trailing", "oco"] | None = None
+    relation: Literal["gte", "lte"] | None = None
+    expires: int | None = Field(default=None, ge=0)
+    trailing: ReplayTrailing | None = None
+    bracket: ReplayBracket | None = None
+    parent: str | None = Field(default=None, max_length=80, pattern=r"^[a-zA-Z0-9_-]+$")
+    group: str | None = Field(default=None, max_length=80, pattern=r"^[a-zA-Z0-9_-]+$")
 
 
 class ReplayHistory(StrictModel):
@@ -137,6 +172,7 @@ class ReplayHistory(StrictModel):
 
 
 class BacktestFrame(StrictModel):
+    client_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
     symbol: str = Field(min_length=1, max_length=40, pattern=r"^[a-zA-Z0-9_.-]+$")
     cutoff: int = Field(ge=0)
     granularity: Literal["1s", "1m"]
@@ -151,6 +187,8 @@ class BacktestFrame(StrictModel):
 
     @model_validator(mode="after")
     def visible_data_only(self):
+        if any(point.time >= self.cutoff for indicator in self.indicators for point in indicator.values):
+            raise ValueError("Indicator values are outside the replay cutoff")
         previous = -1
         for bar in self.bars:
             if bar.time % 60 or bar.time <= previous or bar.time >= self.cutoff:
@@ -171,12 +209,54 @@ class BacktestFrame(StrictModel):
         return self
 
 
+class ToolOwner(StrictModel):
+    client_id: str = Field(pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+
+
+class ToolSync(ToolOwner):
+    frame: BacktestFrame
+
+
+class ToolAck(ToolSync):
+    command_id: str = Field(pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+    error: str = Field(max_length=200)
+
+
 def register_backtest(app, analyzer, config, config_path):
     root = Path(__file__).resolve().parents[3]
     adapter = root / "private" / "backtest" / "runner.py"
     if not adapter.is_file():
         adapter = Path(__file__).with_name("backtest_agent.py")
     busy = asyncio.Lock()
+    active_tools = {"session": None}
+
+    @app.post("/api/backtest/tools/sync")
+    def tool_sync(payload: ToolSync):
+        tools = active_tools["session"]
+        if tools is None or tools.owner != payload.client_id:
+            return {"command": None}
+        try:
+            return tools.sync(payload.frame)
+        except ValueError:
+            tools.close()
+            raise HTTPException(409, "Replay MCP request expired") from None
+
+    @app.post("/api/backtest/tools/ack")
+    def tool_ack(payload: ToolAck):
+        tools = active_tools["session"]
+        if tools is None or tools.owner != payload.client_id:
+            raise HTTPException(409, "Replay MCP request expired")
+        try:
+            return tools.ack(payload.command_id, payload.frame, payload.error)
+        except ValueError:
+            raise HTTPException(409, "Replay MCP acknowledgement rejected") from None
+
+    @app.post("/api/backtest/tools/reset")
+    def tool_reset(payload: ToolOwner):
+        tools = active_tools["session"]
+        if tools and tools.owner == payload.client_id:
+            tools.close()
+        return {"ok": True}
 
     def strategy_documents():
         return load_backtest_documents(config, config_path)
@@ -185,7 +265,10 @@ def register_backtest(app, analyzer, config, config_path):
     def status():
         documents, errors = strategy_documents()
         connection = analyzer.status()
-        return {"adapter_ready": adapter.is_file(), "strategy_available": bool(documents), "strategy_required": False, "system_prompt": "backtest-trader-v1", "strategy_documents": [item["name"] for item in documents], "strategy_error": "Một số tài liệu không đọc được hoặc vượt giới hạn. AI dùng các tài liệu đọc được; nếu không có, AI tự xây dựng cách giao dịch." if errors else "", "provider": connection["provider"], "connected": connection.get("connected"), "error": connection.get("error", ""), "terminal_error": connection.get("terminal_error", ""), "model": connection.get("model", ""), "effort": connection.get("effort", ""), "busy": busy.locked(), "order_mode": "sample-close-next-update"}
+        result = {"adapter_ready": adapter.is_file(), "strategy_available": bool(documents), "strategy_required": False, "system_prompt": "backtest-trader-v1", "strategy_documents": [item["name"] for item in documents], "strategy_error": "Một số tài liệu không đọc được hoặc vượt giới hạn. AI dùng các tài liệu đọc được; nếu không có, AI tự xây dựng cách giao dịch." if errors else "", "provider": connection["provider"], "connected": connection.get("connected"), "error": connection.get("error", ""), "terminal_error": connection.get("terminal_error", ""), "model": connection.get("model", ""), "effort": connection.get("effort", ""), "busy": busy.locked(), "order_mode": "sample-close-next-update"}
+        if "latency_ms" in connection:
+            result["latency_ms"] = connection["latency_ms"]
+        return result
 
     @app.post("/api/backtest/analyze")
     async def analyze(payload: BacktestFrame):
@@ -235,6 +318,28 @@ def register_backtest(app, analyzer, config, config_path):
                             module = importlib.util.module_from_spec(spec)
                             spec.loader.exec_module(module)
                             # Bridge sở hữu khóa; adapter không được chiếm hoặc nhả lại khóa này.
+                            if payload.client_id and settings["provider"] in ("CODEX", "AGY"):
+                                def is_current():
+                                    latest, current_errors = strategy_documents()
+                                    return revision == analyzer._catalog_revision and settings == analyzer.settings and analyzer.connection.get("connected") and current_errors == errors and hashes == [item["sha256"] for item in latest]
+                                def on_tool(name):
+                                    if analyzer.terminal:
+                                        analyzer.terminal.write("mcp.tool", name=name)
+                                tools = QuantTools(payload, is_current, on_tool)
+                                active_tools["session"] = tools
+                                try:
+                                    with serve_tools(tools) as capability:
+                                        analyzer._backtest_mcp = capability
+                                        output = module.analyze(analyzer, context, documents, image_path, BacktestDecision.model_json_schema())
+                                        try:
+                                            return tools.complete(output)
+                                        except ValueError:
+                                            raise HTTPException(502, "AI chưa đọc chart qua Quant MCP hoặc chưa xác nhận thao tác. Kiểm tra Terminal rồi thử lại.") from None
+                                finally:
+                                    analyzer._backtest_mcp = None
+                                    tools.close()
+                                    if active_tools["session"] is tools:
+                                        active_tools["session"] = None
                             return module.analyze(analyzer, context, documents, image_path, BacktestDecision.model_json_schema())
                         finally:
                             analyzer._lock.release()

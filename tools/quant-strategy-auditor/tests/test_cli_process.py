@@ -104,11 +104,28 @@ class CliProcessTests(unittest.TestCase):
             with self.assertRaisesRegex(CliRequestError, "tool step failed"):
                 run_cli([sys.executable, "-c", program], input='{"event":"user"}\n', timeout=5, terminal_event="result", cwd=folder, text=True, encoding="utf-8")
 
-    def run_stream(self, events):
+    def run_stream(self, events, mcp_only=False):
         lines = "".join(json.dumps(event) + "\n" for event in events)
         program = f"import sys,time; sys.stdin.readline(); sys.stdout.write({lines!r}); sys.stdout.flush(); time.sleep(20)"
         with observer_workspace() as folder:
-            return run_cli([sys.executable, "-c", program], input='{"event":"user"}\n', timeout=5, terminal_event="result", cwd=folder, text=True, encoding="utf-8")
+            return run_cli([sys.executable, "-c", program], input='{"event":"user"}\n', timeout=5, terminal_event="result", mcp_only=mcp_only, cwd=folder, text=True, encoding="utf-8")
+
+    def test_mcp_wrong_tool_denial_can_recover_once(self):
+        for tool in ("view_file", "run_command"):
+            event = {"event": "step_update", "step_update": {"tool_name": tool, "state": "ERROR", "tool_info": {"error": "QUANT_MCP_ONLY: Use the scoped tools"}}}
+            success = {"event": "result", "result": {"status": "SUCCESS"}}
+            with self.subTest(tool=tool):
+                self.assertIn('"SUCCESS"', self.run_stream([event, success], mcp_only=True).stdout)
+                with self.assertRaises(CliRequestError):
+                    self.run_stream([event, event, success], mcp_only=True)
+                with self.assertRaises(CliRequestError):
+                    self.run_stream([event, success])
+
+    def test_mcp_recovery_does_not_ignore_real_tool_errors(self):
+        for tool, diagnostic in (("view_file", "Audio unsupported"), ("run_command", "unexpected failure"), ("call_mcp_tool", "QUANT_MCP_ONLY: denied"), ("finish", "QUANT_MCP_ONLY: denied")):
+            event = {"event": "step_update", "step_update": {"tool_name": tool, "state": "ERROR", "tool_info": {"error": diagnostic}}}
+            with self.subTest(tool=tool), self.assertRaises(CliRequestError):
+                self.run_stream([event], mcp_only=True)
 
     def failed_finish(self, diagnostic):
         return {"event": "step_update", "step_update": {"tool_name": "finish", "state": "ERROR", "tool_info": {"error": diagnostic}}}
@@ -121,6 +138,21 @@ class CliProcessTests(unittest.TestCase):
         with self.assertRaises(CliRequestError) as error:
             self.run_stream([self.failed_finish("schema validation failed")] * 3)
         self.assertEqual(error.exception.code, "structured_output")
+
+    def failed_quant(self, tool="apply_chart", server="quant-backtest_quant"):
+        return {"event": "step_update", "step_update": {"tool_name": "call_mcp_tool", "state": "ERROR", "tool_info": {"parameters": {"ServerName": server, "ToolName": tool}, "error": "Quant invalid_arguments: drawings.0.id"}}}
+
+    def test_quant_schema_error_can_be_corrected_in_same_stream(self):
+        generic = self.failed_quant()
+        generic["step_update"]["tool_info"]["error"] = "Tool schema validation failed"
+        result = self.run_stream([generic, self.failed_quant(), {"event": "result", "result": {"status": "SUCCESS"}}])
+        self.assertIn('"SUCCESS"', result.stdout)
+
+    def test_quant_repairs_are_bounded_and_never_repeat_orders(self):
+        for events in ([self.failed_quant()] * 3, [self.failed_quant("submit_order")], [self.failed_quant(server="other")]):
+            with self.subTest(events=events), self.assertRaises(CliRequestError) as error:
+                self.run_stream(events)
+            self.assertEqual(error.exception.code, "mcp_arguments")
 
     def test_finish_auth_and_permission_failures_are_not_retried(self):
         for diagnostic, code in (("unauthenticated", "authentication"), ("permission denied", "tool_denied"), ("quota exceeded", "usage_limit"), ("unexpected failure", "finish_failed")):

@@ -30,6 +30,21 @@ def hold(**changes):
 
 
 class BacktestSchemaTests(unittest.TestCase):
+    def test_manual_quantity_and_conditional_metadata_remain_strict(self):
+        order = {"id": "order-1", "side": "BUY", "purpose": "OPEN", "type": "STOP_LIMIT", "stop": 101, "limit": 102, "submitted": 0, "triggered": None, "status": "waiting", "filled": None, "price": None, "quantity": 3, "strategy": "trailing", "trailing": {"amount": 1, "spread": 1, "anchor": 100}}
+        value = frame(orders=[order], position={"side": "LONG", "price": 100, "time": 0, "quantity": 3})
+        self.assertEqual(value.orders[0].quantity, 3)
+        self.assertEqual(value.position.quantity, 3)
+        for quantity in (0, 1001, 1.5):
+            with self.assertRaises(ValidationError):
+                frame(orders=[{**order, "quantity": quantity}])
+            with self.assertRaises(ValidationError):
+                frame(position={"side": "LONG", "price": 100, "time": 0, "quantity": quantity})
+        with self.assertRaises(ValidationError):
+            frame(orders=[{**order, "account": "broker"}])
+        with self.assertRaises(ValidationError):
+            frame(orders=[{**order, "trailing": {**order["trailing"], "command": "shell"}}])
+
     def test_every_registered_drawing_tool_has_strict_anchor_count(self):
         for tool, count in CHART_TOOLS["drawings"].items():
             drawing = {"id": "fixture", "tool": tool, "points": [{"timestamp": i, "price": 100 + i} for i in range(count)], "label": "Fixture"}

@@ -19,6 +19,7 @@ else:
 def cli_failure(provider, code, diagnostic):
     text = str(diagnostic).lower()
     reasons = (
+        (("invalid schema", "invalid_json_schema", "schema for response_format", "response schema"), "The CLI rejected the structured output schema. Restart the updated engine and retry analysis."),
         (("unauthorized", "401", "login", "sign in", "authentication", "token expired"), "CLI authentication failed. Sign in through Terminal and retry."),
         (("model", "reasoning effort"), "The CLI rejected the selected model or effort. Refresh the catalog and check your account access."),
         (("429", "rate limit", "quota", "usage limit"), "The provider usage limit was reached. Wait or check your subscription."),

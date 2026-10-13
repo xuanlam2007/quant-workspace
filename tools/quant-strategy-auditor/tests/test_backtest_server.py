@@ -58,6 +58,22 @@ class BacktestEngineIsolationTests(unittest.TestCase):
                 finally:
                     analyzer._lock.release()
 
+    def test_status_preserves_connection_latency_until_config_changes(self):
+        with tempfile.TemporaryDirectory() as folder:
+            app, analyzer, _, _ = self.make_app(folder, {})
+            routes = {route.path: route.endpoint for route in app.routes}
+            analyzer.status.return_value = {"provider": "CODEX", "connected": None}
+            self.assertNotIn("latency_ms", routes["/api/backtest/status"]())
+            analyzer.test_connection.side_effect = lambda: analyzer.status.return_value.update(connected=True, latency_ms=5372) or analyzer.status()
+            checked = asyncio.run(routes["/api/backtest/connection/test"]())
+            self.assertEqual(checked["latency_ms"], 5372)
+            self.assertEqual(routes["/api/backtest/status"]()["latency_ms"], 5372)
+            analyzer.status.return_value["latency_ms"] = 0
+            self.assertEqual(routes["/api/backtest/status"]()["latency_ms"], 0)
+            analyzer.configure.side_effect = lambda settings: setattr(analyzer.status, "return_value", {**settings, "connected": None})
+            asyncio.run(routes["/api/backtest/connection/config"](BacktestAiConfig(provider="CODEX")))
+            self.assertNotIn("latency_ms", routes["/api/backtest/status"]())
+
     def test_login_terminal_rejects_unknown_fields(self):
         for payload in ({"provider": "OTHER"}, {"provider": "CODEX", "command": "override"}, {"provider": "AGY", "terminal_type": "WINDOWS"}):
             with self.assertRaises(ValidationError):
