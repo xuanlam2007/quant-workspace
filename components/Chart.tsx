@@ -125,7 +125,6 @@ import { formatVolume } from "./chart/core/chart-utils";
 import { useIndicatorSettings } from "./chart/indicators/useIndicatorSettings";
 import { readSaved, writeSaved, useSavedState } from "./chart/config/saved-state";
 import { useSavedLayout } from "./chart/layout/workspace/useSavedLayout";
-import { DelayedTooltip } from "./chart/ui/DelayedTooltip";
 import { OutsideDragSelectionGuard } from "./chart/ui/OutsideDragSelectionGuard";
 import { readAxisSettings, writeAxisSettings, readManualAxisRange, writeManualAxisRange } from "./chart/config/axis-settings";
 
@@ -1570,6 +1569,7 @@ function ChartInstance({ active, onLoadLayout, replay }: { active: boolean; onLo
       const references = [...replayStudiesRef.current.instances.current.values()].filter(instance => replayIndicatorCatalog.some(entry => entry.name === instance.name)).map((instance): ReplayIndicatorState => ({
         id: instance.id.replace(/^reference:/, ""), name: instance.name, visible: instance.visible, operation: "upsert", status: instance.error ? "error" : instance.loading ? "loading" : "ready",
         error: instance.error ? "Chỉ báo chưa tính được từ dữ liệu replay hiện tại." : "",
+        values: instance.points.filter(point => Number(point.time) < (renderedReplayFrame.current?.cutoff || 0)).slice(-30).map(point => ({ time: Number(point.time), values: Object.fromEntries(Object.entries(point.values).filter(([, value]) => typeof value === "number" && Number.isFinite(value))) })),
         inputs: Object.entries(instance.settings?.inputs || {}).map(([id, value]) => ({ id, value })).filter(input => {
           try { validateReplayIndicator({ id: "snapshot", name: instance.name, inputs: [input], visible: instance.visible, operation: "upsert" }); return true; }
           catch { return false; }
@@ -1578,6 +1578,11 @@ function ChartInstance({ active, onLoadLayout, replay }: { active: boolean; onLo
       return [...builtins, ...references].slice(-30);
     };
     onReplayReady({
+      state: () => {
+        const frame = renderedReplayFrame.current;
+        if (!frame) throw new Error("Chart chưa sẵn sàng.");
+        return { frame, drawings: drawings(), indicators: indicators() };
+      },
       capture: () => {
         const canvas = captureChartCanvas();
         const frame = renderedReplayFrame.current;
@@ -2572,13 +2577,14 @@ function ChartInstance({ active, onLoadLayout, replay }: { active: boolean; onLo
     transfer: transferSeriesGroup,
     changed: syncPaneLayout,
     sources: () => {
-      const result: { id: string; series: MovableSeries }[] = [];
-      const add = (id: string, series: MovableSeries | null | undefined) => { if (series) result.push({ id, series }); };
+      const result: { id: string; series: MovableSeries; anchor?: string }[] = [];
+      const add = (id: string, series: MovableSeries | null | undefined, anchor?: string) => { if (series) result.push({ id, series, anchor }); };
       add("main", seriesRef.current);
       add("timeline", timelineSeriesRef.current);
-      add("volume", volumeSeriesRef.current);
-      add("volume:ma", volumeMaSeriesRef.current);
-      add("volume:smoothing", volumeSmaSeriesRef.current);
+      const volumeAnchor = activeStudies.includes("volume") ? undefined : "main";
+      add("volume", volumeSeriesRef.current, volumeAnchor);
+      add("volume:ma", volumeMaSeriesRef.current, volumeAnchor);
+      add("volume:smoothing", volumeSmaSeriesRef.current, volumeAnchor);
       priceIndicatorSeriesRef.current.forEach((series, id) => add(`study:${id}`, series));
       compareSeriesRef.current.forEach((series, id) => add(`compare:${id}`, series));
       referenceStudyInstances.current.forEach((study) => add(study.id, study.series));
@@ -3944,7 +3950,6 @@ function ChartInstance({ active, onLoadLayout, replay }: { active: boolean; onLo
     : undefined;
   return (
     <>
-      {active && (<DelayedTooltip />)}
       {active && (<OutsideDragSelectionGuard />)}
       {referenceSettings?.definition && referenceSettings.settings && (active && (<ReferenceStudySettingsDialog key={referenceSettings.id} definition={referenceSettings.definition} settings={referenceSettings.settings} onApply={(settings) => referenceStudies.apply(referenceSettings.id, settings)} onClose={() => setReferenceSettingsId(null)}/>)) }
       {active && comparisonSettingsSymbol && compareSymbols.includes(comparisonSettingsSymbol) && <ComparisonSettingsDialog

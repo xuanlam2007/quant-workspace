@@ -3,6 +3,7 @@ import type { IChartApi, IPriceScaleApi } from "lightweight-charts";
 import { paneController, type Pane, type SavedPanePresentation } from "../panes/pane-presentation";
 import { readSaved, writeSaved } from "../../config/saved-state";
 import { WORKSPACE_CHANGED } from "./named-layouts";
+import { occupiedPaneLayout } from "./saved-pane-layout";
 
 interface SourceState { id: string; pane: number; side: string; visible: boolean; order: number }
 interface ScaleState { mode: number; autoScale: boolean; invertScale: boolean; alignLabels: boolean; scaleMargins: { top: number; bottom: number }; range: { from: number; to: number } | null }
@@ -31,7 +32,7 @@ export function useSavedLayout<S extends PersistentSeries>({ chartRef, ready, re
   chartRef: RefObject<IChartApi | null>;
   ready: boolean;
   revision: number;
-  sources: () => { id: string; series: S }[];
+  sources: () => { id: string; series: S; anchor?: string }[];
   transfer: (group: S[], pane: Pane) => void;
   changed: () => void;
   context: string;
@@ -57,14 +58,18 @@ export function useSavedLayout<S extends PersistentSeries>({ chartRef, ready, re
       const layout = saved.current;
       if (layout) {
         const available = current.current.sources();
+        if (!available.length) { frame = requestAnimationFrame(restore); return; }
         const assignments = new Map(layout.sources.map((source) => [source.id, source]));
+        const paneFor = ({ id, anchor }: { id: string; anchor?: string }) => assignments.get(anchor ?? id)?.pane ?? 0;
+        // Bỏ cửa sổ không còn nguồn dữ liệu, giữ ánh xạ bố cục của nguồn còn tồn tại.
+        const { occupied, presentation } = occupiedPaneLayout(available.map(paneFor), layout.presentation);
         const oldPanes = chart.panes();
         oldPanes.forEach((pane) => pane.setPreserveEmptyPane(true));
-        const targets = layout.panes.map(() => chart.addPane(true));
+        const targets = occupied.map(() => chart.addPane(true));
         // Giữ các cửa sổ cũ trong lúc chuyển để chỉ số không đổi giữa chừng.
-        available.forEach(({ id, series }) => {
+        available.forEach(({ id, series, anchor }) => {
           const entry = assignments.get(id);
-          const target = targets[entry?.pane ?? 0];
+          const target = targets[occupied.indexOf(paneFor({ id, anchor }))];
           current.current.transfer([series], target);
           if (entry) series.applyOptions({ priceScaleId: entry.side, visible: entry.visible });
         });
@@ -83,12 +88,12 @@ export function useSavedLayout<S extends PersistentSeries>({ chartRef, ready, re
           targets.forEach((pane, index) => {
             for (const side of ["left", "right"] as const) {
               const scale = chart.priceScale(side, pane.paneIndex());
-              const { range, ...options } = layout.panes[index][side];
+              const { range, ...options } = layout.panes[occupied[index]][side];
               scale.applyOptions(current.current.restoreViewport ? options : { ...options, autoScale: true });
               if (current.current.restoreViewport && layout.context === current.current.context && !options.autoScale && range && Number.isFinite(range.from) && Number.isFinite(range.to) && range.from < range.to) current.current.setRange(scale, range);
             }
           });
-          controller.restore(layout.presentation);
+          controller.restore(presentation);
           if (current.current.restoreViewport && layout.context === current.current.context && layout.time && Number.isFinite(layout.time.barSpacing) && layout.time.barSpacing > 0 && Number.isFinite(layout.time.rightOffset)) chart.timeScale().applyOptions(layout.time);
           restoredChart.current = chart;
         });

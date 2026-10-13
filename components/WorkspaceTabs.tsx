@@ -7,6 +7,7 @@ import { AppHeader } from "./AppHeader";
 import ChartLoading from "./ui/ChartLoading";
 import AuditorLoading from "./auditor/AuditorLoading";
 import BacktestLoading from "./backtest/BacktestLoading";
+import { DelayedTooltip } from "./chart/ui/DelayedTooltip";
 
 const Chart = dynamic(() => import("./Chart"), { ssr: false, loading: () => <ChartLoading /> });
 const Auditor = dynamic(() => import("./auditor/AuditorWorkspace"), { ssr: false, loading: () => <AuditorLoading /> });
@@ -44,6 +45,7 @@ export function WorkspaceTabs() {
 
   return (
     <>
+      <DelayedTooltip key={pathname} />
       {(chartVisited || chartActive) && (
         <div ref={chartRoot} className="chart-workspace" aria-hidden={!chartActive} data-active={chartActive}>
           <Chart active={chartActive} />

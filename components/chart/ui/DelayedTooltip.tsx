@@ -7,7 +7,7 @@ const DEFAULT_TOOLTIP_DELAY_MS = 500;
 const TOOLTIP_SESSION_GRACE_MS = 250;
 const TOOLTIP_ID = "delayed-global-tooltip";
 const TOOLTIP_SELECTOR =
-  "[data-tooltip], button[aria-label], summary[aria-label], [role='button'][aria-label]";
+  "[data-tooltip], [data-tooltip-native-title], [title]:not([title='']), button[aria-label], summary[aria-label], [role='button'][aria-label]";
 
 type TooltipPlacement = "top" | "right" | "bottom" | "left";
 
@@ -22,17 +22,21 @@ interface TooltipState extends TooltipContent {
   placement: TooltipPlacement;
   x: number;
   y: number;
+  portalHost: Element;
+  originX: number;
+  originY: number;
+  position: "absolute" | "fixed";
 }
 
 function findTooltipTarget(target: EventTarget | null): HTMLElement | null {
   if (!(target instanceof Element)) return null;
   const element = target.closest<HTMLElement>(TOOLTIP_SELECTOR);
-  if (!element || element.dataset.tooltipDisabled === "true") return null;
+  if (!element || element.dataset.tooltipDisabled === "true" || element.closest("[inert], [aria-hidden='true']")) return null;
   return element;
 }
 
 function readTooltipContent(element: HTMLElement): TooltipContent | null {
-  const text = element.dataset.tooltip ?? element.getAttribute("aria-label") ?? "";
+  const text = element.dataset.tooltip ?? element.getAttribute("title") ?? element.dataset.tooltipNativeTitle ?? element.getAttribute("aria-label") ?? "";
   const normalizedText = text.trim();
   if (!normalizedText) return null;
 
@@ -62,17 +66,26 @@ function readDelay(element: HTMLElement): number {
 function positionTooltip(element: HTMLElement, content: TooltipContent): TooltipState {
   const rect = element.getBoundingClientRect();
   const placement = readPlacement(element);
+  const dialog = element.closest<HTMLDialogElement>("dialog[open]");
+  const hostRect = dialog?.getBoundingClientRect();
+  const shared = {
+    ...content, placement,
+    portalHost: dialog ?? document.fullscreenElement ?? document.body,
+    originX: dialog && hostRect ? hostRect.left + dialog.clientLeft - dialog.scrollLeft : 0,
+    originY: dialog && hostRect ? hostRect.top + dialog.clientTop - dialog.scrollTop : 0,
+    position: dialog ? "absolute" as const : "fixed" as const,
+  };
 
   if (placement === "right") {
-    return { ...content, placement, x: rect.right + 8, y: rect.top + rect.height / 2 };
+    return { ...shared, x: rect.right + 8, y: rect.top + rect.height / 2 };
   }
   if (placement === "left") {
-    return { ...content, placement, x: rect.left - 8, y: rect.top + rect.height / 2 };
+    return { ...shared, x: rect.left - 8, y: rect.top + rect.height / 2 };
   }
   if (placement === "top") {
-    return { ...content, placement, x: rect.left + rect.width / 2, y: rect.top - (content.variant === "axis" ? 0 : content.variant === "navigation" ? 4 : 7) };
+    return { ...shared, x: rect.left + rect.width / 2, y: rect.top - (content.variant === "axis" ? 0 : content.variant === "navigation" ? 4 : 7) };
   }
-  return { ...content, placement, x: rect.left + rect.width / 2, y: rect.bottom + 7 };
+  return { ...shared, x: rect.left + rect.width / 2, y: rect.bottom + 7 };
 }
 
 export function DelayedTooltip() {
@@ -84,6 +97,15 @@ export function DelayedTooltip() {
   const warmRef = useRef(false);
   const pointerDownRef = useRef(false);
   const describedByRef = useRef<string | null>(null);
+  const nativeTitlesRef = useRef<{ element: HTMLElement; title: string }[]>([]);
+
+  const restoreTitles = useCallback(() => {
+    for (const { element, title } of nativeTitlesRef.current) {
+      if (!element.hasAttribute("title")) element.setAttribute("title", title);
+      delete element.dataset.tooltipNativeTitle;
+    }
+    nativeTitlesRef.current = [];
+  }, []);
 
   const clearTimer = useCallback(() => {
     if (timerRef.current) {
@@ -116,11 +138,12 @@ export function DelayedTooltip() {
       clearTimer();
       clearSessionTimer();
       removeDescription();
+      restoreTitles();
       activeTargetRef.current = null;
       if (resetSession) warmRef.current = false;
       setTooltip(null);
     },
-    [clearSessionTimer, clearTimer, removeDescription],
+    [clearSessionTimer, clearTimer, removeDescription, restoreTitles],
   );
 
   const hideWithGrace = useCallback(() => {
@@ -152,7 +175,16 @@ export function DelayedTooltip() {
       clearTimer();
       clearSessionTimer();
       removeDescription();
+      restoreTitles();
       activeTargetRef.current = element;
+      for (let parent: HTMLElement | null = element; parent; parent = parent.parentElement) {
+        const title = parent.getAttribute("title");
+        if (title !== null) {
+          nativeTitlesRef.current.push({ element: parent, title });
+          parent.dataset.tooltipNativeTitle = title;
+          parent.removeAttribute("title");
+        }
+      }
       setTooltip(null);
 
       if (warmRef.current) {
@@ -167,7 +199,7 @@ export function DelayedTooltip() {
         }
       }, readDelay(element));
     },
-    [clearSessionTimer, clearTimer, hide, removeDescription, show],
+    [clearSessionTimer, clearTimer, hide, removeDescription, restoreTitles, show],
   );
 
   useEffect(() => {
@@ -230,6 +262,8 @@ export function DelayedTooltip() {
     document.addEventListener("scroll", handleViewportChange, true);
     window.addEventListener("resize", handleViewportChange);
     document.addEventListener("fullscreenchange", handleViewportChange);
+    document.addEventListener("close", handleViewportChange, true);
+    document.addEventListener("cancel", handleViewportChange, true);
 
     return () => {
       document.removeEventListener("pointerover", handlePointerOver, true);
@@ -244,20 +278,27 @@ export function DelayedTooltip() {
       document.removeEventListener("scroll", handleViewportChange, true);
       window.removeEventListener("resize", handleViewportChange);
       document.removeEventListener("fullscreenchange", handleViewportChange);
+      document.removeEventListener("close", handleViewportChange, true);
+      document.removeEventListener("cancel", handleViewportChange, true);
       clearTimer();
       clearSessionTimer();
       removeDescription();
+      restoreTitles();
       activeTargetRef.current = null;
     };
-  }, [activate, clearSessionTimer, clearTimer, hide, hideWithGrace, removeDescription]);
+  }, [activate, clearSessionTimer, clearTimer, hide, hideWithGrace, removeDescription, restoreTitles]);
 
   useLayoutEffect(() => {
     const element = tooltipRef.current;
     if (!element || !tooltip) return;
-    const width = element.getBoundingClientRect().width;
+    const bounds = element.getBoundingClientRect();
+    const width = bounds.width;
     const viewportWidth = document.documentElement.clientWidth;
-    const left = Math.max(4, Math.min(tooltip.x - width / 2, viewportWidth - width - 4));
-    element.style.left = `${left + width / 2}px`;
+    const viewportHeight = document.documentElement.clientHeight;
+    const left = Math.max(4, Math.min(bounds.left, viewportWidth - width - 4));
+    const top = Math.max(4, Math.min(bounds.top, viewportHeight - bounds.height - 4));
+    element.style.left = `${tooltip.x - tooltip.originX + left - bounds.left}px`;
+    element.style.top = `${tooltip.y - tooltip.originY + top - bounds.top}px`;
     const arrowCenter = Math.max(6, Math.min(width - 6, tooltip.x - left));
     element.style.setProperty("--tooltip-arrow-offset", `${arrowCenter - width / 2}px`);
   }, [tooltip]);
@@ -269,7 +310,7 @@ export function DelayedTooltip() {
       ref={tooltipRef}
       id={TOOLTIP_ID}
       className={`delayed-tooltip delayed-tooltip--${tooltip.placement}${tooltip.variant === "axis" || tooltip.variant === "navigation" || tooltip.variant === "layout-save" ? ` delayed-tooltip--${tooltip.variant}` : ""}`}
-      style={{ left: tooltip.x, top: tooltip.y }}
+      style={{ position: tooltip.position, left: tooltip.x - tooltip.originX, top: tooltip.y - tooltip.originY }}
       role="tooltip"
     >
       <span className="delayed-tooltip__arrow" />
@@ -294,6 +335,6 @@ export function DelayedTooltip() {
         )}
       </span>
     </div>,
-    document.fullscreenElement ?? document.body,
+    tooltip.portalHost,
   );
 }

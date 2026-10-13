@@ -1,4 +1,5 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { LineToolType } from "lightweight-charts-line-tools-core";
 import {
   DRAWING_TOOL_GROUPS,
@@ -11,6 +12,7 @@ import {
 import { useDrawingFavorites } from "./useDrawingFavorites";
 import { FavoriteDrawingToolbar } from "./FavoriteDrawingToolbar";
 import { FAVORITE_ICONS } from "../ui/favorite-icons";
+import { useDrawingToolbarScroll } from "./useDrawingToolbarScroll";
 
 const SHORTCUTS: Record<string, string> = { "trend-line": "Alt + T", "fib-retracement": "Alt + F", "horizontal-line": "Alt + H", "horizontal-ray": "Alt + J", "vertical-line": "Alt + V", "cross-line": "Alt + C" };
 
@@ -58,6 +60,10 @@ function MenuCaret() {
   );
 }
 
+function ScrollArrow() {
+  return <span className="drawing-toolbar__arrow-wrap"><svg className="drawing-toolbar__arrow" aria-hidden="true" viewBox="0 0 20 10" width="20" height="10"><path fill="none" stroke="currentColor" strokeWidth="1.5" d="M2 1l8 8 8-8" /></svg></span>;
+}
+
 export function DrawingToolbar({
   activeTool,
   zoomActive,
@@ -80,11 +86,17 @@ export function DrawingToolbar({
   onClearIndicators,
   onClearAll,
 }: DrawingToolbarProps) {
-  const toolbarRef = useRef<HTMLElement>(null);
+  const toolbarRef = useRef<HTMLElement | null>(null);
   const drawingMenuRef = useRef<HTMLDivElement>(null);
+  const [menuHost, setMenuHost] = useState<HTMLElement | null>(null);
+  const attachToolbar = useCallback((element: HTMLElement | null) => {
+    toolbarRef.current = element;
+    setMenuHost(element);
+  }, []);
   const favorites = useDrawingFavorites();
   const [menuPosition, setMenuPosition] = useState({ left: 52, top: 60 });
   const [openMenu, setOpenMenu] = useState<string | null>(null);
+  const { viewportRef, contentRef, edges, scrollPage } = useDrawingToolbarScroll(() => setOpenMenu(null));
   const [selectedTools, setSelectedTools] = useState<Record<string, DrawingToolOption>>(() => {
     const initial: Record<string, DrawingToolOption> = {};
     for (const group of DRAWING_TOOL_GROUPS) {
@@ -156,9 +168,11 @@ export function DrawingToolbar({
   const activeFavoriteId = activeTool ? Object.values(selectedTools).find((tool) => tool.type === activeTool && tool.available !== false)?.id : undefined;
 
   return (
-    <><aside ref={toolbarRef} className="drawing-toolbar" data-menu-open={openMenu !== null} aria-label="Công cụ vẽ">
-      <div className="toolbar-group">
-        <button
+    <><aside ref={attachToolbar} className="drawing-toolbar" data-menu-open={openMenu !== null} aria-label="Công cụ vẽ">
+      <div ref={viewportRef} className="drawing-toolbar__viewport">
+      <div ref={contentRef} className="drawing-toolbar__content">
+      <div className="toolbar-group" data-tool-group="cursor">
+        <button tabIndex={-1}
           className={`toolbar-button toolbar-button--split ${activeTool === null && !eraserMode ? "toolbar-button--active" : ""}`}
           data-tooltip="Chế độ con trỏ"
           data-tooltip-delay="1500"
@@ -168,7 +182,7 @@ export function DrawingToolbar({
         >
           <ToolbarIcon name={eraserMode ? "eraser" : "cursor"} />
         </button>
-        <button
+        <button tabIndex={-1}
           className="toolbar-menu-trigger"
           data-tooltip="Các chế độ con trỏ"
           data-tooltip-placement="right"
@@ -179,15 +193,15 @@ export function DrawingToolbar({
         >
           <MenuCaret />
         </button>
-        {openMenu === "cursor" && (
-          <div className="toolbar-menu" role="menu">
-            <button role="menuitem" onClick={() => { onSelectCursor(); setOpenMenu(null); }}>
+        {openMenu === "cursor" && menuHost && createPortal(
+          <div ref={drawingMenuRef} className="toolbar-menu toolbar-menu--floating" role="menu" style={menuPosition}>
+            <button tabIndex={-1} role="menuitem" onClick={() => { onSelectCursor(); setOpenMenu(null); }}>
               <ToolbarIcon name="cursor" /><span>Con trỏ chữ thập</span>
             </button>
-            <button role="menuitem" onClick={() => { onSelectEraser(); setOpenMenu(null); }}>
+            <button tabIndex={-1} role="menuitem" onClick={() => { onSelectEraser(); setOpenMenu(null); }}>
               <ToolbarIcon name="eraser" /><span>Tẩy bản vẽ</span>
             </button>
-          </div>
+          </div>, menuHost
         )}
       </div>
 
@@ -198,7 +212,7 @@ export function DrawingToolbar({
         const currentTool = selectedTools[group.id] ?? group.tools[0];
         return (
           <div className="toolbar-group" key={group.id} data-tool-group={group.id}>
-            <button
+            <button tabIndex={-1}
               className={`toolbar-button toolbar-button--split ${selected ? "toolbar-button--active" : ""}`}
               aria-label={`Chọn ${currentTool.title}`}
               data-tooltip={currentTool.id === "trend-line" ? "Đường Xu hướng" : currentTool.title}
@@ -212,7 +226,7 @@ export function DrawingToolbar({
               <ToolbarIcon name={currentTool.icon} />
             </button>
             {group.tools.length > 0 && (
-              <button
+              <button tabIndex={-1}
                 className="toolbar-menu-trigger"
                 data-tooltip={`Các công cụ ${group.title}`}
                 data-tooltip-placement="right"
@@ -225,7 +239,7 @@ export function DrawingToolbar({
                 <MenuCaret />
               </button>
             )}
-            {openMenu === group.id && (
+            {openMenu === group.id && menuHost && createPortal(
               <div ref={drawingMenuRef} className="toolbar-menu toolbar-menu--drawing" role="menu" style={menuPosition} onKeyDown={(event) => {
                 if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
                 event.preventDefault();
@@ -252,14 +266,14 @@ export function DrawingToolbar({
                   {tool.available !== false && <button type="button" tabIndex={-1} className={`drawing-tool-menu__favorite ${favorites.ids.includes(tool.id) ? "is-favorite" : ""}`} aria-label={favorites.ids.includes(tool.id) ? "Loại bỏ khỏi mục yêu thích" : "Thêm vào mục yêu thích"} aria-pressed={favorites.ids.includes(tool.id)} data-tooltip={favorites.ids.includes(tool.id) ? "Loại bỏ khỏi mục yêu thích" : "Thêm vào mục yêu thích"} onClick={() => favorites.toggle(tool.id)} dangerouslySetInnerHTML={{ __html: favorites.ids.includes(tool.id) ? FAVORITE_ICONS.filled : FAVORITE_ICONS.empty }}/>}
                   </div>
                 ))}
-              </div>
+              </div>, menuHost
             )}
           </div>
         );
       })}
 
       <span className="toolbar-divider" />
-      <button className="toolbar-button" data-tooltip="Đo biên độ giá" data-tooltip-placement="right" aria-label="Đo biên độ giá" onClick={() => selectTool("PriceRange")} disabled={locked}>
+      <button tabIndex={-1} className="toolbar-button" data-tooltip="Đo biên độ giá" data-tooltip-placement="right" aria-label="Đo biên độ giá" onClick={() => selectTool("PriceRange")} disabled={locked}>
         <ToolbarIcon name="measure" />
       </button>
       <button className={`toolbar-button ${zoomActive ? "toolbar-button--active" : ""}`} tabIndex={-1} aria-pressed={zoomActive} data-tooltip="Chọn vùng để phóng to" data-tooltip-placement="right" aria-label="Chọn vùng để phóng to" onClick={onToggleZoom}>
@@ -271,7 +285,7 @@ export function DrawingToolbar({
         </button>
       )}
       <span className="toolbar-divider" />
-      <button
+      <button tabIndex={-1}
         className={`toolbar-button ${magnetMode > 0 ? "toolbar-button--active" : ""}`}
         data-tooltip={`Nam châm: ${magnetMode === 0 ? "tắt" : magnetMode === 1 ? "yếu" : "mạnh"}`}
         data-tooltip-placement="right"
@@ -282,7 +296,7 @@ export function DrawingToolbar({
         <ToolbarIcon name={magnetMode === 2 ? "magnetStrong" : "magnet"} />
         {magnetMode > 0 && <span className="toolbar-badge">{magnetMode}</span>}
       </button>
-      <button
+      <button tabIndex={-1}
         className={`toolbar-button ${stayInDrawingMode ? "toolbar-button--active" : ""}`}
         data-tooltip="Giữ chế độ vẽ"
         data-tooltip-placement="right"
@@ -293,7 +307,7 @@ export function DrawingToolbar({
       >
         <ToolbarIcon name={stayInDrawingMode ? "stayActive" : "stay"} />
       </button>
-      <button
+      <button tabIndex={-1}
         className={`toolbar-button ${locked ? "toolbar-button--active" : ""}`}
         data-tooltip={locked ? "Mở khóa bản vẽ" : "Khóa bản vẽ"}
         data-tooltip-placement="right"
@@ -302,7 +316,7 @@ export function DrawingToolbar({
       >
         <ToolbarIcon name={locked ? "lock" : "unlock"} />
       </button>
-      <button
+      <button tabIndex={-1}
         className={`toolbar-button ${drawingsHidden ? "toolbar-button--active" : ""}`}
         data-tooltip={drawingsHidden ? "Hiện bản vẽ" : "Ẩn bản vẽ"}
         data-tooltip-placement="right"
@@ -313,8 +327,8 @@ export function DrawingToolbar({
       </button>
 
       <span className="toolbar-divider" />
-      <div className="toolbar-group">
-        <button
+      <div className="toolbar-group" data-tool-group="delete">
+        <button tabIndex={-1}
           className="toolbar-button toolbar-button--split toolbar-button--danger"
           data-tooltip="Xóa tất cả bản vẽ"
           data-tooltip-placement="right"
@@ -323,7 +337,7 @@ export function DrawingToolbar({
         >
           <ToolbarIcon name="trash" />
         </button>
-        <button
+        <button tabIndex={-1}
           className="toolbar-menu-trigger"
           data-tooltip="Các tùy chọn xóa"
           data-tooltip-placement="right"
@@ -334,15 +348,23 @@ export function DrawingToolbar({
         >
           <MenuCaret />
         </button>
-        {openMenu === "delete" && (
-          <div className="toolbar-menu toolbar-menu--bottom" role="menu">
-            <button role="menuitem" onClick={() => { onClear(); setOpenMenu(null); }}>Xóa tất cả bản vẽ</button>
-            <button role="menuitem" onClick={() => { onClearIndicators(); setOpenMenu(null); }}>Xóa tất cả chỉ báo</button>
-            <button className="toolbar-menu__danger" role="menuitem" onClick={() => { onClearAll(); setOpenMenu(null); }}>Xóa bản vẽ và chỉ báo</button>
-          </div>
+        {openMenu === "delete" && menuHost && createPortal(
+          <div ref={drawingMenuRef} className="toolbar-menu toolbar-menu--floating" role="menu" style={menuPosition}>
+            <button tabIndex={-1} role="menuitem" onClick={() => { onClear(); setOpenMenu(null); }}>Xóa tất cả bản vẽ</button>
+            <button tabIndex={-1} role="menuitem" onClick={() => { onClearIndicators(); setOpenMenu(null); }}>Xóa tất cả chỉ báo</button>
+            <button tabIndex={-1} className="toolbar-menu__danger" role="menuitem" onClick={() => { onClearAll(); setOpenMenu(null); }}>Xóa bản vẽ và chỉ báo</button>
+          </div>, menuHost
         )}
       </div>
       {favorites.ids.length > 0 && <button type="button" tabIndex={-1} className={`toolbar-button drawing-favorites-toggle ${favorites.visible ? "is-active" : ""}`} aria-label="Hiển thị thanh công cụ vẽ yêu thích" aria-pressed={favorites.visible} data-tooltip="Hiển thị thanh công cụ vẽ yêu thích" data-tooltip-placement="right" onClick={favorites.toggleVisibility} dangerouslySetInnerHTML={{ __html: FAVORITE_ICONS.toolbar }}/>}
+      </div>
+      </div>
+      <div className="drawing-toolbar__navigation">
+      <span className={`drawing-toolbar__fade drawing-toolbar__fade--top ${edges.top ? "is-visible" : ""}`} aria-hidden="true" />
+      <span className={`drawing-toolbar__fade drawing-toolbar__fade--bottom ${edges.bottom ? "is-visible" : ""}`} aria-hidden="true" />
+      <button type="button" tabIndex={-1} className={`drawing-toolbar__scroll drawing-toolbar__scroll--top ${edges.top ? "is-visible" : ""}`} disabled={!edges.top} aria-label="Cuộn thanh công cụ lên" onClick={() => scrollPage(-1)}><ScrollArrow /></button>
+      <button type="button" tabIndex={-1} className={`drawing-toolbar__scroll drawing-toolbar__scroll--bottom ${edges.bottom ? "is-visible" : ""}`} disabled={!edges.bottom} aria-label="Cuộn thanh công cụ xuống" onClick={() => scrollPage(1)}><ScrollArrow /></button>
+      </div>
     </aside>
     <FavoriteDrawingToolbar ids={favorites.ids} visible={favorites.visible} locked={locked} activeId={activeFavoriteId} onSelect={(tool) => {
       const group = DRAWING_TOOL_GROUPS.find((item) => item.tools.some((entry) => entry.id === tool.id));
