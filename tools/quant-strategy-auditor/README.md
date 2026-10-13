@@ -142,6 +142,19 @@ python tools/quant-strategy-auditor/run.py --watch
 - The synchronous adapter entry point is `analyze(analyzer, context, documents, image_path, schema)`. The bridge owns and releases the provider lock. Adapters must not acquire or release it again, call `analyze_event` or connection checks recursively, or start provider work that outlives the call.
 - The worker releases its lock on success or failure. If the route is cancelled, it waits for the owned worker before deleting its temporary image. Connection/settings and strategy snapshots are checked before dispatch and before accepting the result.
 
+## Simulated derivatives terminal
+
+Backtest shares one simulated ledger between AI decisions, the draggable LONG/SHORT widget, the side ticket, and account tables. The interface adapts the advanced derivatives reference bundle (`phaisinhnangcao`, main JavaScript/CSS and inline SVG assets). No account identifiers, captured account responses, credentials, or brokerage endpoints are copied.
+
+- Normal Limit, Stop Limit, Trailing Stop, and entry-plus-OCO exits support integer quantities of 1 to 1,000 contracts. Capacity includes the current net position and same-side pending orders. Prices use a 0.1 tick. Netting keeps a weighted entry price; opposite fills close quantities before opening a reversed remainder.
+- Orders become eligible only after submission, using revealed sample closes. A conditional order triggers first, then becomes eligible for a Limit fill on a later sample. OHLC high/low do not invent intrabar executions. Trailing anchors move only on revealed closes. OCO exits start after entry fills; filling one cancels its sibling. Manual partial closes reduce older OCO groups first, keeping both siblings at the remaining protected quantity. Orders reserve the 300-order frame budget, including future OCO exits.
+- Stop expiry uses the replay date in UTC+7, up to 30 calendar days. Cancel and edit act only on pending orders; editing replaces the old order atomically. Close/reverse cancels existing pending orders and submits simulated Market orders for the next sample.
+- Gross results are quantity-weighted points. The configured pair fee applies per closed contract. Account tables convert points with a 100,000 VNĐ multiplier. Brokerage cash, margin, auction phases, queue priority, liquidity, partial exchange fills, and fees on still-open positions are not simulated. ATO, ATC, MTL, MAK and MOK stay disabled with explanatory tooltips.
+
+Optional imported replay JSON may include `market` with sorted `quotes` and `trades`. Quote fields: `time`, `bids` and `asks` arrays of `{price, quantity}` (up to ten levels), optional `reference`, `ceiling`, `floor`, `foreignBuy`, `foreignSell`, and `underlying`. Trade fields: `time`, `price`, `quantity`, optional `side` (`BUY`, `SELL`, `UNKNOWN`). Times are Unix seconds when the event became observable. Each array permits up to 120,000 events; the existing import limit remains 32 MB. The panels expose only events at or before the replay cutoff. Depth, trade history, and volume-at-price remain empty without recorded events; OHLC does not synthesize them. Quick trading without depth explicitly uses the last revealed close as a Limit price.
+
+The reference opens separate brokerage detail pages and embeds external analytics iframes. Backtest expands local panels instead, and derives only volume-at-price from supplied trades. Brokerage authentication, advertisements, other contracts, cash/margin pages, basis analytics, and stock-influence analytics require separate integrations and data. These capabilities are not claimed by this simulation.
+
 ## Configuration and backups
 
 - Keep your existing `config.json` when reinstalling or moving computers.
