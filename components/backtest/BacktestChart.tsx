@@ -13,6 +13,7 @@ const BacktestChart = forwardRef<BacktestChartHandle, { frame: ReplayFrame | nul
   const port = useRef<ReplayChartPort | null>(null);
   const onReady = useCallback((value: ReplayChartPort | null) => { port.current = value; }, []);
   useImperativeHandle(ref, () => ({
+    state: () => { if (!port.current) throw new Error("Chart đầy đủ đang tải."); return port.current.state(); },
     capture: () => { if (!port.current) throw new Error("Chart đầy đủ đang tải."); return port.current.capture(); },
     screenshot: () => { if (!port.current) throw new Error("Chart đầy đủ đang tải, thử lại sau khi toolbar hiện."); return port.current.screenshot(); },
     drawings: () => port.current?.drawings() || [],

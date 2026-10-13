@@ -1,14 +1,16 @@
 import chartTools from "./backtest-chart-tools.json" with { type: "json" };
+import { advanceDerivativeLedger } from "./derivatives-ledger.ts";
+import { parseReplayMarket, type ReplayMarket } from "./derivatives-market.ts";
 
 export type ReplayBar = { time: number; open: number; high: number; low: number; close: number; volume: number };
-export type ReplayData = { symbol: string; granularity: "1s" | "1m"; demo: boolean; bars: ReplayBar[] };
+export type ReplayData = { symbol: string; granularity: "1s" | "1m"; demo: boolean; bars: ReplayBar[]; market?: ReplayMarket };
 export type ReplayFrame = { cutoff: number; bars: ReplayBar[]; samples: ReplayBar[]; minute: number };
 export const replayDrawingPoints = chartTools.drawings;
 export const replayIndicatorCatalog = chartTools.indicators;
 export type ReplayIndicator = { id: string; name: string; inputs: { id: string; value: string | number | boolean }[]; visible: boolean; operation: "upsert" | "remove" };
-export type ReplayIndicatorState = ReplayIndicator & { status?: "ready" | "loading" | "error"; error?: string };
+export type ReplayIndicatorState = ReplayIndicator & { status?: "ready" | "loading" | "error"; error?: string; values?: { time: number; values: Record<string, number> }[] };
 export type ReplayDrawing = { id: string; tool: keyof typeof replayDrawingPoints; points: { timestamp: number; price: number }[]; label: string };
-export type ReplayChartPort = { capture: () => { frame: ReplayFrame; image: string; drawings: ReplayDrawing[]; indicators: ReplayIndicatorState[] }; screenshot: () => string; drawings: () => ReplayDrawing[]; apply: (drawings: ReplayDrawing[], indicators?: ReplayIndicator[]) => Promise<void>; reset: () => void };
+export type ReplayChartPort = { state: () => { frame: ReplayFrame; drawings: ReplayDrawing[]; indicators: ReplayIndicatorState[] }; capture: () => { frame: ReplayFrame; image: string; drawings: ReplayDrawing[]; indicators: ReplayIndicatorState[] }; screenshot: () => string; drawings: () => ReplayDrawing[]; apply: (drawings: ReplayDrawing[], indicators?: ReplayIndicator[]) => Promise<void>; reset: () => void };
 export type ChartReplay = { frame: ReplayFrame | null; symbol: string; session: number; busy: boolean; orders?: PaperOrder[]; granularity?: ReplayData["granularity"]; onReady: (port: ReplayChartPort | null) => void };
 export type BacktestDecision = {
   action: "HOLD" | "OPEN_LONG" | "OPEN_SHORT" | "CLOSE" | "CANCEL";
@@ -21,11 +23,16 @@ export type PaperOrder = {
   type: BacktestDecision["order_type"]; stop: number | null; limit: number | null;
   submitted: number; triggered: number | null; status: "waiting" | "triggered" | "filled" | "cancelled";
   filled: number | null; price: number | null;
+  quantity?: number; strategy?: "normal" | "stop" | "trailing" | "oco";
+  relation?: "gte" | "lte"; expires?: number;
+  trailing?: { amount: number; spread: number; anchor: number };
+  bracket?: { stopTrigger: number; stopLimit: number; takeTrigger: number; takeLimit: number };
+  parent?: string; group?: string;
 };
 export type PaperLedger = {
   orders: PaperOrder[];
-  position: { side: "LONG" | "SHORT"; price: number; time: number } | null;
-  pairs: { open: number; close: number; gross: number; fee: number }[];
+  position: { side: "LONG" | "SHORT"; price: number; time: number; quantity?: number } | null;
+  pairs: { open: number; close: number; gross: number; fee: number; quantity?: number; openPrice?: number; closePrice?: number; side?: "LONG" | "SHORT" }[];
 };
 export const emptyLedger = (): PaperLedger => ({ orders: [], position: null, pairs: [] });
 export const paperLedgerContext = (ledger: PaperLedger): string => JSON.stringify(ledger);
@@ -48,7 +55,7 @@ export function paperOrderMarkers(orders: PaperOrder[], frame: ReplayFrame, gran
     markers.push({ id: `${order.id}-submitted`, time: Math.floor(submitted.time / 60) * 60, position, shape: "square", color: order.status === "cancelled" ? "#787b86" : color, text: `${order.id} ${order.side} ${order.purpose === "CLOSE" ? "đóng " : ""}${order.type} ${order.limit ?? order.stop ?? submitted.close}${order.status === "cancelled" ? " · hủy" : " · gửi"}` });
     if (order.filled !== null && order.filled <= frame.cutoff) {
       const filled = frame.samples.findLast(sample => sample.time + duration <= order.filled!);
-      if (filled) markers.push({ id: `${order.id}-filled`, time: Math.floor(filled.time / 60) * 60, position, shape: order.side === "BUY" ? "arrowUp" : "arrowDown", color, text: `${order.id} ${order.side} 1 @ ${order.price} · khớp` });
+      if (filled) markers.push({ id: `${order.id}-filled`, time: Math.floor(filled.time / 60) * 60, position, shape: order.side === "BUY" ? "arrowUp" : "arrowDown", color, text: `${order.id} ${order.side} ${order.quantity ?? 1} @ ${order.price} · khớp` });
     }
   }
   return markers.sort((a, b) => a.time - b.time);
@@ -105,7 +112,7 @@ export function parseReplayData(input: unknown): ReplayData {
     return bar;
   });
   if (new Set(bars.map(bar => Math.floor((bar.time + 7 * 3600) / 86400))).size !== 1) throw new Error("Mỗi lượt replay chỉ nhận một ngày giao dịch (UTC+7).");
-  return { symbol: data.symbol, granularity: data.granularity, demo: data.demo === true, bars };
+  return { symbol: data.symbol, granularity: data.granularity, demo: data.demo === true, bars, ...(data.market === undefined ? {} : { market: parseReplayMarket(data.market) }) };
 }
 
 export function replayMinutes(data: ReplayData): number[] {
@@ -150,6 +157,7 @@ export function exampleReplay(): ReplayData {
 export function submitPaperOrder(ledger: PaperLedger, decision: BacktestDecision, cutoff: number): PaperLedger {
   if (decision.action === "HOLD") return ledger;
   if (decision.action === "CANCEL") return { ...ledger, orders: ledger.orders.map(order => ["waiting", "triggered"].includes(order.status) ? { ...order, status: "cancelled" } : order) };
+  if (ledger.orders.length >= 300) throw new Error("Đã đạt giới hạn lệnh của lượt replay. Xuất kết quả và bắt đầu lượt mới.");
   if (ledger.orders.some(order => order.status === "waiting" || order.status === "triggered")) throw new Error("Hủy hoặc xử lý lệnh chờ trước khi tạo lệnh khác.");
   const closing = decision.action === "CLOSE";
   if (closing && !ledger.position) throw new Error("Không có vị thế để đóng.");
@@ -158,31 +166,10 @@ export function submitPaperOrder(ledger: PaperLedger, decision: BacktestDecision
   if (decision.order_type === "STOP_LIMIT" && (!finite(decision.stop_price) || decision.stop_price <= 0)) throw new Error("Stop-Limit cần giá kích hoạt hợp lệ.");
   const side = closing ? ledger.position!.side === "LONG" ? "SELL" : "BUY" : decision.action === "OPEN_LONG" ? "BUY" : "SELL";
   const order: PaperOrder = { id: `order-${ledger.orders.length + 1}`, side, purpose: closing ? "CLOSE" : "OPEN", type: decision.order_type, stop: decision.stop_price, limit: decision.limit_price, submitted: cutoff, triggered: null, status: "waiting", filled: null, price: null };
+  if (closing && ledger.position?.quantity !== undefined) order.quantity = ledger.position.quantity;
   return { ...ledger, orders: [...ledger.orders, order] };
 }
 
 export function advancePaperLedger(ledger: PaperLedger, data: ReplayData, after: number, cutoff: number, fee: number): PaperLedger {
-  if (!finite(fee) || fee < 0) throw new Error("Phí phải là số hữu hạn, không âm.");
-  let result: PaperLedger = { orders: ledger.orders.map(order => ({ ...order })), position: ledger.position ? { ...ledger.position } : null, pairs: [...ledger.pairs] };
-  const duration = data.granularity === "1s" ? 1 : 60;
-  for (const sample of data.bars) {
-    const available = sample.time + duration;
-    if (available <= after || available > cutoff) continue;
-    const order = result.orders.find(item => item.status === "waiting" || item.status === "triggered");
-    if (!order || available <= order.submitted) continue;
-    // Chỉ dùng giá đóng của mẫu đã mở, không đoán thứ tự chạm giá bên trong OHLC.
-    const price = sample.close;
-    if (order.type === "STOP_LIMIT" && order.status === "waiting") {
-      if (order.side === "BUY" ? price >= order.stop! : price <= order.stop!) { order.status = "triggered"; order.triggered = available; }
-      continue;
-    }
-    if (order.type !== "MARKET" && !(order.side === "BUY" ? price <= order.limit! : price >= order.limit!)) continue;
-    order.status = "filled"; order.filled = available; order.price = price;
-    if (order.purpose === "OPEN") result = { ...result, position: { side: order.side === "BUY" ? "LONG" : "SHORT", price, time: available } };
-    else if (result.position) {
-      result.pairs.push({ open: result.position.time, close: available, gross: (price - result.position.price) * (result.position.side === "LONG" ? 1 : -1), fee });
-      result.position = null;
-    }
-  }
-  return result;
+  return advanceDerivativeLedger(ledger, data, after, cutoff, fee);
 }

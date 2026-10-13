@@ -18,15 +18,20 @@ const action = z.enum(["HOLD", "OPEN_LONG", "OPEN_SHORT", "CLOSE", "CANCEL"]);
 const orderType = z.enum(["MARKET", "LIMIT", "STOP_LIMIT"]);
 const replayDrawing = z.strictObject({ id, tool: z.enum(Object.keys(replayDrawingPoints) as [keyof typeof replayDrawingPoints, ...(keyof typeof replayDrawingPoints)[]]), points: z.array(point).min(1).max(3), label: z.string().max(160) }).refine(drawing => drawing.points.length === replayDrawingPoints[drawing.tool], { message: "Drawing point count does not match its tool" });
 const indicatorFields = { id, name: z.string().min(1).max(100), inputs: z.array(z.strictObject({ id: z.string().min(1).max(80), value: z.union([z.string().max(160), z.number().finite(), z.boolean()]) })).max(30), visible: z.boolean(), operation: z.enum(["upsert", "remove"]) };
-const replayIndicator = z.strictObject({ ...indicatorFields, status: z.enum(["ready", "loading", "error"]).optional(), error: z.string().max(200).optional() }).refine(indicator => { try { validateReplayIndicator(indicator as ReplayIndicator); return true; } catch { return false; } }, { message: "Invalid replay indicator" });
+const replayIndicator = z.strictObject({ ...indicatorFields, status: z.enum(["ready", "loading", "error"]).optional(), error: z.string().max(200).optional(), values: z.array(z.strictObject({ time, values: z.record(z.string().max(80), z.number().finite()).refine(values => Object.keys(values).length <= 100) })).max(30).optional() }).refine(indicator => { try { validateReplayIndicator(indicator as ReplayIndicator); return true; } catch { return false; } }, { message: "Invalid replay indicator" });
 
 export const backtestFrameSchema = z.strictObject({
+  client_id: z.string().uuid().optional(),
   symbol: z.string().min(1).max(40).regex(/^[a-zA-Z0-9_.-]+$/), cutoff: time, granularity: z.enum(["1s", "1m"]),
   bars: z.array(z.strictObject({ time, open: price, high: price, low: price, close: price, volume: z.number().finite().nonnegative() })).min(1).max(2000),
   image: z.string().max(12 * 1024 * 1024), drawings: z.array(replayDrawing).max(100), indicators: z.array(replayIndicator).max(30).optional(),
-  position: z.strictObject({ side: z.enum(["LONG", "SHORT"]), price, time }).nullable(),
+  position: z.strictObject({ side: z.enum(["LONG", "SHORT"]), price, time, quantity: z.number().int().min(1).max(1000).optional() }).nullable(),
   orders: z.array(z.strictObject({ id: z.string().max(80), side: z.enum(["BUY", "SELL"]), purpose: z.enum(["OPEN", "CLOSE"]), type: orderType,
-    stop: price.nullable(), limit: price.nullable(), submitted: time, triggered: time.nullable(), status: z.enum(["waiting", "triggered", "filled", "cancelled"]), filled: time.nullable(), price: price.nullable() })).max(300),
+    stop: price.nullable(), limit: price.nullable(), submitted: time, triggered: time.nullable(), status: z.enum(["waiting", "triggered", "filled", "cancelled"]), filled: time.nullable(), price: price.nullable(),
+    quantity: z.number().int().min(1).max(1000).optional(), strategy: z.enum(["normal", "stop", "trailing", "oco"]).optional(), relation: z.enum(["gte", "lte"]).optional(), expires: time.optional(),
+    trailing: z.strictObject({ amount: price, spread: z.number().finite().nonnegative(), anchor: price }).optional(),
+    bracket: z.strictObject({ stopTrigger: price, stopLimit: price, takeTrigger: price, takeLimit: price }).optional(), parent: id.optional(), group: id.optional(),
+  })).max(300),
   teaching: z.string().max(6000), history: z.array(z.strictObject({ cutoff: time, action, reason: z.string().max(6000) })).max(20),
 });
 
@@ -53,6 +58,9 @@ const bodies: Record<string, z.ZodType> = {
   "/backtest/connection/config": z.strictObject({ provider, model: z.string().max(120).regex(/^[^\x00-\x1f]*$/).optional(), effort: z.string().max(40).regex(/^(?:[a-z][a-z0-9_-]*)?$/).optional() }),
   "/backtest/strategy": z.strictObject({ content: z.string().trim().min(1).max(100000) }),
   "/backtest/analyze": backtestFrameSchema,
+  "/backtest/tools/sync": z.strictObject({ client_id: z.string().uuid(), frame: backtestFrameSchema }),
+  "/backtest/tools/ack": z.strictObject({ client_id: z.string().uuid(), command_id: z.string().uuid(), frame: backtestFrameSchema, error: z.string().max(200) }),
+  "/backtest/tools/reset": z.strictObject({ client_id: z.string().uuid() }),
 };
 
 const audioBody = z.strictObject({ data: z.string().max(5 * 1024 * 1024), mime: z.enum(["audio/webm", "audio/ogg", "audio/mp4"]), started_at: z.string().max(50), ended_at: z.string().max(50), frame_base64: frame, frame_captured_at: z.string().max(50).nullable().optional() });

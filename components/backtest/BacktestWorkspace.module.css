@@ -8,19 +8,19 @@
 .badge { display: inline-flex; align-items: center; min-height: 24px; padding: 3px 9px; border: 1px solid var(--border); border-radius: 5px; font-size: 11px; color: var(--accent); }
 .warning { color: #f1c779; background: #f1c77908; border-color: #f1c77950; }
 .toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); }
-.workspace button:not(:where(.fullChart *)), .workspace select:not(:where(.fullChart *)), .workspace input:not(:where(.fullChart *)), .workspace textarea:not(:where(.fullChart *)) { font: inherit; box-sizing: border-box; }
-.workspace button:not(:where(.fullChart *)) { min-height: 38px; padding: 7px 12px; display: inline-flex; justify-content: center; align-items: center; gap: 8px; color: inherit; background: #1c2533; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; transition: background-color 140ms ease, border-color 140ms ease, transform 100ms ease; white-space: nowrap; }
-.workspace button:not(:where(.fullChart *)):hover:not(:disabled) { background: #263447; border-color: #50647c; }
-.workspace button:not(:where(.fullChart *)):active:not(:disabled) { transform: scale(.97); }
-.workspace button:not(:where(.fullChart *)):disabled { opacity: .45; cursor: default; }
+.workspace button:not(:where(.fullChart *, [data-derivatives-terminal] *)), .workspace select:not(:where(.fullChart *, [data-derivatives-terminal] *)), .workspace input:not(:where(.fullChart *, [data-derivatives-terminal] *)), .workspace textarea:not(:where(.fullChart *, [data-derivatives-terminal] *)) { font: inherit; box-sizing: border-box; }
+.workspace button:not(:where(.fullChart *, [data-derivatives-terminal] *)) { min-height: 38px; padding: 7px 12px; display: inline-flex; justify-content: center; align-items: center; gap: 8px; color: inherit; background: #1c2533; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; transition: background-color 140ms ease, border-color 140ms ease, transform 100ms ease; white-space: nowrap; }
+.workspace button:not(:where(.fullChart *, [data-derivatives-terminal] *)):hover:not(:disabled) { background: #263447; border-color: #50647c; }
+.workspace button:not(:where(.fullChart *, [data-derivatives-terminal] *)):active:not(:disabled) { transform: scale(.97); }
+.workspace button:not(:where(.fullChart *, [data-derivatives-terminal] *)):disabled { opacity: .45; cursor: default; }
 .workspace :where(button, input, select, textarea):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .workspace .primary { background: var(--accent); border-color: var(--accent); color: #0b182a; }
 .workspace .primary:hover:not(:disabled) { background: #b4d8ff; }
-.workspace input:not(:where(.fullChart *)), .workspace select:not(:where(.fullChart *)), .workspace textarea:not(:where(.fullChart *)) { background: var(--bg); color: inherit; min-height: 36px; border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px; min-width: 0; max-width: 100%; }
-.workspace input:not(:where(.fullChart *))[type=checkbox] { min-height: auto; width: 16px; height: 16px; accent-color: var(--accent); }
-.workspace input:not(:where(.fullChart *))[type=number] { width: 98px; }
-.workspace textarea:not(:where(.fullChart *)) { width: 100%; min-height: 84px; resize: vertical; }
-.workspace label:not(:where(.fullChart *)) { display: grid; gap: 6px; color: var(--muted); font-size: 12px; }
+.workspace input:not(:where(.fullChart *, [data-derivatives-terminal] *)), .workspace select:not(:where(.fullChart *, [data-derivatives-terminal] *)), .workspace textarea:not(:where(.fullChart *, [data-derivatives-terminal] *)) { background: var(--bg); color: inherit; min-height: 36px; border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px; min-width: 0; max-width: 100%; }
+.workspace input:not(:where(.fullChart *, [data-derivatives-terminal] *))[type=checkbox] { min-height: auto; width: 16px; height: 16px; accent-color: var(--accent); }
+.workspace input:not(:where(.fullChart *, [data-derivatives-terminal] *))[type=number] { width: 98px; }
+.workspace textarea:not(:where(.fullChart *, [data-derivatives-terminal] *)) { width: 100%; min-height: 84px; resize: vertical; }
+.workspace label:not(:where(.fullChart *, [data-derivatives-terminal] *)) { display: grid; gap: 6px; color: var(--muted); font-size: 12px; }
 .workspace .inline { display: flex; align-items: center; gap: 8px; }
 .workspace .hidden { display: none; }
 .source { display: grid; gap: 10px; border-bottom: 1px solid var(--border); padding-bottom: 16px; }
@@ -34,7 +34,7 @@
 .toolbar > .replayToggle { width: 132px; flex: 0 0 132px; }
 .toolbar > button:nth-child(2) { width: 116px; flex: 0 0 116px; }
 .toolbar > button:nth-child(3) { width: 148px; flex: 0 0 148px; }
-.toolbar > .inline > :global(.chart-select) { width: 136px; flex: 0 0 136px; }
+.toolbar > .inline > :global(.chart-select) { width: 164px; flex: 0 0 164px; }
 .workspace :global(.chart-select) > button { padding-block: 0; align-items: center; }
 .workspace :global(.chart-select) > button > span { display: flex; align-items: center; height: 100%; line-height: 20px; }
 .workspace :global(.chart-select) > button > svg { display: block; flex: none; }
@@ -95,14 +95,17 @@
 .connectionTitle h2 { white-space: nowrap; }
 .connectionTitle .badge { box-sizing: border-box; min-height: 24px; padding: 2px 7px; white-space: nowrap; flex: none; transition: color 140ms ease, border-color 140ms ease, background-color 140ms ease; }
 .connectionDetails { display: grid; gap: 4px; margin: 0; min-width: 0; }
-.connectionRow { display: grid; grid-template-columns: 76px minmax(0, 1fr); align-items: center; gap: 12px; height: 22px; font-size: 12px; }
-.connectionRow dt { color: var(--muted); }
-.connectionRow dd { margin: 0; min-width: 0; color: #d1d4dc; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.workspace .connectionRefresh { display: grid; place-items: center; gap: 0; line-height: 0; }
-.connectionRefreshIcon { display: grid; place-items: center; width: 18px; height: 18px; flex: none; transform-origin: 50% 50%; }
+.connectionRow { display: grid; grid-template-columns: 76px minmax(0, 1fr); align-items: center; gap: 12px; height: 22px; font-size: 12px; line-height: 20px; }
+.connectionRow dt { display: flex; align-items: center; min-height: 20px; color: var(--muted); }
+.connectionRow dd { display: flex; align-items: center; justify-content: flex-end; margin: 0; min-width: 0; min-height: 20px; color: #d1d4dc; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workspace .connectionRefresh { position: relative; display: grid; place-items: center; gap: 0; line-height: 0; }
+.connectionRefreshIcon { position: relative; display: grid; place-items: center; width: 18px; height: 18px; line-height: 0; flex: none; }
 .connectionRefreshIcon svg { display: block; width: 18px; height: 18px; }
-.connectionRefresh[aria-busy=true] .connectionRefreshIcon { animation: connectionRefreshSpin 900ms linear infinite; }
-@keyframes connectionRefreshSpin { to { transform: rotate(360deg); } }
+.connectionRefreshIcon::after { content: ""; position: absolute; inset: 1px; border: 1.7px solid currentColor; border-right-color: transparent; border-radius: 50%; transform-box: border-box; transform-origin: 50% 50%; display: none; }
+.connectionRefresh[aria-busy=true] .connectionRefreshIcon svg { visibility: hidden; }
+.connectionRefresh[aria-busy=true] .connectionRefreshIcon::after { display: block; animation: connectionRefreshSpin 900ms linear infinite; }
+@keyframes connectionRefreshSpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .connectionRefresh[aria-busy=true] .connectionRefreshIcon svg { visibility: visible; } .connectionRefresh[aria-busy=true] .connectionRefreshIcon::after { display: none; } }
 @container (max-width: 240px) {
   .connectionHeader { align-items: flex-start; min-height: 46px; }
   .connectionTitle { flex-direction: column; align-items: flex-start; flex-wrap: nowrap; gap: 4px; }
@@ -134,7 +137,7 @@
 @keyframes pulse { 50% { opacity: .45; } }
 @media (max-width: 1100px) { .layout { grid-template-columns: minmax(0, 1fr); } .aside { grid-template-columns: repeat(2, minmax(0, 1fr)); } .chartCanvas, .fullChart { height: 460px; } }
 @media (max-width: 650px) { .container { padding: 14px 12px; } .aside { grid-template-columns: 1fr; } .heading { align-items: start; } .heading h1 { font-size: 18px; } .chartCaption span { display: none; } .toolbar { padding: 10px; } .clock { margin-left: 0; text-align: left; } }
-@media (prefers-reduced-motion: reduce) { .workspace *, .workspace *::before, .workspace *::after { animation: none !important; transition: none !important; } .workspace button:not(:where(.fullChart *)):active:not(:disabled) { transform: none; } }
+@media (prefers-reduced-motion: reduce) { .workspace *, .workspace *::before, .workspace *::after { animation: none !important; transition: none !important; } .workspace button:not(:where(.fullChart *, [data-derivatives-terminal] *)):active:not(:disabled) { transform: none; } }
 
 .tradeOverlay { position: absolute; top: 84px; left: 68px; z-index: 3; width: 250px; max-width: calc(100% - 88px); border: 1px solid #363a45; border-radius: 8px; background: #1e222df5; box-shadow: 0 2px 8px #0003; overflow: hidden; font: 12px/18px var(--font-ui); animation: tradeEnter 160ms ease-out; }
 .tradeQuotes { display: grid; grid-template-columns: minmax(0, 1fr) 42px minmax(0, 1fr); }
