@@ -26,7 +26,7 @@ export default function AuditorLoading() {
           </section>
           <AuditorAudio audio={{ status: "off", error: "", savedClips: 0, saving: false, mediaStream: null, deviceId: "", setDeviceId: () => {}, retry: () => {}, saveClip: () => {}, unsavedClips: [], dismissClip: () => {} }} enabled loading disabled canRecord={false} hasSource={false} canHear={false} onToggle={() => {}} />
           <AuditorStrategy enabled={false} available={false} documents={[]} disabled loading toggling={false} onToggle={() => {}} />
-          <AuditorConnection status={null} loading pending="" disabled onSave={() => {}} onCheck={() => {}} onOpenTerminal={() => {}} />
+          <AuditorConnection status={null} loading pending="" disabled onSaveAndCheck={() => {}} onOpenTerminal={() => {}} />
         </aside>
         <div className={styles.auditArea}>
           <section className={styles.panel}><div className={styles.sectionHeading}><h2>Nhật ký quan sát</h2><span className={styles.muted}><LoadingNumber loading digits={3} /> sự kiện</span></div><div className={styles.feedControls}><LoadingControl width="35ch" height={34} /><LoadingControl width="18ch" height={34} /></div><FeedLoading /></section>

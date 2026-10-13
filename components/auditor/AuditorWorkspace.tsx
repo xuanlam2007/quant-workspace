@@ -410,8 +410,10 @@ export default function AuditorWorkspace({ active: isActive = true }: { active?:
             })}
           />
           <AuditorConnection status={ai} loading={dataLoading} pending={pending} disabled={disabled} observing={events.some(event => event.ai_pending)}
-            onSave={(settings: AiSettings) => void perform("ai-config", async () => { setAi(await auditorRequest<AiStatus>("/ai/config", settings)); })}
-            onCheck={() => void perform("ai", async () => { setAi(await auditorRequest<AiStatus>("/ai/connection/test", {})); })}
+            onSaveAndCheck={(settings: AiSettings) => void perform("ai", async () => {
+              setAi(await auditorRequest<AiStatus>("/ai/config", settings));
+              setAi(await auditorRequest<AiStatus>("/ai/connection/test", {}));
+            })}
             onOpenTerminal={provider => void perform("ai-account", async () => {
               await auditorRequest("/terminal/open", { terminal_type: host, purpose: "account", provider });
               setAi(previous => previous ? { ...previous, connected: null, error: undefined } : previous);

@@ -115,7 +115,7 @@ export function AppHeader({ timezone, exchangeTimezone, onTimezoneChange }: {
       </svg>
       <span className={styles.wordmark}>Quant<span className={styles.brandSuffix}> Workspace</span></span>
     </Link>
-    <nav ref={navRef} className={styles.nav} aria-label="Main navigation">
+    <nav ref={navRef} className={styles.nav} aria-label="Main navigation" data-hide-scrollbar>
       {[{ href: "/", label: "Chart" }, { href: "/auditor", label: "Analyzer Auditor" }, { href: "/backtest", label: "Backtest" }].map(item => <Link
         key={item.href} href={item.href} tabIndex={-1} draggable={false}
         prefetch={false} onNavigate={event => navigateWorkspace(event, item.href)}

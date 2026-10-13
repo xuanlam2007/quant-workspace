@@ -30,7 +30,7 @@ export default function BacktestLoading() {
       <button type="button" tabIndex={-1} className={`${styles.primary} ${styles.replayToggle}`} disabled><Icon name="play" />Chạy replay</button>
       <button type="button" tabIndex={-1} disabled>Phút tiếp theo</button>
       <button type="button" tabIndex={-1} disabled><Icon name="refresh" />Chạy lại từ đầu</button>
-      <div className={styles.inline}><label>Tốc độ</label><ChartSelect id="backtest-loading-speed" label="Tốc độ replay" value={1} disabled onChange={unchanged} options={[{ value: 1, label: "1 phút / giây" }]} /></div>
+      <div className={styles.inline}><label>Tốc độ</label><ChartSelect id="backtest-loading-speed" label="Tốc độ replay (nến M1)" value={1} disabled onChange={unchanged} options={[{ value: 1, label: "1 nến / giây" }]} /></div>
       <div className={styles.clock}><span>Thời điểm replay (UTC+7)</span><strong>--:--:--</strong></div>
     </div>
     <div className={styles.layout}>
@@ -42,10 +42,9 @@ export default function BacktestLoading() {
       <aside className={styles.aside}>
         <section className={`${styles.panel} ${styles.aiPanel}`}>
           <BacktestConnectionSummary loading ready={false} refreshing />
-          <AuditorConnection context="backtest" className={styles.connectionConfig} status={null} loading pending="" disabled onSave={unchanged} onCheck={unchanged} onOpenTerminal={unchanged} />
+          <AuditorConnection context="backtest" className={styles.connectionConfig} status={null} loading pending="" disabled onSaveAndCheck={unchanged} onOpenTerminal={unchanged} />
           <button type="button" tabIndex={-1} disabled><Icon name="refresh" />Quét lại chiến lược</button>
           <div className={styles.aiActions}>
-            <button type="button" tabIndex={-1} disabled>Kiểm tra kết nối AI</button>
             <button type="button" tabIndex={-1} className={`${styles.primary} ${styles.full}`} disabled>Phân tích chart hiện tại</button>
           </div>
           <div className={styles.aiSettings}>

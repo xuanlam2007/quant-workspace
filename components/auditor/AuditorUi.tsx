@@ -17,7 +17,7 @@ const paths: Record<IconName, ReactNode> = {
   close: <path d="m6 6 12 12M6 18 18 6" />,
   check: <path d="m5 12 4 4L19 6" />,
   chevron: <path d="m6 9 6 6 6-6" />,
-  refresh: <path d="M20 7a9 9 0 1 0 1 8M20 3v5h-5" />,
+  refresh: <path d="M19.794 7.5a9 9 0 1 0 .691 7.5M20 3v5h-5" />,
   capture: <><rect x="3" y="4" width="18" height="13" rx="2" /><path d="M8 21h8m-4-4v4M9 9h6v4H9z" /></>,
   export: <path d="M12 3v12m-4-4 4 4 4-4M4 15v5h16v-5" />,
   back: <path d="m12 5-7 7 7 7M5 12h15" />,

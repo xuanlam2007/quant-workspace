@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { auditorRequest, type AiCatalog, type AiCatalogOption, type AiSettings, type AiStatus } from "../../lib/auditor-client";
-import { LoadingIndicator, LoadingNumber, LoadingText } from "../ui/Loading";
+import { LoadingIndicator, LoadingText } from "../ui/Loading";
+import ConnectionLatency from "../ui/ConnectionLatency";
 import { AuditorSelect, Icon } from "./AuditorUi";
 import AuditorNotice from "./AuditorNotice";
 import StarBorder from "../ui/reactbits/StarBorder";
@@ -8,13 +9,13 @@ import styles from "../../app/auditor/auditor.module.css";
 
 const loadAuditorCatalog = (provider: AiSettings["provider"], refresh: boolean, signal: AbortSignal) => auditorRequest<AiCatalog>(`/ai/catalog?provider=${provider}&refresh=${refresh}`, undefined, "GET", signal);
 
-export default function AuditorConnection({ status, loading, pending, disabled, observing = false, onSave, onCheck, onOpenTerminal, context = "auditor", className, loadCatalog = loadAuditorCatalog, onDraftChange }: {
+export default function AuditorConnection({ status, loading, pending, disabled, observing = false, onSaveAndCheck, onOpenTerminal, context = "auditor", className, loadCatalog = loadAuditorCatalog, onDraftChange }: {
   status: AiStatus | null; loading: boolean; pending: string; disabled: boolean;
   observing?: boolean;
-  onSave: (settings: AiSettings) => void; onCheck: () => void;
+  onSaveAndCheck: (settings: AiSettings) => void;
   onOpenTerminal?: (provider: AiSettings["provider"]) => void;
   context?: "auditor" | "backtest"; className?: string;
-  loadCatalog?: typeof loadAuditorCatalog; onDraftChange?: (changed: boolean) => void;
+  loadCatalog?: typeof loadAuditorCatalog; onDraftChange?: (blocked: boolean, validating: boolean) => void;
 }) {
   const [provider, setProvider] = useState<AiSettings["provider"]>("AGY");
   const [model, setModel] = useState("");
@@ -64,9 +65,9 @@ export default function AuditorConnection({ status, loading, pending, disabled, 
     ...items.map(item => ({ value: item.id, label: item.label })),
   ];
   const choicesLoading = loading || catalogLoading;
-  useEffect(() => { onDraftChange?.(changed || invalid || choicesLoading); }, [changed, invalid, choicesLoading, onDraftChange]);
+  useEffect(() => { onDraftChange?.(changed || invalid || choicesLoading, choicesLoading && !changed && !invalid); }, [changed, invalid, choicesLoading, onDraftChange]);
   const effortValue = provider === "AGY" ? presetGroup ? model : "" : effort;
-  const checking = loading || pending === "ai";
+  const checking = loading || pending === "ai" || pending === "ai-config";
   const working = !changed && !!status?.connected && observing;
   const connectionLabel = checking ? "Đang kiểm tra" : changed ? "Chưa lưu cấu hình" : working ? "Đang quan sát" : status?.connected ? "Đã kết nối" : status?.connected === false ? "Chưa kết nối" : "Chưa kiểm tra";
 
@@ -91,8 +92,7 @@ export default function AuditorConnection({ status, loading, pending, disabled, 
     {(catalogError || Object.keys(selectedCatalog?.errors || {}).length > 0) && <AuditorNotice message={`${catalogError || Object.values(selectedCatalog!.errors).join(" ")} Mở Terminal để đăng nhập hoặc kiểm tra CLI, rồi làm mới danh sách.`} />}
     {!choicesLoading && invalid && <AuditorNotice kind="warning" message="Một lựa chọn đã lưu không có trong danh sách hiện tại. Chọn lại hoặc dùng mặc định CLI trước khi lưu và kiểm tra kết nối." />}
     <div className={styles.connectionActions}>
-      <button type="button" tabIndex={context === "backtest" ? -1 : undefined} className={styles.button} disabled={disabled || choicesLoading || !changed || invalid} onClick={() => onSave({ provider, model, effort: provider === "CODEX" ? effort : "" })}>{pending === "ai-config" ? <LoadingIndicator label="Đang lưu kết nối" /> : "Lưu cấu hình"}</button>
-      {context === "auditor" && <button type="button" className={styles.button} disabled={disabled || choicesLoading || changed || invalid} onClick={onCheck}>{pending === "ai" ? <LoadingIndicator label="Đang kiểm tra" /> : "Kiểm tra kết nối"}</button>}
+      <button type="button" tabIndex={context === "backtest" ? -1 : undefined} className={styles.button} disabled={disabled || choicesLoading || invalid} aria-busy={pending === "ai" || pending === "ai-config"} onClick={() => onSaveAndCheck({ provider, model, effort: provider === "CODEX" ? effort : "" })}>{pending === "ai" || pending === "ai-config" ? <LoadingIndicator compact label="Đang lưu và kiểm tra" /> : null}Lưu và kiểm tra</button>
       {onOpenTerminal && <button type="button" tabIndex={context === "backtest" ? -1 : undefined} className={styles.button} disabled={disabled || loading} aria-busy={pending === "ai-account"} title={`Mở ${provider === "CODEX" ? "Codex" : "AGY"} CLI để đăng nhập, rồi kiểm tra lại kết nối`} onClick={() => onOpenTerminal(provider)}>{pending === "ai-account" ? <LoadingIndicator compact label="Đang mở Terminal" /> : <Icon name="terminal" />}Mở Terminal</button>}
     </div>
     {context === "auditor" && <>
@@ -102,6 +102,6 @@ export default function AuditorConnection({ status, loading, pending, disabled, 
     </>}
     {!changed && status?.error && <AuditorNotice message={status.error} />}
     {status?.terminal_error && <AuditorNotice kind="warning" message={status.terminal_error} />}
-    {!changed && (pending === "ai" || status?.latency_ms !== undefined) && <p className={styles.help}>Độ trễ: <LoadingNumber loading={pending === "ai"} digits={3}>{status?.latency_ms}</LoadingNumber> ms</p>}
+    {context === "auditor" && <p className={styles.help} aria-live="polite">Độ trễ: <ConnectionLatency loading={checking} value={changed ? undefined : status?.latency_ms} /></p>}
   </section>;
 }

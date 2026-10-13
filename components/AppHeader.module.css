@@ -51,6 +51,7 @@
   position: relative;
   min-width: 0;
   overflow-x: auto;
+  overflow-y: hidden;
   scrollbar-width: none;
   display: flex;
   align-self: stretch;
