@@ -6,6 +6,7 @@ next-env.d.ts
 img_help
 data
 .codegraph
+.codex/
 tsconfig.tsbuildinfo
 AGENTS.md
 .agents
