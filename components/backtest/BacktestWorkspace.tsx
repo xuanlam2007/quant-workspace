@@ -4,6 +4,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { advancePaperLedger, emptyLedger, paperLedgerContext, submitTimedPaperOrder, exampleReplay, parseReplayData, replayFrame, replayMinutes, submitPaperOrder, type BacktestDecision, type PaperLedger, type ReplayData, type ReplayChartPort } from "../../lib/backtest";
 import { backtestRequest, engineUrl } from "../../lib/backtest-client";
+import { recoverBacktestAnalysis } from "../../lib/backtest-analysis";
+import { paperAccountMatches } from "../../lib/backtest-account";
+import backtestTiming from "../../lib/backtest-timing.json";
+import { ReplayToolDelivery, waitForReplayPaint, pollReplayTools } from "../../lib/backtest-tool-delivery";
 import { activateBacktest } from "../../lib/backtest-status";
 import { notify } from "../../lib/notifications";
 import { Icon } from "../auditor/AuditorUi";
@@ -25,11 +29,14 @@ import { ChartSelect } from "../chart/ui/ChartSelect";
 type Status = AiSettings & { adapter_ready: boolean; strategy_available: boolean; strategy_documents: string[]; strategy_error?: string; error?: string; terminal_error?: string; latency_ms?: number; connected: boolean | null; busy: boolean };
 const loadCatalog = (provider: AiSettings["provider"], refresh: boolean, signal: AbortSignal) => backtestRequest<AiCatalog>(`/ai/catalog?provider=${provider}&refresh=${refresh}`, "GET", undefined, signal);
 type Entry = { cutoff: number; received: number; context: string; application: string; applied?: boolean; decision: BacktestDecision; model: { model: string; effort: string }; strategy_versions: string[]; duration: number };
-type SavedRun = { symbol: string; granularity: string; demo: boolean; cutoff: number; ledger: PaperLedger; entries: Entry[]; fee: number; second: number; teaching: string };
+type FailedAttempt = { cutoff: number; message: string; actions: string[]; duration: number };
+type AnalysisResult = { decision: BacktestDecision; cutoff: number; model: Entry["model"]; strategy_versions: string[]; terminal_error?: string };
+type SavedRun = { symbol: string; granularity: string; demo: boolean; cutoff: number; ledger: PaperLedger; entries: Entry[]; failedAttempts: FailedAttempt[]; fee: number; second: number; teaching: string };
 const formatTime = (time: number) => new Date(time * 1000).toLocaleTimeString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", hour12: false });
 const actionLabel = { HOLD: "Chờ", OPEN_LONG: "Mở LONG", OPEN_SHORT: "Mở SHORT", CLOSE: "Đóng vị thế", CANCEL: "Hủy lệnh chờ" };
+const toolLabel = { get_chart_state: "Đọc dữ liệu chart", get_account_state: "Kiểm tra tài khoản mô phỏng", get_chart_catalog: "Tra cứu công cụ chart", capture_chart: "Chụp chart", apply_chart: "Cập nhật drawing và chỉ báo", submit_order: "Gửi lệnh mô phỏng" };
 const orderLabel = { waiting: "Chờ kích hoạt / khớp", triggered: "Đã kích hoạt, chưa khớp", filled: "Đã khớp mô phỏng", cancelled: "Đã hủy" };
-const waitForChart = () => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+const waitForChart = () => document.visibilityState === "hidden" ? Promise.resolve() : waitForReplayPaint();
 
 export default function BacktestWorkspace({ active }: { active: boolean }) {
   const chart = useRef<BacktestChartHandle>(null);
@@ -37,6 +44,7 @@ export default function BacktestWorkspace({ active }: { active: boolean }) {
   const request = useRef<AbortController | null>(null);
   const generation = useRef(0);
   const toolOwner = useRef("");
+  const replayOwner = useRef("");
   const busyRef = useRef(false);
   const [data, setData] = useState<ReplayData | null>(null);
   const [cursor, setCursor] = useState(-1);
@@ -58,6 +66,8 @@ export default function BacktestWorkspace({ active }: { active: boolean }) {
   }, []);
   const [ledger, setLedger] = useState<PaperLedger>(emptyLedger);
   const [entries, setEntries] = useState<Entry[]>([]);
+  const [analysisActivity, setAnalysisActivity] = useState("");
+  const [failedAttempts, setFailedAttempts] = useState<FailedAttempt[]>([]);
   const [savedRuns, setSavedRuns] = useState<SavedRun[]>([]);
   const [teaching, setTeaching] = useState("");
   const [autoAi, setAutoAi] = useState(true);
@@ -77,9 +87,9 @@ export default function BacktestWorkspace({ active }: { active: boolean }) {
   const openSourceDialog = (dialog: "symbol" | "date", trigger: HTMLElement) => { sourceTrigger.current = trigger; setSourceClosing(false); setSourceDialog(dialog); };
   const frame = useMemo(() => data ? replayFrame(data, cursor, second) : null, [data, cursor, second]);
   const minutes = useMemo(() => data ? replayMinutes(data) : [], [data]);
-  const canAnalyze = !!status?.adapter_ready && !!status.connected && !connectionDirty && !connectionPending;
+  const canAnalyze = !!status?.adapter_ready && !!status.connected && !connectionDirty && !connectionValidating && !connectionPending;
   const aiProvider = status?.provider;
-  const aiBlocked = connectionDirty ? "Lưu cấu hình AI đã chọn trước khi phân tích." : !status ? "Đang chờ trạng thái Backtest." : !status.adapter_ready ? "Chưa cài bộ kết nối AI riêng cho Backtest." : !status.connected ? "Kiểm tra kết nối CLI đã chọn trước khi phân tích." : "";
+  const aiBlocked = connectionDirty ? "Lưu cấu hình AI đã chọn trước khi phân tích." : connectionValidating || connectionPending ? "" : !status ? "Đang chờ trạng thái Backtest." : !status.adapter_ready ? "Chưa cài bộ kết nối AI riêng cho Backtest." : !status.connected ? "Kiểm tra kết nối CLI đã chọn trước khi phân tích." : "";
   const runtime = useRef({ data, frame, cursor, ledger, entries, autoAi, applyOrders, canAnalyze, aiBlocked, second, fee, cadence, teaching, minuteCount: minutes.length });
   const queuedAnalysis = useRef(false);
   const analyzeRef = useRef<() => Promise<void>>(async () => {});
@@ -136,12 +146,13 @@ export default function BacktestWorkspace({ active }: { active: boolean }) {
   const reset = useCallback((next?: ReplayData) => {
     if (toolOwner.current) void backtestRequest("/backtest/tools/reset", "POST", { client_id: toolOwner.current }).catch(() => {});
     toolOwner.current = "";
-    if (data && frame && (entries.length || ledger.orders.length)) setSavedRuns(previous => [...previous, { symbol: data.symbol, granularity: data.granularity, demo: data.demo, cutoff: frame.cutoff, ledger, entries, fee, second, teaching }]);
+    replayOwner.current = crypto.randomUUID();
+    if (data && frame && (entries.length || failedAttempts.length || ledger.orders.length)) setSavedRuns(previous => [...previous, { symbol: data.symbol, granularity: data.granularity, demo: data.demo, cutoff: frame.cutoff, ledger, entries, failedAttempts, fee, second, teaching }]);
     generation.current += 1; queuedAnalysis.current = false; request.current?.abort(); request.current = null; busyRef.current = false;
     runtime.current = { ...runtime.current, data: next || data, cursor: -1, frame: (next || data) ? replayFrame((next || data)!, -1, second) : null, ledger: emptyLedger(), entries: [] };
-    setBusy(false); setPlaying(false); setCursor(-1); setLedger(emptyLedger()); setEntries([]); setNotice(""); setSession(value => value + 1);
+    setBusy(false); setPlaying(false); setCursor(-1); setLedger(emptyLedger()); setEntries([]); setFailedAttempts([]); setAnalysisActivity(""); setNotice(""); setSession(value => value + 1);
     if (next) setData(next);
-  }, [data, frame, entries, ledger, fee, second, teaching]);
+  }, [data, frame, entries, failedAttempts, ledger, fee, second, teaching]);
 
   const analyze = useCallback(async () => {
     if (busyRef.current) { queuedAnalysis.current = true; return; }
@@ -150,11 +161,15 @@ export default function BacktestWorkspace({ active }: { active: boolean }) {
     if (!runtime.current.frame?.bars.length) return;
     const version = generation.current;
     const controller = new AbortController(); request.current = controller; busyRef.current = true;
-    setBusy(true); setNotice(""); setStartedAt(new Date().toISOString());
+    setBusy(true); setNotice(""); setAnalysisActivity("Đang chờ CLI đọc chart."); setStartedAt(new Date().toISOString());
     const start = performance.now();
-    const timeout = window.setTimeout(() => controller.abort(), 130000);
+    const observedCutoff = runtime.current.frame.cutoff;
+    const acknowledged: string[] = [];
+    let completedAnalysis: AnalysisResult | undefined;
+    let collectAcknowledgements: (() => Promise<void>) | undefined;
+    const timeout = window.setTimeout(() => controller.abort(), backtestTiming.analysis_timeout_ms + backtestTiming.result_grace_ms);
     let polling = false;
-    let pollTimer: number | undefined;
+    let pollDiagnostic = "";
     const toolOrders: { decision: BacktestDecision; received: number }[] = [];
     try {
       await waitForChart();
@@ -165,53 +180,97 @@ export default function BacktestWorkspace({ active }: { active: boolean }) {
       if (snapshot.frame.cutoff !== current.frame?.cutoff) { queuedAnalysis.current = true; return; }
       const context = paperLedgerContext(current.ledger);
       const owner = crypto.randomUUID(); toolOwner.current = owner;
+      if (!replayOwner.current) replayOwner.current = crypto.randomUUID();
       const payload = (state: ReturnType<ReplayChartPort["state"]>, image = "") => {
         const current = runtime.current;
-        return { client_id: owner, symbol: current.data!.symbol, cutoff: state.frame.cutoff, granularity: current.data!.granularity, bars: state.frame.bars, image, drawings: state.drawings, indicators: state.indicators, position: current.ledger.position, orders: current.ledger.orders.slice(-100), teaching: current.teaching, history: current.entries.slice(-20).map(entry => ({ cutoff: entry.cutoff, action: entry.decision.action, reason: entry.decision.reason })) };
+        return { client_id: owner, replay_id: replayOwner.current, symbol: current.data!.symbol, cutoff: state.frame.cutoff, granularity: current.data!.granularity, bars: state.frame.bars, image, drawings: state.drawings, indicators: state.indicators, position: current.ledger.position, orders: current.ledger.orders.slice(-100), teaching: current.teaching, history: current.entries.slice(-20).map(entry => ({ cutoff: entry.cutoff, action: entry.decision.action, reason: entry.decision.reason })) };
       };
       type Command = { id: string; name: "capture_chart" | "apply_chart" | "submit_order"; arguments: BacktestDecision; cutoff: number; position: PaperLedger["position"]; orders: PaperLedger["orders"] };
-      const seen = new Set<string>();
+      type Acknowledgement = { client_id: string; command_id: string; frame: ReturnType<typeof payload>; error: string };
+      const commandNotes = new Map<string, string>();
+      const delivery = new ReplayToolDelivery<Acknowledgement>(ack => {
+        const note = commandNotes.get(ack.command_id);
+        if (!ack.error && note) acknowledged.push(note);
+      });
       const valid = () => polling && version === generation.current && !controller.signal.aborted && toolOwner.current === owner;
+      let auditFrame = payload(snapshot);
+      collectAcknowledgements = async () => {
+        const result = await backtestRequest<{ acknowledged?: string[] }>("/backtest/tools/sync", "POST", { client_id: owner, frame: auditFrame }, AbortSignal.any([controller.signal, AbortSignal.timeout(1500)]));
+        if (valid()) await delivery.confirm(result.acknowledged || []);
+      };
       const poll = async () => {
+        let stage = "chart_state";
+        const diagnose = (code: string) => {
+          if (pollDiagnostic !== code) console.warn("Backtest tool delivery", { code, visibility: document.visibilityState });
+          pollDiagnostic = code;
+        };
         try {
-          if (!valid() || !chart.current) return;
+          if (!valid() || !chart.current) { diagnose("chart_unavailable"); return false; }
           const state = chart.current.state();
-          if (state.frame.cutoff !== runtime.current.frame?.cutoff) return;
-          const result = await backtestRequest<{ command: Command | null }>("/backtest/tools/sync", "POST", { client_id: owner, frame: payload(state) }, controller.signal);
+          if (state.frame.cutoff !== runtime.current.frame?.cutoff) { diagnose("chart_frame_pending"); return false; }
+          stage = "sync_request";
+          const result = await backtestRequest<{ command: Command | null; analysis?: AnalysisResult; acknowledged?: string[]; activity?: { sequence: number; tool: keyof typeof toolLabel; state: "ACTIVE" | "DONE" | "ERROR" } | null }>("/backtest/tools/sync", "POST", { client_id: owner, frame: payload(state) }, AbortSignal.any([controller.signal, AbortSignal.timeout(3000)]));
           const command = result.command;
-          if (!valid() || !command || seen.has(command.id)) return;
-          seen.add(command.id);
-          let error = "";
-          try {
-            if (command.name === "apply_chart") await chart.current!.apply(command.arguments.drawings, command.arguments.indicators);
-            else if (command.name === "submit_order") {
-              const current = runtime.current;
-              if (!current.applyOrders) throw new Error("Tự áp dụng lệnh đang tắt.");
-              if (JSON.stringify(command.position) !== JSON.stringify(current.ledger.position) || JSON.stringify(command.orders) !== JSON.stringify(current.ledger.orders.slice(-100))) throw new Error("Ledger đã thay đổi, hãy đọc lại tài khoản mô phỏng.");
-              const received = current.frame!.cutoff;
-              const next = submitTimedPaperOrder(current.ledger, command.arguments, paperLedgerContext(current.ledger), command.cutoff, received);
-              if (next !== current.ledger) toolOrders.push({ decision: command.arguments, received });
-              commitLedger(next);
-            } else if (command.name !== "capture_chart") throw new Error("MCP tool không được hỗ trợ.");
-            await waitForChart();
-          } catch { error = "Thao tác chart hoặc lệnh mô phỏng bị từ chối. Đọc lại trạng thái trước khi thử lại."; }
-          if (!valid() || !chart.current) return;
-          const next = chart.current.state();
-          if (next.frame.cutoff !== runtime.current.frame?.cutoff) { error = "Chart đang cập nhật, hãy đọc lại trạng thái."; }
-          await backtestRequest("/backtest/tools/ack", "POST", { client_id: owner, command_id: command.id, frame: payload(next, command.name === "capture_chart" && !error ? chart.current.screenshot() : ""), error }, controller.signal);
+          if (valid()) await delivery.confirm(result.acknowledged || []);
+          if (valid() && result.analysis?.cutoff === snapshot.frame.cutoff) { completedAnalysis = result.analysis; return false; }
+          if (valid() && result.activity && Object.hasOwn(toolLabel, result.activity.tool)) {
+            setAnalysisActivity(`${toolLabel[result.activity.tool]}: ${result.activity.state === "DONE" ? "đã hoàn tất, đang chờ quyết định" : result.activity.state === "ERROR" ? "thất bại" : "đang thực hiện"}.`);
+          }
+          if (!valid() || !command) { pollDiagnostic = ""; return true; }
+          stage = "command_prepare";
+          await delivery.deliver(command.id, async () => {
+            let error = "";
+            try {
+              if (command.name === "apply_chart") await chart.current!.apply(command.arguments.drawings, command.arguments.indicators);
+              else if (command.name === "submit_order") {
+                const current = runtime.current;
+                if (!current.applyOrders) throw new Error("Tự áp dụng lệnh đang tắt.");
+                if (!paperAccountMatches(command, { position: current.ledger.position, orders: current.ledger.orders.slice(-100) })) throw new Error("Ledger đã thay đổi, hãy đọc lại tài khoản mô phỏng.");
+                const received = current.frame!.cutoff;
+                const next = submitTimedPaperOrder(current.ledger, command.arguments, paperLedgerContext(current.ledger), command.cutoff, received);
+                if (next !== current.ledger) toolOrders.push({ decision: command.arguments, received });
+                commitLedger(next);
+              } else if (command.name !== "capture_chart") throw new Error("MCP tool không được hỗ trợ.");
+              await waitForChart();
+            } catch { error = command.name === "apply_chart" ? "chart_apply_failed" : command.name === "submit_order" ? "order_rejected" : "capture_failed"; }
+            if (!valid() || !chart.current) throw new DOMException("Replay changed", "AbortError");
+            let next = state;
+            try { next = chart.current.state(); }
+            catch { error = "chart_frame_changed"; }
+            if (next.frame.cutoff !== runtime.current.frame?.cutoff) { error = "chart_frame_changed"; }
+            let image = "";
+            if (command.name === "capture_chart" && !error) {
+              try { image = chart.current.screenshot(); }
+              catch { error = "capture_failed"; }
+            }
+            commandNotes.set(command.id, `${toolLabel[command.name]} lúc ${formatTime(next.frame.cutoff)}`);
+            auditFrame = payload(next, image);
+            return { client_id: owner, command_id: command.id, frame: auditFrame, error };
+          }, ack => {
+            stage = "ack_request";
+            return backtestRequest("/backtest/tools/ack", "POST", ack, AbortSignal.any([controller.signal, AbortSignal.timeout(3000)]));
+          });
+          pollDiagnostic = "";
+          return true;
         } catch {
-          // Request chính xử lý lỗi; polling không tạo toast lặp lại.
-        } finally {
-          if (valid()) pollTimer = window.setTimeout(() => void poll(), 400);
+          diagnose(stage);
+          return false;
         }
       };
-      if (aiProvider === "CODEX" || aiProvider === "AGY") { polling = true; pollTimer = window.setTimeout(() => void poll(), 400); }
-      const response = await fetch(`${engineUrl}/backtest/analyze`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, signal: controller.signal,
-        body: JSON.stringify(payload(snapshot, snapshot.image)),
-      });
-      const result = await response.json();
-      if (!response.ok) throw new Error(typeof result.detail === "string" ? result.detail : "AI không trả về quyết định hợp lệ.");
+      if (aiProvider === "CODEX" || aiProvider === "AGY") {
+        polling = true;
+        void pollReplayTools(() => valid() && !completedAnalysis, poll);
+      }
+      const result = await recoverBacktestAnalysis(async (): Promise<AnalysisResult> => {
+        const response = await fetch(`${engineUrl}/backtest/analyze`, {
+          method: "POST", headers: { "Content-Type": "application/json" }, signal: controller.signal,
+          body: JSON.stringify(payload(snapshot, snapshot.image)),
+        });
+        if (response.headers.get("X-Quant-Transport-Error") === "1") throw new TypeError("Analysis response transport failed");
+        const result = await response.json();
+        if (!response.ok) throw new Error(typeof result.detail === "string" ? result.detail : "AI không trả về quyết định hợp lệ.");
+        return result;
+      }, () => completedAnalysis, controller.signal);
       if (version !== generation.current || controller.signal.aborted || result.cutoff !== snapshot.frame.cutoff) return;
       if (result.terminal_error) setStatus(previous => previous ? { ...previous, terminal_error: result.terminal_error } : previous);
       const decision = result.decision as BacktestDecision;
@@ -231,10 +290,17 @@ export default function BacktestWorkspace({ active }: { active: boolean }) {
       const recordedDecision = toolOrder ? { ...decision, action: toolOrder.decision.action, order_type: toolOrder.decision.order_type, stop_price: toolOrder.decision.stop_price, limit_price: toolOrder.decision.limit_price } : decision;
       setEntries(previous => [...previous, { cutoff: snapshot.frame.cutoff, received, context, application, applied: !!toolOrder, decision: recordedDecision, model: result.model, strategy_versions: result.strategy_versions, duration: Math.round((performance.now() - start) / 1000) }]);
     } catch (error) {
-      if (version === generation.current) setNotice(error instanceof DOMException && error.name === "AbortError" ? "Đã dừng chờ AI. Replay tiếp tục; kết quả bị hủy không được áp dụng." : error instanceof Error ? error.message : "Không thể phân tích Backtest.");
+      if (version === generation.current && !controller.signal.aborted) await collectAcknowledgements?.().catch(() => {});
+      if (version === generation.current) {
+        queuedAnalysis.current = false;
+        runtime.current.autoAi = false;
+        setAutoAi(false);
+        const message = error instanceof DOMException && error.name === "AbortError" ? "Đã dừng chờ quyết định AI. Thao tác đã xác nhận trước đó vẫn được giữ." : error instanceof Error ? error.message : "Không thể phân tích Backtest.";
+        setNotice(message);
+        setFailedAttempts(previous => [...previous.slice(-19), { cutoff: observedCutoff, message, actions: [...acknowledged, ...toolOrders.map(item => `${actionLabel[item.decision.action]} đã gửi vào sổ lệnh mô phỏng lúc ${formatTime(item.received)}`)], duration: Math.round((performance.now() - start) / 1000) }]);
+      }
     } finally {
       polling = false;
-      window.clearTimeout(pollTimer);
       window.clearTimeout(timeout);
       if (version === generation.current) {
         request.current = null; busyRef.current = false; setBusy(false);
@@ -315,7 +381,7 @@ export default function BacktestWorkspace({ active }: { active: boolean }) {
     finally { setLoading(false); }
   };
   const download = () => {
-    const blob = new Blob([JSON.stringify({ symbol: data?.symbol, granularity: data?.granularity, demo: data?.demo, mode: "offline-learning", fill_model: "sample-close-next-update", cutoff: frame?.cutoff, ledger, entries, fee, second, teaching, previous_runs: savedRuns }, null, 2)], { type: "application/json" });
+    const blob = new Blob([JSON.stringify({ symbol: data?.symbol, granularity: data?.granularity, demo: data?.demo, mode: "offline-learning", fill_model: "sample-close-next-update", cutoff: frame?.cutoff, ledger, entries, failed_attempts: failedAttempts, fee, second, teaching, previous_runs: savedRuns }, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = `backtest-${data?.symbol || "session"}.json`; link.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
   const applyLatest = () => {
@@ -354,8 +420,10 @@ export default function BacktestWorkspace({ active }: { active: boolean }) {
         <div className={styles.section}>
 
           <p className={styles.help}>{data?.granularity === "1s" ? `AI nhìn nến hiện tại đến giây ${second}, cùng toàn bộ nến đã xuất hiện trước đó.` : "Dữ liệu M1 chỉ mở nến sau khi đóng; không dựng tick hoặc diễn biến trong nến."} Replay chạy theo tốc độ đã chọn, không chờ AI. Lệnh nhận muộn chỉ có hiệu lực từ thời điểm nhận; thời gian xử lý được ghi riêng.</p>
-          <section className={styles.panel} aria-label="Nhật ký quyết định"><div className={styles.panelHeading}><h2>Quyết định và drawing</h2><button type="button" tabIndex={-1} disabled={!entries.length && !ledger.orders.length && !savedRuns.length} onClick={download}><Icon name="export" />Xuất kết quả riêng</button></div>
+          <section className={styles.panel} aria-label="Nhật ký quyết định"><div className={styles.panelHeading}><h2>Quyết định và drawing</h2><button type="button" tabIndex={-1} disabled={!entries.length && !failedAttempts.length && !ledger.orders.length && !savedRuns.length} onClick={download}><Icon name="export" />Xuất kết quả riêng</button></div>
             {busy && <AuditorThoughtLine working startedAt={startedAt} />}
+            {busy && <p className={styles.help} role="status" aria-live="polite">{analysisActivity}</p>}
+            {failedAttempts.slice().reverse().map((attempt, index) => <article className={styles.entry} key={`failed-${attempt.cutoff}-${index}`}><header><time>{formatTime(attempt.cutoff)}</time><span className={styles.warning}>Chưa có quyết định</span><span>{attempt.duration}s</span></header><p>{attempt.message}</p>{attempt.actions.length ? attempt.actions.map((action, actionIndex) => <p className={styles.help} key={actionIndex}>{action}</p>) : <p className={styles.help}>Chưa có thao tác chart hoặc lệnh mô phỏng được xác nhận.</p>}<p className={styles.help}>AI tự động đã dừng ở lượt này. Dùng Phân tích chart hiện tại để thử lại; bật AI giao dịch khi replay để tiếp tục tự động.</p></article>)}
             {!!savedRuns.length && <details><summary>{savedRuns.length} lượt trước được giữ riêng</summary>{savedRuns.map((run, index) => <p className={styles.help} key={index}>Lượt {index + 1} · {run.symbol} · {run.entries.length} quyết định · {run.ledger.pairs.length} cặp đóng · {run.ledger.pairs.reduce((sum, pair) => sum + pair.gross - pair.fee, 0).toFixed(2)} điểm sau phí</p>)}</details>}
             {!entries.length && !busy && <p className={styles.help}>AI nhận ảnh chart, các line, giá/volume đã replay và tài liệu chiến lược riêng.</p>}
             <div className={styles.journal}>{entries.slice().reverse().map((entry, index) => <article className={styles.entry} key={`${entry.cutoff}-${index}`}><header><time title="Thời điểm chart gửi cho AI">{formatTime(entry.cutoff)}</time><span className={styles.badge}>{actionLabel[entry.decision.action]}</span><span>{entry.duration}s · {entry.model.model || "Mặc định CLI"}</span></header><p>{entry.decision.reason}</p><p className={styles.help}>Nhận lúc {formatTime(entry.received)} · {entry.application}</p>{entry.decision.question && <p className={styles.warning}>{entry.decision.question}</p>}<p className={styles.help}>{entry.decision.drawings.length} drawing · {entry.decision.order_type}{entry.decision.stop_price !== null ? ` · Stop ${entry.decision.stop_price}` : ""}{entry.decision.limit_price !== null ? ` · Limit ${entry.decision.limit_price}` : ""}</p></article>)}</div>
@@ -370,7 +438,7 @@ export default function BacktestWorkspace({ active }: { active: boolean }) {
             {!!aiBlocked && !statusLoading && <GlobalNotice message={aiBlocked} kind="info" />}
             <div className={styles.aiActions}>
               <button type="button" tabIndex={-1} className={`${styles.primary} ${styles.full}`} disabled={!frame?.bars.length || !canAnalyze || busy || loading} onClick={() => void analyze()}>Phân tích chart hiện tại</button>
-              {busy && <button type="button" tabIndex={-1} onClick={() => { queuedAnalysis.current = false; request.current?.abort(); }}>Dừng chờ kết quả</button>}
+              {busy && <button type="button" tabIndex={-1} onClick={() => { queuedAnalysis.current = false; if (toolOwner.current) void backtestRequest("/backtest/tools/reset", "POST", { client_id: toolOwner.current }).catch(() => {}); request.current?.abort(); }}>Dừng chờ kết quả</button>}
             </div>
             <div className={styles.aiSettings}>
               <label className={`${styles.inline} ${styles.aiToggle}`}><input type="checkbox" tabIndex={-1} checked={autoAi} disabled={busy || !canAnalyze} onChange={event => setAutoAi(event.target.checked)} />AI giao dịch khi replay</label>

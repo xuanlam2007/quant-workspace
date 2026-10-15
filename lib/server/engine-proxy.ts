@@ -27,6 +27,11 @@ export async function proxyEngine(request: Request, kind: EngineKind, segments: 
       if (value) headers.set(name, value);
     }
     if (path.endsWith("/report/html")) headers.set("Content-Security-Policy", "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:");
+    if (path.endsWith("/analyze")) {
+      const body = await upstream.arrayBuffer();
+      headers.delete("content-length");
+      return new Response(body, { status: upstream.status, headers });
+    }
     return new Response(upstream.body, { status: upstream.status, headers });
-  } catch { return Response.json({ detail: "Engine unavailable. Reconnect and check Terminal." }, { status: 502 }); }
+  } catch { return Response.json({ detail: "Engine unavailable. Reconnect and check Terminal." }, { status: 502, headers: { "X-Quant-Transport-Error": "1", "Cache-Control": "no-store" } }); }
 }

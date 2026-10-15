@@ -22,6 +22,7 @@ const replayIndicator = z.strictObject({ ...indicatorFields, status: z.enum(["re
 
 export const backtestFrameSchema = z.strictObject({
   client_id: z.string().uuid().optional(),
+  replay_id: z.string().uuid().optional(),
   symbol: z.string().min(1).max(40).regex(/^[a-zA-Z0-9_.-]+$/), cutoff: time, granularity: z.enum(["1s", "1m"]),
   bars: z.array(z.strictObject({ time, open: price, high: price, low: price, close: price, volume: z.number().finite().nonnegative() })).min(1).max(2000),
   image: z.string().max(12 * 1024 * 1024), drawings: z.array(replayDrawing).max(100), indicators: z.array(replayIndicator).max(30).optional(),
