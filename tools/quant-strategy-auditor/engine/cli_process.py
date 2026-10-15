@@ -14,7 +14,7 @@ from .cli_diagnostics import CliRequestError, agy_step_error
 
 def cli_environment():
     # CLI giữ credentials của provider, không kế thừa secrets của web và engine.
-    return {key: value for key, value in os.environ.items() if not key.startswith(("QUANT_ENGINE_", "MARKET_DATA_", "NEXT_PUBLIC_", "AUDITOR_", "BACKTEST_"))}
+    return {key: value for key, value in os.environ.items() if not key.startswith(("QUANT_ENGINE_", "QUANT_MCP_", "QUANT_OBSERVER_", "MARKET_DATA_", "NEXT_PUBLIC_", "AUDITOR_", "BACKTEST_"))}
 
 
 class WindowsJob:
@@ -97,6 +97,144 @@ class CliProcess:
         self.process.wait(timeout=3)
 
 
+class AgyTurnGuard:
+    def __init__(self, mcp_only=False):
+        self.mcp_only = mcp_only
+        self.finish_repairs = self.mcp_repairs = self.policy_repairs = 0
+
+    def parse(self, line):
+        try:
+            event = json.loads(line)
+        except ValueError:
+            raise CliRequestError("stream_format") from None
+        if not isinstance(event, dict):
+            raise CliRequestError("stream_format")
+        step = event.get("step_update", {})
+        if not isinstance(step, dict) or not isinstance(step.get("tool_info") or {}, dict):
+            raise CliRequestError("stream_format")
+        if step.get("state") != "ERROR" and not (step.get("tool_info") or {}).get("error"):
+            return event
+        error = agy_step_error(step)
+        if self.mcp_only and error.code == "mcp_tool_policy" and error.tool in ("view_file", "run_command", "list_dir", "grep_search", "find_by_name", "task_boundary", "notify_user") and self.policy_repairs < 1:
+            self.policy_repairs += 1
+            return event
+        if error.tool == "finish" and error.code == "structured_output" and self.finish_repairs < 2:
+            self.finish_repairs += 1
+            return event
+        parameters = (step.get("tool_info") or {}).get("parameters") or {}
+        if error.code == "mcp_arguments" and isinstance(parameters, dict) and parameters.get("ServerName") == "quant-backtest_quant" and parameters.get("ToolName") in ("get_chart_state", "get_account_state", "get_chart_catalog", "capture_chart", "apply_chart") and self.mcp_repairs < 2:
+            self.mcp_repairs += 1
+            return event
+        raise error
+
+
+class CliConversation:
+    def __init__(self, command, **kwargs):
+        self.command = command
+        self.owner = CliProcess(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **kwargs)
+        self.process = self.owner.process
+        self.messages = queue.Queue(maxsize=256)
+        self.stopped = threading.Event()
+        self.turn_lock = threading.Lock()
+        self.close_lock = threading.Lock()
+        self.readers = [threading.Thread(target=self._read, args=(pipe, kind), daemon=True) for pipe, kind in ((self.process.stdout, "stdout"), (self.process.stderr, "stderr"))]
+        for reader in self.readers:
+            reader.start()
+
+    def _put(self, item):
+        while not self.stopped.is_set():
+            try:
+                self.messages.put(item, timeout=.1)
+                return
+            except queue.Full:
+                pass
+
+    def _read(self, pipe, kind):
+        try:
+            while not self.stopped.is_set():
+                line = pipe.readline(1024 * 1024 + 1)
+                if not line:
+                    break
+                if len(line) > 1024 * 1024:
+                    self._put(("error", "CLI stream message exceeded its size limit"))
+                    return
+                self._put((kind, line))
+        except (OSError, ValueError):
+            if not self.stopped.is_set():
+                self._put(("error", "CLI observation stream failed"))
+        finally:
+            self._put((kind, None))
+
+    def request(self, prompt, timeout, on_output=None):
+        if not self.turn_lock.acquire(blocking=False):
+            raise RuntimeError("Selected CLI is processing another request")
+        writer = None
+        try:
+            if self.stopped.is_set() or self.process.poll() is not None:
+                raise CliRequestError("stream_format")
+            deadline = time.monotonic() + timeout
+            guard = AgyTurnGuard(mcp_only=True)
+            stdout, stderr, size = [], "", 0
+
+            def write():
+                try:
+                    self.process.stdin.write(json.dumps({"event": "user", "message": {"content": prompt}}, ensure_ascii=False) + "\n")
+                    self.process.stdin.flush()
+                except (OSError, ValueError):
+                    self._put(("error", "CLI could not accept the observation prompt"))
+
+            writer = threading.Thread(target=write, daemon=True)
+            writer.start()
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(self.command, timeout)
+                try:
+                    kind, line = self.messages.get(timeout=remaining)
+                except queue.Empty:
+                    raise subprocess.TimeoutExpired(self.command, timeout) from None
+                if self.stopped.is_set() or kind == "error":
+                    raise CliRequestError("stream_format")
+                if on_output and line:
+                    on_output(kind, line)
+                if kind == "stderr":
+                    stderr = (stderr + (line or ""))[-4000:]
+                    continue
+                if line is None:
+                    raise CliRequestError("final_result")
+                size += len(line)
+                if size > 16 * 1024 * 1024:
+                    raise CliRequestError("stream_format")
+                stdout.append(line)
+                event = guard.parse(line)
+                if event.get("event") == "result":
+                    return subprocess.CompletedProcess(self.command, 0, "".join(stdout), stderr)
+        except BaseException:
+            self.close()
+            raise
+        finally:
+            if writer:
+                writer.join(timeout=1)
+            self.turn_lock.release()
+
+    def close(self):
+        with self.close_lock:
+            if self.stopped.is_set():
+                return
+            self.stopped.set()
+            # Đánh thức lượt đang chờ trước khi dọn cây tiến trình riêng.
+            try:
+                self.messages.put_nowait(("error", None))
+            except queue.Full:
+                pass
+            self.owner.close()
+            for reader in self.readers:
+                reader.join(timeout=1)
+            for pipe in (self.process.stdin, self.process.stdout, self.process.stderr):
+                if pipe:
+                    pipe.close()
+
+
 def run_cli(command, *, input, timeout, terminal_event=None, on_output=None, mcp_only=False, **kwargs):
     owner = CliProcess(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **kwargs)
     process = owner.process
@@ -139,9 +277,7 @@ def run_cli(command, *, input, timeout, terminal_event=None, on_output=None, mcp
             deadline = time.monotonic() + timeout
             stdout, stderr, size = [], "", 0
             finished = set()
-            finish_repairs = 0
-            mcp_repairs = 0
-            policy_repairs = 0
+            guard = AgyTurnGuard(mcp_only)
             try:
                 def write():
                     try:
@@ -189,31 +325,7 @@ def run_cli(command, *, input, timeout, terminal_event=None, on_output=None, mcp
                     stdout.append(line)
                     if not terminal_event:
                         continue
-                    try:
-                        event = json.loads(line)
-                    except ValueError:
-                        raise CliRequestError("stream_format") from None
-                    if not isinstance(event, dict):
-                        raise CliRequestError("stream_format")
-                    step = event.get("step_update", {})
-                    if not isinstance(step, dict) or not isinstance(step.get("tool_info") or {}, dict):
-                        raise CliRequestError("stream_format")
-                    if step.get("state") == "ERROR" or (step.get("tool_info") or {}).get("error"):
-                        error = agy_step_error(step)
-                        if mcp_only and error.code == "mcp_tool_policy" and error.tool in ("view_file", "run_command", "list_dir", "grep_search", "find_by_name", "task_boundary", "notify_user") and policy_repairs < 1:
-                            # Cho sửa một lần chọn nhầm tool; guard vẫn chặn thao tác và giữ deadline.
-                            policy_repairs += 1
-                            continue
-                        # Cho CLI sửa tối đa hai lỗi schema trong cùng lượt, giữ nguyên guard và deadline.
-                        if error.tool == "finish" and error.code == "structured_output" and finish_repairs < 2:
-                            finish_repairs += 1
-                            continue
-                        parameters = (step.get("tool_info") or {}).get("parameters") or {}
-                        if error.code == "mcp_arguments" and isinstance(parameters, dict) and parameters.get("ServerName") == "quant-backtest_quant" and parameters.get("ToolName") in ("get_chart_state", "get_account_state", "get_chart_catalog", "capture_chart", "apply_chart") and mcp_repairs < 2:
-                            # Cho sửa schema tool trong cùng lượt, không lặp lại lệnh giao dịch.
-                            mcp_repairs += 1
-                            continue
-                        raise error
+                    event = guard.parse(line)
                     if event.get("event") == terminal_event:
                         return subprocess.CompletedProcess(command, 0, "".join(stdout), stderr)
             finally:

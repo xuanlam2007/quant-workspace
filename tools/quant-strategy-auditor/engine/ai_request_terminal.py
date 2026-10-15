@@ -11,9 +11,9 @@ from pathlib import Path
 from uuid import uuid4
 
 if __package__:
-    from .cli_diagnostics import SAFE_TOOLS, agy_step_error
+    from .cli_diagnostics import SAFE_TOOLS, agy_step_error, agy_final_error
 else:
-    from cli_diagnostics import SAFE_TOOLS, agy_step_error
+    from cli_diagnostics import SAFE_TOOLS, agy_step_error, agy_final_error
 
 
 def cli_failure(provider, code, diagnostic):
@@ -105,6 +105,13 @@ class AiRequestTerminal:
             if item.get("state") == "ERROR" or isinstance(info, dict) and info.get("error"):
                 error = agy_step_error(item)
                 fields.update(code=error.code, message=error.safe_message)
+        if name == "result":
+            result = event.get("result")
+            if isinstance(result, dict) and result.get("status") in ("SUCCESS", "ERROR", "FAILED", "FAILURE", "CANCELLED"):
+                fields["stage"] = result["status"]
+                if result["status"] != "SUCCESS":
+                    error = agy_final_error(result)
+                    fields.update(code=error.code, message=error.safe_message)
         # Chỉ ghi metadata đã chọn; không ghi prompt, credentials hoặc tool arguments.
         self.write(name, **fields)
 

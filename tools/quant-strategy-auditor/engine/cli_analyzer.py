@@ -14,8 +14,9 @@ from .cli_catalog import discover_catalog
 from .codex_audio import run_codex_audio
 from .cli_process import cli_environment, observer_workspace, run_cli
 from .ai_request_terminal import cli_failure
-from .cli_diagnostics import CliRequestError, agy_step_error
+from .cli_diagnostics import CliRequestError, agy_step_error, agy_final_error
 from .cli_usage import RequestUsage
+from .agy_replay import prepare_agy_workspace, run_replay
 
 
 def observer_settings(settings):
@@ -79,12 +80,20 @@ class CliLearningAnalyzer:
         self._catalog_revision = 0
         self._catalog_cache = {}
         self.terminal = None
+        self._agy_replay = None
 
     def configure(self, settings):
         self.settings = observer_settings(settings)
         self.invalidate()
 
+    def close_replay(self, owner=None):
+        session = self._agy_replay
+        if session is not None and (owner is None or session.owner == owner):
+            self._agy_replay = None
+            session.close()
+
     def invalidate(self):
+        self.close_replay()
         self.connection = {"connected": None}
         self._catalog_revision += 1
         self._catalog_cache = {}
@@ -141,9 +150,11 @@ class CliLearningAnalyzer:
             if monitor:
                 if isinstance(error, CliRequestError):
                     monitor.write("request.failed", code=error.code, tool=error.tool, message=error.safe_message)
+                elif isinstance(error, subprocess.TimeoutExpired):
+                    diagnostic = CliRequestError("provider_timeout")
+                    monitor.write("request.failed", code=diagnostic.code, tool=None, message=diagnostic.safe_message)
                 else:
-                    message = "AI request timed out. Evidence remains available for retry." if isinstance(error, subprocess.TimeoutExpired) else "AI request failed. Check the application notification for the diagnostic."
-                    monitor.write("request.failed", message=message)
+                    monitor.write("request.failed", message="AI request failed. Check the application notification for the diagnostic.")
             raise
         finally:
             usage.finish(status, response)
@@ -152,6 +163,8 @@ class CliLearningAnalyzer:
         executable = find_cli(settings["provider"])
         if not executable:
             raise RuntimeError(f"{settings['provider']} CLI was not found. Install it and sign in through Terminal.")
+        if settings["provider"] == "AGY" and structured and response_schema and quant_mcp and quant_mcp.get("_replay"):
+            return run_replay(self, executable, prompt, settings, quant_mcp, response_schema, timeout, on_output)
         # Tách thư mục quan sát khỏi mã nguồn và cấu hình riêng của dự án.
         with observer_workspace() as folder:
             environment = cli_environment()
@@ -199,50 +212,17 @@ class CliLearningAnalyzer:
                     prompt += f"\n{destination.name}: captured at {frame['captured_at']}"
                 if files:
                     prompt += "\nRead these evidence files with view_file before answering: " + json.dumps([str(path) for path in files])
-                guard_folder = Path(folder) / ".agents"
-                guard_folder.mkdir()
-                guard = Path(__file__).with_name("observer_guard.py").resolve()
-                shutil.copyfile(guard, guard_folder / "observer_guard.py")
-                # AGY tách lệnh hook theo khoảng trắng; đường dẫn dự án không được đưa vào đối số.
-                environment["PATH"] = str(Path(sys.executable).parent) + os.pathsep + environment.get("PATH", "")
-                guard_command = Path(sys.executable).name + " -I observer_guard.py"
-                hooks = {"observer-evidence-only": {"PreToolUse": [{"matcher": ".*", "hooks": [{"type": "command", "command": guard_command, "timeout": 5}]}]}}
-                (guard_folder / "hooks.json").write_text(json.dumps(hooks), encoding="utf-8")
-                environment["QUANT_OBSERVER_MEDIA_PATHS"] = json.dumps([str(path) for path in files])
-                environment["QUANT_OBSERVER_RESPONSE_KIND"] = "backtest" if response_schema else "observation"
-                if quant_mcp:
-                    environment.update({key: quant_mcp[key] for key in ("QUANT_MCP_PORT", "QUANT_MCP_CAPABILITY")})
-                    tools = ["get_chart_state", "get_account_state", "get_chart_catalog", "capture_chart", "apply_chart", "submit_order"]
-                    server = {"command": sys.executable, "args": [str(Path(__file__).with_name("quant_mcp_stdio.py").resolve())], "trust": True, "enabledTools": tools}
-                    plugin_folder = guard_folder / "plugins" / "quant-backtest"
-                    plugin_folder.mkdir(parents=True)
-                    (plugin_folder / "plugin.json").write_text(json.dumps({"name": "quant-backtest", "description": "Request-scoped chart and simulated trading tools"}), encoding="utf-8")
-                    (plugin_folder / "mcp_config.json").write_text(json.dumps({"mcpServers": {"quant": server}}), encoding="utf-8")
-                    # Hook chỉ cho phép đúng tên tool Quant trong workspace tạm.
-                    environment["QUANT_OBSERVER_MCP_TOOLS"] = json.dumps(tools)
-                    agent_folder = guard_folder / "agents"
-                    agent_folder.mkdir()
-                    (agent_folder / "quant-backtest-trader.md").write_text(
-                        "---\nname: quant-backtest-trader\n"
-                        "description: Chart analysis and simulated trading through Quant MCP\n"
-                        "tools:\n  - call_mcp_tool\n  - finish\n"
-                        "mainAgent: true\nsubagent: false\nmodel: inherit\n"
-                        "commandExecutionPolicy: off\n---\n"
-                        "Use only call_mcp_tool with ServerName quant-backtest_quant and the registered Quant tools. "
-                        "Use capture_chart for visual evidence. Files, shell commands and external tools are unavailable. "
-                        "Follow the supplied trading instructions and cutoff. Return the required structured decision through finish. "
-                        "Keep the reason concise, with proper Vietnamese accents and no greeting or personal address.\n",
-                        encoding="utf-8",
-                    )
-                command = [executable, "--add-dir", folder, "--mode", "plan", "--sandbox", "--disable-slash-commands", "--input-format", "stream-json", "--output-format", "stream-json"]
-                if quant_mcp:
-                    command += ["--agent", "quant-backtest-trader"]
+                prepare_agy_workspace(folder, environment, files, "backtest" if response_schema else "observation", quant_mcp)
+                command = [executable, "--add-dir", folder, "--mode", "default" if quant_mcp else "plan", "--sandbox", "--disable-slash-commands", "--input-format", "stream-json", "--output-format", "stream-json"]
                 if settings.get("model"):
                     command += ["--model", settings["model"]]
                 if structured:
-                    schema = Path(folder) / "schema.json"
-                    schema.write_text(json.dumps(response_schema or RESPONSE_SCHEMA), encoding="utf-8")
-                    command += ["--json-schema", str(schema)]
+                    if quant_mcp:
+                        command += ["--json-schema", json.dumps(response_schema or RESPONSE_SCHEMA, ensure_ascii=False, separators=(",", ":"))]
+                    else:
+                        schema = Path(folder) / "schema.json"
+                        schema.write_text(json.dumps(response_schema or RESPONSE_SCHEMA), encoding="utf-8")
+                        command += ["--json-schema", str(schema)]
                 stdin = json.dumps({"event": "user", "message": {"content": prompt}}, ensure_ascii=False) + "\n"
             result = run_cli(command, input=stdin, cwd=folder, env=environment, text=True, encoding="utf-8", errors="replace", timeout=timeout, terminal_event="result" if settings["provider"] == "AGY" else None, mcp_only=bool(quant_mcp) and settings["provider"] == "AGY", creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0, **({"on_output": on_output or monitor.progress} if on_output or monitor else {}))
             if result.returncode:
@@ -254,8 +234,8 @@ class CliLearningAnalyzer:
             if settings["provider"] == "AGY":
                 events = [json.loads(line) for line in response.splitlines() if line.strip()]
                 results = [event["result"] for event in events if event.get("event") == "result"]
-                if not results or results[-1].get("status") != "SUCCESS":
-                    raise CliRequestError("final_result")
+                if not results or not isinstance(results[-1], dict) or results[-1].get("status") != "SUCCESS":
+                    raise agy_final_error(results[-1] if results else None)
                 envelope = results[-1]
                 response = json.dumps(envelope["structured_output"], ensure_ascii=False) if structured and "structured_output" in envelope else envelope.get("response", "").strip()
                 read_files = set()
@@ -279,6 +259,7 @@ class CliLearningAnalyzer:
         settings = dict(self.settings)
         started = time.monotonic()
         with self._lock:
+            self.close_replay()
             try:
                 response = self._run("Do not use any tools. Reply with exactly PONG.", settings, timeout=45)
                 if response.strip() != "PONG":

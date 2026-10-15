@@ -1,6 +1,5 @@
 import os
 import json
-import time
 import shutil
 import subprocess
 import re

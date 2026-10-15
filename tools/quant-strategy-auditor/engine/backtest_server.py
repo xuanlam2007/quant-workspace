@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+from contextlib import asynccontextmanager
 from typing import Literal
 from uuid import uuid4
 from pathlib import Path
@@ -44,7 +45,14 @@ def create_app(config_path="config.json", preferences_path=None):
     settings = saved if saved.get("provider") in ("CODEX", "AGY") else {"provider": "CODEX"}
     analyzer = CliLearningAnalyzer(settings)
     analyzer.terminal = AiRequestTerminal("backtest", config.get("terminal_type", "ORCA"))
-    app = FastAPI(title="Quant Backtest Engine")
+    @asynccontextmanager
+    async def lifespan(app):
+        try:
+            yield
+        finally:
+            await asyncio.to_thread(analyzer.close_replay)
+
+    app = FastAPI(title="Quant Backtest Engine", lifespan=lifespan)
     install_request_security(app)
     app.add_middleware(CORSMiddleware, allow_origins=[os.getenv("BACKTEST_UI_URL", "http://localhost:3000")], allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?", allow_methods=["GET", "POST"], allow_headers=["Content-Type"])
     register_backtest(app, analyzer, config, config_path)
@@ -105,6 +113,7 @@ def create_app(config_path="config.json", preferences_path=None):
             folder.mkdir(parents=True, exist_ok=True)
             document.write_text(content, encoding="utf-8")
             save_preference("backtest_strategy_documents", [os.path.relpath(document, Path(config_path).parent)])
+            analyzer.close_replay()
             return {"strategy_available": True}
         except (OSError, HTTPException):
             document.unlink(missing_ok=True)

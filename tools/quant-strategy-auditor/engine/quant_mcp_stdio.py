@@ -5,21 +5,42 @@ import sys
 import re
 from urllib.error import HTTPError
 from urllib.request import Request, build_opener, ProxyHandler
+if __package__:
+    from .quant_mcp_artifacts import register_result
+    from .quant_mcp_route import load_route, matches_request
+else:
+    from quant_mcp_artifacts import register_result
+    from quant_mcp_route import load_route, matches_request
 
 MAX_LINE = 256000
 PROTOCOLS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
 
 
 def exchange(path, body):
-    port = int(os.environ["QUANT_MCP_PORT"])
+    route = os.environ.get("QUANT_MCP_ROUTE")
+    binding = load_route(route, active=path == "/call") if route else None
+    if binding is not None and path == "/tools":
+        return {"tools": binding["tools"]}
+    if binding is not None:
+        arguments = body.get("arguments", {})
+        if not matches_request(binding, arguments.get("request_id")):
+            raise ValueError("Quant request changed")
+        body = {**body, "arguments": {key: value for key, value in arguments.items() if key != "request_id"}}
+    port = binding["port"] if binding is not None else int(os.environ["QUANT_MCP_PORT"])
     if not 1 <= port <= 65535 or path not in ("/tools", "/call"):
         raise ValueError("Invalid local Quant endpoint")
-    request = Request(f"http://127.0.0.1:{port}{path}", data=json.dumps(body, allow_nan=False).encode(), headers={"Authorization": "Bearer " + os.environ["QUANT_MCP_CAPABILITY"], "Content-Type": "application/json"}, method="POST")
+    capability = binding["capability"] if binding is not None else os.environ["QUANT_MCP_CAPABILITY"]
+    request = Request(f"http://127.0.0.1:{port}{path}", data=json.dumps(body, allow_nan=False).encode(), headers={"Authorization": "Bearer " + capability, "Content-Type": "application/json"}, method="POST")
     with build_opener(ProxyHandler({})).open(request, timeout=30) as response:
         raw = response.read(12 * 1024 * 1024 + 1)
         if len(raw) > 12 * 1024 * 1024:
             raise ValueError("Quant response too large")
-        return json.loads(raw)
+        result = json.loads(raw)
+        if binding is not None:
+            if not matches_request(load_route(route, active=True), binding["request_id"]):
+                raise ValueError("Quant request changed")
+            result["_artifact_manifest"] = binding["manifest"]
+        return result
 
 
 def dispatch(message, initialized, call=exchange):
@@ -45,19 +66,30 @@ def dispatch(message, initialized, call=exchange):
         result = {} if method == "ping" else call("/tools", {})
     elif method == "tools/call" and isinstance(params, dict) and not set(params) - {"name", "arguments", "_meta"} and isinstance(params.get("name"), str) and isinstance(params.get("arguments", {}), dict):
         try:
-            data = call("/call", {"name": params["name"], "arguments": params.get("arguments", {})})["data"]
+            response = call("/call", {"name": params["name"], "arguments": params.get("arguments", {})})
+            data = response["data"]
+            if "_artifact_manifest" in response:
+                register_result(params["name"], data, manifest=response["_artifact_manifest"])
+            else:
+                register_result(params["name"], data)
             if params["name"] == "capture_chart":
                 result = {"content": [{"type": "text", "text": json.dumps({"cutoff": data["cutoff"]})}, {"type": "image", "mimeType": "image/png", "data": data["image"]}], "isError": False}
             else:
-                result = {"content": [{"type": "text", "text": json.dumps(data, ensure_ascii=False)}], "isError": False}
+                result = {"content": [{"type": "text", "text": json.dumps(data, ensure_ascii=False, separators=(",", ":"))}], "isError": False}
         except HTTPError as error:
             message = "Quant tool rejected. Request expired or chart operation unavailable."
             try:
                 detail = json.loads(error.read(8192))
+                operation_codes = {"ack_timeout", "chart_apply_failed", "chart_frame_changed", "order_rejected", "capture_failed", "chart_rejected"}
+                if detail.get("error") == "operation_failed" and detail.get("code") in operation_codes:
+                    message = "Quant operation_failed: " + detail["code"] + ". Earlier acknowledged actions remain applied. Do not repeat an order."
                 if error.code == 422 and detail.get("error") == "invalid_arguments":
                     fields = detail.get("fields", [])
                     fields = [field for field in fields if isinstance(field, str) and len(field) <= 160 and re.fullmatch(r"[a-z_0-9.]+", field)][:6]
                     message = "Quant invalid_arguments: " + ", ".join(fields) + ". Correct the tool arguments using its schema, then retry the tool."
+                    if params.get("name") == "apply_chart":
+                        message += " Allowed top-level keys: drawings, indicators. Drawing keys: id, tool, points, label. Indicator keys: id, name, inputs, visible, operation. Put only this tool payload inside dispatcher Arguments; omit dispatcher metadata and style options."
+                        message += " Each drawing must be an object, not a string or null. Match the exact point count in drawing_tools: PriceNote requires two points; PriceLabel and HorizontalLine require one. Reuse apply_chart_example or price_note_example from your first chart read; do not reread or use files to repair arguments."
                     hints = {"missing": "required field", "extra_forbidden": "remove unknown field", "list_type": "expected array", "dict_type": "expected object", "bool_type": "expected boolean", "int_type": "expected integer", "float_type": "expected number", "string_type": "expected string", "literal_error": "use schema enum", "string_pattern_mismatch": "use valid identifier", "value_error": "check catalog constraints", "invalid_value": "check schema limits"}
                     issues = detail.get("issues", [])
                     if isinstance(issues, list):

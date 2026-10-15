@@ -1,5 +1,6 @@
 """Request-scoped native chart tools, reachable only through a local capability."""
 import hmac
+import hashlib
 import base64
 import json
 import secrets
@@ -11,6 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from pydantic import Field, ValidationError
 from .request_security import StrictRequest
+from .backtest_timing import REQUEST_LIFETIME, COMMAND_ACK_TIMEOUT
 
 
 class Empty(StrictRequest):
@@ -20,6 +22,7 @@ class Empty(StrictRequest):
 class ReadChart(StrictRequest):
     after_time: int = Field(default=-1, ge=-1)
     limit: int = Field(default=60, ge=1, le=2000)
+    compact: bool = False
 
 
 class ReadCatalog(StrictRequest):
@@ -29,6 +32,31 @@ class ReadCatalog(StrictRequest):
 class ToolCall(StrictRequest):
     name: str = Field(max_length=80)
     arguments: dict
+
+
+class QuantOperationError(ValueError):
+    codes = frozenset(("ack_timeout", "chart_apply_failed", "chart_frame_changed", "order_rejected", "capture_failed", "chart_rejected"))
+
+    def __init__(self, code):
+        self.code = code if code in self.codes else "chart_rejected"
+        super().__init__(self.code)
+
+
+class QuantSessionError(ValueError):
+    messages = {
+        "session_closed": "Replay session was closed or reset",
+        "request_expired": "Replay request expired",
+        "configuration_changed": "Replay configuration changed",
+        "chart_not_read": "AI must read the chart through Quant MCP before completing analysis",
+        "command_pending": "A chart command is still awaiting acknowledgement",
+        "unacknowledged_actions": "Chart changes and paper orders must use acknowledged Quant tools",
+        "setup_drawing_missing": "Use apply_chart to establish a drawing before finishing or trading",
+        "setup_indicator_unready": "Use apply_chart to establish an indicator before finishing or trading",
+    }
+
+    def __init__(self, code):
+        self.code = code
+        super().__init__(self.messages[code])
 
 
 def inline_tool_schema(model):
@@ -80,40 +108,49 @@ class QuantTools:
         self.response = None
         self.closed = False
         self.calls = 0
-        self.deadline = time.monotonic() + 110
+        self.started = time.monotonic()
+        # Session sống qua deadline của CLI để nhận kết quả và dọn tiến trình.
+        self.deadline = self.started + REQUEST_LIFETIME
         self.order_applied = False
         self.order_attempted = False
         self.chart_read = False
         self.on_tool = on_tool
+        self.activity = None
+        self.acknowledgements = {}
 
     def check(self):
-        if self.closed or time.monotonic() >= self.deadline or not self.is_current():
-            raise ValueError("Replay request expired or configuration changed")
+        if self.closed:
+            raise QuantSessionError("session_closed")
+        if time.monotonic() >= self.deadline:
+            raise QuantSessionError("request_expired")
+        if not self.is_current():
+            raise QuantSessionError("configuration_changed")
 
     def complete(self, output):
         with self.condition:
             self.check()
             if not self.chart_read:
-                raise ValueError("AI must read the chart through Quant MCP before completing analysis")
+                raise QuantSessionError("chart_not_read")
+            if self.pending:
+                raise QuantSessionError("command_pending")
             if self.order_attempted:
                 output = {**output, "action": "HOLD", "drawings": [], "indicators": []}
             result = self.decision_model.model_validate(output)
             if result.action != "HOLD" or result.drawings or result.indicators:
-                raise ValueError("Chart changes and paper orders must use acknowledged Quant tools")
+                raise QuantSessionError("unacknowledged_actions")
             self.check_chart_setup()
             return result.model_dump()
 
     def check_chart_setup(self):
         if not self.frame.drawings:
-            raise ValueError("Use apply_chart to establish a drawing before finishing or trading")
+            raise QuantSessionError("setup_drawing_missing")
         if not any(indicator.visible and indicator.operation == "upsert" and indicator.name != "Volume" and indicator.status not in ("loading", "error") for indicator in self.frame.indicators):
-            raise ValueError("Use apply_chart to establish an indicator before finishing or trading")
+            raise QuantSessionError("setup_indicator_unready")
 
     def chart_setup_example(self):
         if not self.frame.bars:
             return None
-        bar = self.frame.bars[-1]
-        drawings = [] if self.frame.drawings else [{"id": "ai_reference_level", "tool": "HorizontalLine", "points": [{"timestamp": bar.time, "price": bar.close}], "label": "Mức tham chiếu"}]
+        drawings = [] if self.frame.drawings else [next(item for item in self.drawing_examples() if item["tool"] == "PriceNote")]
         indicators = [] if any(item.visible and item.operation == "upsert" and item.name != "Volume" and item.status not in ("loading", "error") for item in self.frame.indicators) else [{"id": "ai_trend_ma", "name": "Moving Average", "inputs": [], "visible": True, "operation": "upsert"}]
         if not drawings and not indicators:
             return None
@@ -129,7 +166,7 @@ class QuantTools:
 
     def definitions(self):
         descriptions = {
-            "get_chart_state": "Read revealed M1 candles, drawings and calculated indicator values. after_time is exclusive. No future data.",
+            "get_chart_state": "Read revealed M1 candles, drawings and calculated indicator values once per analysis. Use returned setup examples and acknowledgments instead of repeated reads. compact=true returns exact OHLCV rows with bar_columns. after_time is exclusive. No future data.",
             "get_account_state": "Read the current paper position and orders. No real account access.",
             "get_chart_catalog": "List drawing tools and indicator names, or exact inputs for one indicator_name.",
             "capture_chart": "Capture the current chart canvas only. No toolbar, desktop or browser chrome.",
@@ -170,18 +207,26 @@ class QuantTools:
 
     def update(self, frame):
         self.check()
-        if frame.client_id != self.owner or frame.symbol != self.frame.symbol or frame.granularity != self.frame.granularity or frame.cutoff < self.frame.cutoff:
+        if frame.replay_id != self.frame.replay_id or frame.client_id != self.owner or frame.symbol != self.frame.symbol or frame.granularity != self.frame.granularity or frame.cutoff < self.frame.cutoff:
             raise ValueError("Replay ownership or timeline changed")
         self.frame = frame
 
-    def sync(self, frame):
+    def sync(self, frame, wait=0):
         with self.condition:
             self.update(frame)
-            return {"command": self.pending}
+            if not self.pending and wait:
+                self.condition.wait_for(lambda: self.pending is not None or self.closed, timeout=min(max(wait, 0), .4))
+                self.check()
+            return {"command": self.pending, "activity": self.activity, "acknowledged": list(self.acknowledgements)}
 
     def ack(self, command_id, frame, error):
         with self.condition:
             self.check()
+            signature = hashlib.sha256(json.dumps({"frame": frame.model_dump(), "error": error}, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+            if command_id in self.acknowledgements:
+                if self.acknowledgements[command_id] != signature:
+                    raise ValueError("Acknowledgement payload changed")
+                return {"ok": True}
             if not self.pending or self.pending["id"] != command_id:
                 raise ValueError("Unknown or already acknowledged command")
             if self.pending["name"] == "capture_chart" and not error:
@@ -191,8 +236,13 @@ class QuantTools:
                 image = base64.b64decode(parts[1], validate=True)
                 if len(image) < 24 or len(image) > 8 * 1024 * 1024 or not image.startswith(b"\x89PNG\r\n\x1a\n") or not all(1 <= int.from_bytes(image[offset:offset + 4], "big") <= 8192 for offset in (16, 20)):
                     raise ValueError("Invalid chart image")
-            self.update(frame)
+            if frame.replay_id != self.frame.replay_id or frame.client_id != self.owner or frame.symbol != self.frame.symbol or frame.granularity != self.frame.granularity or frame.cutoff < self.pending["cutoff"]:
+                raise ValueError("Acknowledgement ownership or timeline changed")
+            # ACK trễ giữ nguyên kết quả thao tác, không ghi đè frame replay mới hơn.
+            if frame.cutoff >= self.frame.cutoff:
+                self.update(frame)
             self.response = {"error": error, "frame": frame}
+            self.acknowledgements[command_id] = signature
             if self.pending["name"] == "submit_order" and not error:
                 self.order_applied = True
             self.pending = None
@@ -222,6 +272,18 @@ class QuantTools:
             args = self.models[name].model_validate(arguments).model_dump()
             if self.on_tool:
                 self.on_tool(name)
+            sequence = self.calls
+            self.activity = {"sequence": sequence, "tool": name, "state": "ACTIVE"}
+            try:
+                result = self._execute(name, args)
+            except Exception:
+                self.activity = {"sequence": sequence, "tool": name, "state": "ERROR"}
+                raise
+            self.activity = {"sequence": sequence, "tool": name, "state": "DONE"}
+            return result
+
+    def _execute(self, name, args):
+        with self.condition:
             if name == "get_chart_catalog":
                 if args["indicator_name"]:
                     definition = next((item for item in self.catalog["indicators"] if item["name"] == args["indicator_name"]), None)
@@ -235,12 +297,15 @@ class QuantTools:
                     result["drawing_example"] = {"id": "reference_level", "tool": "HorizontalLine", "points": [{"timestamp": bar["time"], "price": bar["close"]}], "label": "Reference level"}
                 return result
             if name == "get_chart_state":
-                data = self.frame.model_dump(exclude={"client_id", "image", "history", "teaching", "orders", "position"})
+                data = self.frame.model_dump(exclude={"client_id", "replay_id", "image", "history", "teaching", "orders", "position"})
                 data["drawing_tools"] = self.catalog["drawings"]
-                data["indicator_names"] = [item["name"] for item in self.catalog["indicators"]]
                 if not any(item.tool in ("PriceNote", "PriceLabel", "Callout") and item.label.strip() for item in self.frame.drawings):
                     data["price_note_example"] = next(item for item in self.drawing_examples() if item["tool"] == "PriceNote")
                 data["bars"] = [bar for bar in data["bars"] if bar["time"] > args["after_time"]][-args["limit"]:]
+                if args["compact"]:
+                    columns = ["time", "open", "high", "low", "close", "volume"]
+                    data["bars"] = [[bar[key] for key in columns] for bar in data["bars"]]
+                    data["bar_columns"] = columns
                 example = self.chart_setup_example()
                 if example:
                     data["apply_chart_example"] = example
@@ -273,17 +338,18 @@ class QuantTools:
             self.pending = {"id": str(uuid.uuid4()), "name": name, "arguments": args,
                             "cutoff": self.frame.cutoff, "position": state["position"], "orders": state["orders"]}
             self.response = None
-            deadline = min(self.deadline, time.monotonic() + 25)
+            self.condition.notify_all()
+            deadline = min(self.deadline, time.monotonic() + COMMAND_ACK_TIMEOUT)
             while self.response is None:
                 self.check()
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     self.close()
-                    raise ValueError("Chart command acknowledgement timed out")
+                    raise QuantOperationError("ack_timeout")
                 self.condition.wait(min(remaining, .5))
             response = self.response
             if response["error"]:
-                raise ValueError(response["error"])
+                raise QuantOperationError(response["error"])
             frame = response["frame"]
             if name == "capture_chart":
                 if not frame.image.startswith("data:image/png;base64,"):
@@ -322,13 +388,16 @@ def serve_tools(tools):
                 output = json.dumps(result, ensure_ascii=False, allow_nan=False).encode()
                 self.send_response(200)
             except ValidationError as error:
-                known = {"name", "arguments", "after_time", "limit", "indicator_name", "drawings", "indicators", "id", "tool", "points", "timestamp", "price", "label", "inputs", "visible", "operation", "value", "action", "order_type", "stop_price", "limit_price", "reason"}
+                known = {"name", "arguments", "after_time", "limit", "compact", "indicator_name", "drawings", "indicators", "id", "tool", "points", "timestamp", "price", "label", "inputs", "visible", "operation", "value", "action", "order_type", "stop_price", "limit_price", "reason"}
                 errors = error.errors(include_url=False, include_context=False, include_input=False)[:6]
                 fields = [".".join(str(part) if isinstance(part, int) or part in known else "redacted" for part in item["loc"]) for item in errors]
                 allowed_codes = {"missing", "extra_forbidden", "list_type", "dict_type", "bool_type", "int_type", "float_type", "string_type", "literal_error", "string_pattern_mismatch", "value_error"}
                 issues = [{"field": field, "code": item["type"] if item["type"] in allowed_codes else "invalid_value"} for field, item in zip(fields, errors)]
                 # Chỉ trả tên field schema, không trả input hoặc thông báo chứa giá trị riêng.
                 output = json.dumps({"error": "invalid_arguments", "fields": fields, "issues": issues}).encode()
+                self.send_response(422)
+            except QuantOperationError as error:
+                output = json.dumps({"error": "operation_failed", "code": error.code}).encode()
                 self.send_response(422)
             except Exception:
                 output = b'{"error":"Quant tool rejected, stale request or invalid arguments"}'
