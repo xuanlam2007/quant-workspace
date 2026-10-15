@@ -4645,7 +4645,7 @@ main:is(#chart, #backtest-chart).chart--zoom {
 }
 .chart-select.chart-select > button:hover:not(:disabled) { background: #2a2e39; border-color: #50535e; }
 .chart-select.chart-select > button:focus-visible { outline: 2px solid #2962ff; outline-offset: -1px; }
-.chart-select > [role="listbox"] { z-index: 200; width: max(100%, 225px); background: #1e222d; border-color: #434651; border-radius: 6px; }
+.chart-select > [role="listbox"] { z-index: 200; width: 100%; min-width: 0; max-width: min(100%, calc(100vw - 16px)); background: #1e222d; border-color: #434651; border-radius: 6px; }
 .chart-select [role="option"] { border: 0; background: transparent; color: #d1d4dc; border-radius: 4px; justify-content: space-between; }
 .chart-select [role="option"]:hover:not(:disabled), .chart-select [role="option"]:focus-visible { background: #2a2e39; }
 .chart-select [role="option"][aria-selected="true"] { background: #2962ff; color: #fff; }
