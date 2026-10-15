@@ -26,10 +26,13 @@ export default function AuditorConnection({ status, loading, pending, disabled, 
   const [refreshKey, setRefreshKey] = useState(0);
   const lastRefreshKey = useRef(0);
   const hasStatus = !!status;
+  const statusKey = JSON.stringify([status?.provider || "AGY", status?.model || "", status?.provider === "CODEX" ? status.effort || "" : ""]);
+  const [draftStatusKey, setDraftStatusKey] = useState(statusKey);
   useEffect(() => {
+    setDraftStatusKey(statusKey);
     setProvider(status?.provider || "AGY"); setModel(status?.model || "");
     setEffort(status?.provider === "CODEX" ? status?.effort || "" : "");
-  }, [status?.provider, status?.model, status?.effort]);
+  }, [statusKey, status?.provider, status?.model, status?.effort]);
 
   useEffect(() => {
     if (loading || !hasStatus) return;
@@ -59,13 +62,13 @@ export default function AuditorConnection({ status, loading, pending, disabled, 
   const invalidModel = !!model && !models.some(option => option.id === model);
   const invalidEffort = provider === "CODEX" && !!effort && !efforts.some(option => option.id === effort);
   const invalid = invalidModel || invalidEffort;
-  const changed = provider !== (status?.provider || "AGY") || model !== (status?.model || "") || (provider === "CODEX" && effort !== (status?.effort || ""));
+  const changed = draftStatusKey === statusKey && (provider !== (status?.provider || "AGY") || model !== (status?.model || "") || (provider === "CODEX" && effort !== (status?.effort || "")));
   const options = (items: AiCatalogOption[], value: string) => [
     ...(value && !items.some(item => item.id === value) ? [{ value, label: `${value} (đã lưu, chưa xác nhận)`, disabled: true }] : []),
     ...items.map(item => ({ value: item.id, label: item.label })),
   ];
   const choicesLoading = loading || catalogLoading;
-  useEffect(() => { onDraftChange?.(changed || invalid || choicesLoading, choicesLoading && !changed && !invalid); }, [changed, invalid, choicesLoading, onDraftChange]);
+  useEffect(() => { onDraftChange?.(changed || (!choicesLoading && invalid), choicesLoading); }, [changed, invalid, choicesLoading, onDraftChange]);
   const effortValue = provider === "AGY" ? presetGroup ? model : "" : effort;
   const checking = loading || pending === "ai" || pending === "ai-config";
   const working = !changed && !!status?.connected && observing;

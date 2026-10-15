@@ -335,10 +335,13 @@
 .select {
   position: relative;
   min-width: 0;
+  max-width: 100%;
 }
 
 .select > button {
-  min-width: 190px;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
   justify-content: flex-start;
 }
 
@@ -355,15 +358,21 @@
   margin-left: auto;
 }
 
+.select > button svg, .menu button svg {
+  flex: none;
+}
+
 .menu {
   position: absolute;
   z-index: 20;
   top: calc(100% + 8px);
   right: 0;
-  width: 245px;
-  max-width: calc(100vw - 48px);
+  width: 100%;
+  min-width: 0;
+  max-width: min(100%, calc(100vw - 16px));
   padding: 6px;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   overscroll-behavior: contain;
   background: var(--audit-raised);
   border: 1px solid #506079;
@@ -390,6 +399,8 @@
   align-items: center;
   justify-content: space-between;
   width: 100%;
+  min-width: 0;
+  max-width: 100%;
   background: transparent;
   border: 0;
   color: var(--audit-text);
@@ -401,6 +412,7 @@
 }
 
 .menu button span {
+  flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -613,6 +625,7 @@
 
 .field {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 7px;
   margin-top: 14px;
   min-width: 0;
@@ -637,10 +650,13 @@
 .inputAction {
   display: flex;
   gap: 6px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .inputAction > .select {
-  flex: 1;
+  flex: 1 1 0;
+  width: 0;
 }
 
 .field select:disabled {
@@ -1784,7 +1800,6 @@
   .menu {
     left: 0;
     right: auto;
-    width: min(245px, 82vw);
   }
   .button, .iconButton {
     min-height: 44px;

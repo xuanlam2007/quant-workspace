@@ -49,7 +49,7 @@ export function AuditorSelect<T extends string | number>({ id, label, icon, valu
   const disabled = disabledProp || loading;
   const [open, setOpen] = useState(false);
   const [closing, setClosing] = useState(false);
-  const [placement, setPlacement] = useState({ above: false, height: 280 });
+  const [placement, setPlacement] = useState({ above: false, height: 280, width: 0, left: 0 });
   const container = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const search = useRef({ text: "", time: 0 });
@@ -67,11 +67,17 @@ export function AuditorSelect<T extends string | number>({ id, label, icon, valu
     if (!open) return;
     const place = () => {
       const rect = trigger.current?.getBoundingClientRect();
-      if (!rect) return;
+      const root = container.current?.getBoundingClientRect();
+      if (!rect || !root) return;
+      const viewport = window.visualViewport;
+      const viewportLeft = viewport?.offsetLeft ?? 0;
+      const viewportWidth = viewport?.width ?? document.documentElement.clientWidth;
+      const width = Math.max(0, Math.min(rect.width, viewportWidth - 16));
+      const left = Math.max(viewportLeft + 8, Math.min(rect.left, viewportLeft + viewportWidth - width - 8));
       const below = window.innerHeight - rect.bottom - 24;
       const above = rect.top - 24;
       const upwards = below < Math.min(280, options.length * 38 + 12) && above > below;
-      setPlacement({ above: upwards, height: Math.max(80, Math.min(280, upwards ? above : below)) });
+      setPlacement({ above: upwards, height: Math.max(80, Math.min(280, upwards ? above : below)), width, left: left - root.left });
     };
     place();
     const menu = container.current;
@@ -81,10 +87,17 @@ export function AuditorSelect<T extends string | number>({ id, label, icon, valu
     const outside = (event: PointerEvent) => { if (!container.current?.contains(event.target as Node)) close(); };
     document.addEventListener("pointerdown", outside);
     window.addEventListener("resize", place);
+    window.visualViewport?.addEventListener("resize", place);
+    window.visualViewport?.addEventListener("scroll", place);
+    const observer = new ResizeObserver(place);
+    if (trigger.current) observer.observe(trigger.current);
     document.addEventListener("scroll", place, true);
     return () => {
       document.removeEventListener("pointerdown", outside);
       window.removeEventListener("resize", place);
+      window.visualViewport?.removeEventListener("resize", place);
+      window.visualViewport?.removeEventListener("scroll", place);
+      observer.disconnect();
       document.removeEventListener("scroll", place, true);
     };
   }, [open, value, disabled, options.length, close]);
@@ -140,7 +153,7 @@ export function AuditorSelect<T extends string | number>({ id, label, icon, valu
         {icon && <Icon name={icon} />}<span><LoadingText width="100%" loading={loading} label={`Đang tải ${label}`}>{selected?.label || "Chọn..."}</LoadingText></span><Icon name="chevron" />
       </button>
       {(open || closing) && !disabled && (
-        <div className={styles.menu} id={`${id}-options`} role="listbox" aria-label={label} aria-hidden={!open} data-leaving={closing} data-placement={placement.above ? "top" : "bottom"} style={{ maxHeight: placement.height }}>
+        <div className={styles.menu} id={`${id}-options`} role="listbox" aria-label={label} aria-hidden={!open} data-leaving={closing} data-placement={placement.above ? "top" : "bottom"} style={{ maxHeight: placement.height, width: placement.width || "100%", left: placement.left, right: "auto" }}>
           {options.map(option => (
             <button key={option.value} type="button" role="option" aria-selected={value === option.value} disabled={option.disabled || closing} tabIndex={-1} title={option.label} onClick={() => {
               close();
