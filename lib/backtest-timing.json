@@ -1,0 +1,5 @@
+{
+  "analysis_timeout_ms": 120000,
+  "result_grace_ms": 10000,
+  "command_ack_timeout_ms": 25000
+}
