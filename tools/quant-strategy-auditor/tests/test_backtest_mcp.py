@@ -1,4 +1,5 @@
 import json
+import io
 import os
 import sys
 import threading
@@ -12,7 +13,8 @@ from urllib.error import HTTPError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from engine.backtest_bridge import BacktestFrame, ToolAck, ToolSync
-from engine.backtest_mcp import QuantTools, serve_tools
+from engine.backtest_mcp import QuantTools, QuantSessionError, serve_tools
+from engine.backtest_timing import ANALYSIS_TIMEOUT, REQUEST_LIFETIME, COMMAND_ACK_TIMEOUT
 from engine.quant_mcp_stdio import dispatch, exchange
 from engine.cli_analyzer import CliLearningAnalyzer, codex_output_schema
 from engine.ai_request_terminal import cli_failure
@@ -64,7 +66,9 @@ class QuantMcpTests(unittest.TestCase):
 
     def test_discovery_examples_match_execution_schemas_and_cutoff(self):
         state = self.tools.call("get_chart_state", {})
-        self.assertEqual(state["indicator_names"], [item["name"] for item in self.tools.catalog["indicators"]])
+        self.assertNotIn("indicator_names", state)
+        apply_schema = next(item["inputSchema"] for item in self.tools.definitions() if item["name"] == "apply_chart")
+        self.assertEqual(apply_schema["properties"]["indicators"]["items"]["properties"]["name"]["enum"], [item["name"] for item in self.tools.catalog["indicators"]])
         self.assertEqual(state["price_note_example"]["tool"], "PriceNote")
         examples = self.tools.call("get_chart_catalog", {})["drawing_examples"]
         self.assertEqual({item["tool"] for item in examples}, set(self.tools.catalog["drawings"]))
@@ -95,11 +99,37 @@ class QuantMcpTests(unittest.TestCase):
         data = self.tools.call("get_chart_state", {})
         example = data["apply_chart_example"]
         self.tools.models["apply_chart"].model_validate(example)
+        self.assertEqual(example["drawings"][0]["tool"], "PriceNote")
+        self.assertEqual(len(example["drawings"][0]["points"]), 2)
         self.assertLess(example["drawings"][0]["points"][0]["timestamp"], data["cutoff"])
         self.assertEqual(set(example["indicators"][0]), {"id", "name", "inputs", "visible", "operation"})
         self.assertIsInstance(self.run_command("apply_chart", example), dict)
         self.assertEqual(self.tools.complete(hold())["action"], "HOLD")
         self.assertNotIn("apply_chart_example", self.tools.call("get_chart_state", {}))
+
+    def test_sync_exposes_fixed_tool_activity_without_arguments(self):
+        self.assertIsNone(self.tools.sync(self.frame)["activity"])
+        self.tools.call("get_chart_state", {})
+        self.assertEqual(self.tools.sync(self.frame)["activity"], {"sequence": 1, "tool": "get_chart_state", "state": "DONE"})
+        self.run_command("apply_chart", {}, "Chart not ready")
+        self.assertEqual(self.tools.sync(self.frame)["activity"], {"sequence": 2, "tool": "apply_chart", "state": "ERROR"})
+
+    def test_compact_chart_preserves_candle_values_and_cutoff(self):
+        normal = self.tools.call("get_chart_state", {"limit": 30})
+        compact = self.tools.call("get_chart_state", {"limit": 30, "compact": True})
+        columns = compact.pop("bar_columns")
+        restored = [dict(zip(columns, row)) for row in compact["bars"]]
+        self.assertEqual(restored, normal["bars"])
+        self.assertTrue(all(row["time"] < compact["cutoff"] for row in restored))
+        self.assertEqual({key: value for key, value in compact.items() if key != "bars"}, {key: value for key, value in normal.items() if key != "bars"})
+
+    def test_quant_operation_rejection_is_not_permission_denial(self):
+        diagnostic = agy_step_error({"tool_name": "call_mcp_tool", "tool_info": {"error": "Quant tool rejected. Request expired or chart operation unavailable."}})
+        self.assertEqual(diagnostic.code, "mcp_operation")
+        self.assertNotIn("permission hook", diagnostic.safe_message)
+        self.assertNotIn("No order was applied", diagnostic.safe_message)
+        denied = agy_step_error({"tool_name": "call_mcp_tool", "tool_info": {"error": "permission denied"}})
+        self.assertEqual(denied.code, "mcp_permission")
 
     def test_invalid_and_unknown_tool_calls_consume_request_budget(self):
         for index in range(20):
@@ -174,6 +204,50 @@ class QuantMcpTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.tools.call("get_account_state", {})
 
+    def test_waiting_sync_wakes_for_command_and_ack_completes_once(self):
+        waiting = threading.Event()
+        synced, completed = [], []
+        original = self.tools.condition.wait_for
+        def wait_for(predicate, timeout):
+            waiting.set()
+            return original(predicate, timeout)
+        with patch.object(self.tools.condition, "wait_for", side_effect=wait_for):
+            reader = threading.Thread(target=lambda: synced.append(self.tools.sync(self.frame, wait=.4)))
+            reader.start()
+            self.assertTrue(waiting.wait(1))
+            writer = threading.Thread(target=lambda: completed.append(self.tools.call("apply_chart", {})))
+            writer.start()
+            reader.join(1)
+            self.assertFalse(reader.is_alive())
+            self.assertIsNotNone(synced[0]["command"])
+            command = synced[0]["command"]
+            self.tools.ack(command["id"], self.frame, "")
+            writer.join(1)
+            self.assertFalse(writer.is_alive())
+            self.assertEqual(len(completed), 1)
+            self.assertEqual(list(self.tools.acknowledgements), [command["id"]])
+
+    def test_waiting_sync_revalidates_after_reset(self):
+        waiting = threading.Event()
+        rejected = []
+        original = self.tools.condition.wait_for
+        def wait_for(predicate, timeout):
+            waiting.set()
+            return original(predicate, timeout)
+        def sync():
+            try:
+                self.tools.sync(self.frame, wait=.4)
+            except ValueError:
+                rejected.append(True)
+        with patch.object(self.tools.condition, "wait_for", side_effect=wait_for):
+            reader = threading.Thread(target=sync)
+            reader.start()
+            self.assertTrue(waiting.wait(1))
+            self.tools.close()
+            reader.join(1)
+            self.assertFalse(reader.is_alive())
+            self.assertEqual(rejected, [True])
+
     def run_command(self, name, arguments, error=""):
         results = []
         def invoke():
@@ -202,9 +276,61 @@ class QuantMcpTests(unittest.TestCase):
         self.tools.ack(command["id"], self.frame, error)
         worker.join(2)
         self.assertFalse(worker.is_alive())
-        with self.assertRaises(ValueError):
-            self.tools.ack(command["id"], self.frame, error)
+        self.assertEqual(self.tools.ack(command["id"], self.frame, error), {"ok": True})
+        with self.assertRaisesRegex(ValueError, "payload changed"):
+            self.tools.ack(command["id"], self.frame, error + "changed")
         return results[0]
+
+    def test_delayed_ack_does_not_roll_replay_back_after_sync_advances(self):
+        results = []
+        worker = threading.Thread(target=lambda: results.append(self.tools.call("apply_chart", {})))
+        worker.start()
+        deadline = time.monotonic() + 2
+        while not self.tools.pending and time.monotonic() < deadline:
+            time.sleep(.005)
+        command = self.tools.sync(self.frame)["command"]
+        self.assertIsNotNone(command)
+        later = self.frame.model_copy(update={"cutoff": self.frame.cutoff + 60})
+        self.tools.sync(later)
+        self.assertEqual(self.tools.ack(command["id"], self.frame, ""), {"ok": True})
+        worker.join(2)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(results[0]["cutoff"], self.frame.cutoff)
+        self.assertEqual(self.tools.frame.cutoff, later.cutoff)
+        self.assertIn(command["id"], self.tools.sync(later)["acknowledged"])
+        self.assertEqual(self.tools.ack(command["id"], self.frame, ""), {"ok": True})
+        self.assertEqual(self.tools.frame.cutoff, later.cutoff)
+
+    def test_operation_failures_report_fixed_codes_without_raw_chart_errors(self):
+        failed = self.run_command("apply_chart", {}, "chart_apply_failed")
+        self.assertEqual(failed.code, "chart_apply_failed")
+        private = self.run_command("apply_chart", {}, "private chart diagnostic")
+        self.assertEqual(str(private), "chart_rejected")
+        diagnostic = agy_step_error({"tool_name": "call_mcp_tool", "tool_info": {"error": "Quant operation_failed: ack_timeout. Earlier acknowledged actions remain applied."}})
+        self.assertEqual(diagnostic.code, "mcp_ack_timeout")
+        self.assertIn("25 seconds", diagnostic.safe_message)
+
+    def test_stdio_preserves_only_allowlisted_operation_failure_code(self):
+        def rejected(*_):
+            raise HTTPError("http://127.0.0.1/call", 422, "private diagnostic", {}, io.BytesIO(b'{"error":"operation_failed","code":"ack_timeout","private":"secret"}'))
+        response, _ = dispatch({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "apply_chart", "arguments": {}}}, True, rejected)
+        self.assertTrue(response["result"]["isError"])
+        message = response["result"]["content"][0]["text"]
+        self.assertIn("operation_failed: ack_timeout", message)
+        self.assertNotIn("secret", message)
+        self.assertNotIn("private", message)
+
+    def test_order_rejection_keeps_specific_category_without_raw_diagnostics(self):
+        def rejected(*_):
+            raise HTTPError("http://127.0.0.1/call", 422, "private diagnostic", {}, io.BytesIO(b'{"error":"operation_failed","code":"order_rejected","private":"secret"}'))
+        response, _ = dispatch({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "submit_order", "arguments": {}}}, True, rejected)
+        self.assertTrue(response["result"]["isError"])
+        message = response["result"]["content"][0]["text"]
+        diagnostic = agy_step_error({"tool_name": "call_mcp_tool", "tool_info": {"error": message}})
+        self.assertEqual(diagnostic.code, "mcp_order_rejected")
+        self.assertIn("simulated account", diagnostic.safe_message)
+        self.assertNotIn("secret", diagnostic.safe_message)
+        self.assertNotIn("private", diagnostic.safe_message)
 
     def test_native_drawings_ack_and_duplicate_order_protection(self):
         drawing = {"id": "line", "tool": "HorizontalLine", "points": [{"timestamp": 0, "price": 100}], "label": "Support"}
@@ -260,6 +386,7 @@ class QuantMcpTests(unittest.TestCase):
         self.assertIn("invalid_arguments", message)
         self.assertIn("drawings.0.id", message)
         self.assertIn("redacted", message)
+        self.assertIn("Allowed top-level keys: drawings, indicators", message)
         for private in ("private label", "private_credential_field", "secret"):
             self.assertNotIn(private, message)
         self.assertIsNone(self.tools.pending)
@@ -360,6 +487,40 @@ class QuantMcpTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.tools.complete(hold())
 
+    def test_acknowledged_result_survives_previous_110_second_expiry(self):
+        self.tools.call("get_chart_state", {})
+        state = self.tools.call("get_chart_state", {})["apply_chart_example"]
+        self.run_command("apply_chart", state)
+        acknowledgement_ids = list(self.tools.acknowledgements)
+        self.assertEqual(ANALYSIS_TIMEOUT, 120)
+        self.assertEqual(COMMAND_ACK_TIMEOUT, 25)
+        for elapsed in (110, 117.203, 119.999, 125, REQUEST_LIFETIME - .001):
+            with self.subTest(elapsed=elapsed), patch("engine.backtest_mcp.time.monotonic", return_value=self.tools.started + elapsed):
+                synced = self.tools.sync(self.frame)
+                self.assertFalse(self.tools.closed)
+                self.assertEqual(synced["acknowledged"], acknowledgement_ids)
+                self.assertEqual(self.tools.complete(hold())["action"], "HOLD")
+        with patch("engine.backtest_mcp.time.monotonic", return_value=self.tools.started + REQUEST_LIFETIME):
+            with self.assertRaises(QuantSessionError) as expired:
+                self.tools.complete(hold())
+            self.assertEqual(expired.exception.code, "request_expired")
+
+    def test_completion_rejects_reset_config_change_and_pending_command_specifically(self):
+        self.tools.call("get_chart_state", {})
+        self.current = False
+        with self.assertRaises(QuantSessionError) as changed:
+            self.tools.complete(hold())
+        self.assertEqual(changed.exception.code, "configuration_changed")
+        self.current = True
+        self.tools.pending = {"id": "pending"}
+        with self.assertRaises(QuantSessionError) as pending:
+            self.tools.complete(hold())
+        self.assertEqual(pending.exception.code, "command_pending")
+        self.tools.close()
+        with self.assertRaises(QuantSessionError) as closed:
+            self.tools.complete(hold())
+        self.assertEqual(closed.exception.code, "session_closed")
+
     def test_failed_chart_setup_blocks_orders_without_claiming_visual_success(self):
         self.tools.call("get_chart_state", {})
         self.run_command("apply_chart", {}, "Chart not ready")
@@ -387,13 +548,26 @@ class QuantMcpTests(unittest.TestCase):
         backtest_agent.analyze(analyzer, self.frame.model_dump(), [], Path("unused.png"), self.tools.decision_model.model_json_schema())
         prompt = analyzer._run.call_args.args[0]
         self.assertIn('ServerName="quant-backtest_quant"', prompt)
-        self.assertIn("NEVER use view_file", prompt)
+        self.assertIn("use view_file on that exact JSON or PNG artifact", prompt)
+        self.assertIn("Never guess paths", prompt)
         self.assertIn("Vietnamese with full diacritics", prompt)
         self.assertIn("Never address the user by name", prompt)
         self.assertIn("PriceLabel", prompt)
         self.assertIn("PriceNote", prompt)
         self.assertIn("submit_order once", prompt)
         self.assertIsNone(analyzer._run.call_args.kwargs["image"])
+        self.assertEqual(analyzer._run.call_args.kwargs["timeout"], ANALYSIS_TIMEOUT)
+
+    def test_mcp_summary_schema_cannot_encode_unacknowledged_actions(self):
+        original = self.tools.decision_model.model_json_schema()
+        summary = backtest_agent.mcp_summary_schema(original)
+        self.assertEqual(summary["properties"]["action"]["enum"], ["HOLD"])
+        for field in ("drawings", "indicators"):
+            self.assertEqual(summary["properties"][field]["maxItems"], 0)
+        self.assertEqual(summary["properties"]["reason"]["maxLength"], 240)
+        self.assertNotIn("$defs", summary)
+        self.assertGreater(original["properties"]["drawings"]["maxItems"], 0)
+        self.assertLess(len(json.dumps(summary)), len(json.dumps(original)) // 2)
 
     def test_all_registered_drawing_types_are_available_and_acknowledged(self):
         state = self.tools.call("get_chart_state", {})
@@ -453,13 +627,18 @@ class QuantMcpTests(unittest.TestCase):
             self.assertNotIn(capability["QUANT_MCP_CAPABILITY"], " ".join(command))
             self.assertEqual(options["env"]["QUANT_MCP_CAPABILITY"], capability["QUANT_MCP_CAPABILITY"])
             names = json.loads(options["env"]["QUANT_OBSERVER_MCP_TOOLS"])
+            manifest = Path(options["env"]["QUANT_MCP_ARTIFACT_MANIFEST"])
+            self.assertEqual(manifest.parent, folder / ".agents")
+            self.assertEqual(json.loads(manifest.read_text()), {"entries": []})
+            self.assertTrue((manifest.parent / "quant_mcp_artifacts.py").is_file())
+            self.assertEqual(Path(options["env"]["QUANT_MCP_ARTIFACT_ROOT"]), Path.home() / ".gemini" / "antigravity-cli" / "brain")
             self.assertEqual(set(names), set(self.tools.models))
             self.assertTrue(options["mcp_only"])
-            self.assertEqual(command[command.index("--agent") + 1], "quant-backtest-trader")
-            agent = (folder / ".agents" / "agents" / "quant-backtest-trader.md").read_text(encoding="utf-8")
-            self.assertIn("tools:\n  - call_mcp_tool\n  - finish\n", agent)
-            self.assertIn("mainAgent: true\nsubagent: false\nmodel: inherit\ncommandExecutionPolicy: off", agent)
-            self.assertNotIn(capability["QUANT_MCP_CAPABILITY"], agent)
+            self.assertEqual(json.loads(command[command.index("--json-schema") + 1])["type"], "object")
+            self.assertFalse((folder / "schema.json").exists())
+            self.assertNotIn("--agent", command)
+            self.assertEqual(command[command.index("--mode") + 1], "default")
+            self.assertFalse((folder / ".agents" / "agents").exists())
             for name in ("view_file", "run_command"):
                 rejected = decide({"toolCall": {"name": name, "args": {}}}, [], "backtest", names)
                 self.assertEqual(rejected["decision"], "deny")

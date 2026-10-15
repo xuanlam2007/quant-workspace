@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 import sys
@@ -10,10 +11,33 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from engine.ai_request_terminal import AiRequestTerminal, cli_failure
 from engine.cli_analyzer import CliLearningAnalyzer
 from engine.cli_process import run_cli
-from engine.cli_diagnostics import CliRequestError, agy_step_error
+from engine.cli_diagnostics import CliRequestError, agy_step_error, agy_final_error
 
 
 class AiRequestTerminalTests(unittest.TestCase):
+    def test_failed_final_envelopes_keep_categories_without_provider_text(self):
+        for diagnostic, expected in (("Unknown tool: call_mcp_tool private-token", "tool_configuration"), ("RESOURCE_EXHAUSTED quota private-token", "usage_limit"), ("unauthenticated private-token", "authentication"), ("unknown model private-token", "model_unavailable"), ("network connection refused private-token", "network"), ("unclassified private-token", "final_result")):
+            result = {"status": "ERROR", "error": {"message": diagnostic}, "response": "private strategy"}
+            self.assertEqual(agy_final_error(result).code, expected)
+            analyzer = CliLearningAnalyzer({"provider": "AGY"})
+            output = type("Result", (), {"returncode": 0, "stderr": "", "stdout": json.dumps({"event": "result", "result": result})})()
+            with patch("engine.cli_analyzer.find_cli", return_value="agy.exe"), patch("engine.cli_analyzer.run_cli", return_value=output):
+                with self.assertRaises(CliRequestError) as failure:
+                    analyzer._run_request("Fixture", analyzer.settings)
+            self.assertEqual(failure.exception.code, expected)
+            self.assertNotIn("private-token", str(failure.exception))
+            with tempfile.TemporaryDirectory() as folder:
+                monitor = AiRequestTerminal("backtest", folder=folder)
+                monitor.progress("stdout", {"event": "result", "result": result})
+                saved = (Path(folder) / "current.jsonl").read_text(encoding="utf-8")
+                self.assertIn(expected, saved)
+                self.assertNotIn("private-token", saved)
+                self.assertNotIn("private strategy", saved)
+
+    def test_malformed_final_result_cannot_be_accepted_as_success(self):
+        for value in (None, [], "SUCCESS"):
+            self.assertEqual(agy_final_error(value).code, "final_result")
+
     def test_progress_stream_preserves_failure_and_diagnostic(self):
         output = []
         program = "import sys; sys.stdin.read(); print('{\"type\":\"thread.started\",\"thread_id\":\"session123\"}',flush=True); sys.stderr.write('model unavailable'); sys.exit(7)"
@@ -101,6 +125,17 @@ class AiRequestTerminalTests(unittest.TestCase):
         with patch.object(analyzer, "_run_request", side_effect=failure), self.assertRaises(CliRequestError):
             analyzer._run("private prompt", analyzer.settings, structured=True)
         analyzer.terminal.write.assert_called_once_with("request.failed", code="structured_output", tool="finish", message=failure.safe_message)
+
+    def test_provider_timeout_keeps_category_without_leaking_command_or_output(self):
+        analyzer = CliLearningAnalyzer({"provider": "AGY"})
+        analyzer.terminal = Mock()
+        failure = subprocess.TimeoutExpired(["private-cli", "secret-token"], 120, output="private strategy", stderr="secret-token")
+        with patch.object(analyzer, "_run_request", side_effect=failure), self.assertRaises(subprocess.TimeoutExpired):
+            analyzer._run("private prompt", analyzer.settings, structured=True)
+        diagnostic = CliRequestError("provider_timeout")
+        analyzer.terminal.write.assert_called_once_with("request.failed", code="provider_timeout", tool=None, message=diagnostic.safe_message)
+        for secret in ("private-cli", "secret-token", "private strategy"):
+            self.assertNotIn(secret, str(analyzer.terminal.write.call_args))
 
     def test_unknown_tool_and_sensitive_errors_never_reach_diagnostic(self):
         failure = agy_step_error({"tool_name": "private-tool-name", "tool_info": {"error": "secret-token C:/private/config"}})

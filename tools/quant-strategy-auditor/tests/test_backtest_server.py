@@ -39,6 +39,24 @@ class BacktestEngineIsolationTests(unittest.TestCase):
             self.assertEqual(settings, {"provider": "AGY", "model": "observer"})
             self.assertEqual(json.loads(path.read_text())["ai_connection"]["provider"], "AGY")
 
+    def test_lifespan_closes_replay_on_normal_and_exceptional_shutdown(self):
+        for failure in (False, True):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as folder:
+                app, analyzer, _, _ = self.make_app(folder, {})
+
+                async def run():
+                    async with app.router.lifespan_context(app):
+                        analyzer.close_replay.assert_not_called()
+                        if failure:
+                            raise RuntimeError("request failed")
+
+                if failure:
+                    with self.assertRaisesRegex(RuntimeError, "request failed"):
+                        asyncio.run(run())
+                else:
+                    asyncio.run(run())
+                analyzer.close_replay.assert_called_once_with()
+
     def test_login_terminal_is_independent_and_reserves_analysis_slot(self):
         with tempfile.TemporaryDirectory() as folder:
             app, analyzer, _, _ = self.make_app(folder, {})

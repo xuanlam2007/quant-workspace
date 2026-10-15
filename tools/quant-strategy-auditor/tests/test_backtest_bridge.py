@@ -3,14 +3,19 @@ import base64
 import sys
 import threading
 import unittest
+import os
+import time
+import subprocess
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from fastapi import FastAPI, HTTPException
 from pydantic import ValidationError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from engine.backtest_bridge import BacktestDecision, BacktestFrame, CHART_TOOLS, ReplayIndicator, register_backtest
+from engine.backtest_bridge import BacktestDecision, BacktestFrame, CHART_TOOLS, ReplayIndicator, ToolOwner, ToolSync, ToolAck, register_backtest
+from engine.quant_mcp_stdio import exchange
 from engine.cli_analyzer import CliLearningAnalyzer
 from engine.learning_context import build_learning_prompt
 from engine.cli_diagnostics import CliRequestError
@@ -115,6 +120,9 @@ class BacktestRouteTests(unittest.TestCase):
         app = FastAPI()
         register_backtest(app, self.analyzer, {}, Path("config.json"))
         self.endpoint = next(route.endpoint for route in app.routes if route.path == "/api/backtest/analyze")
+        self.sync = next(route.endpoint for route in app.routes if route.path == "/api/backtest/tools/sync")
+        self.reset = next(route.endpoint for route in app.routes if route.path == "/api/backtest/tools/reset")
+        self.ack = next(route.endpoint for route in app.routes if route.path == "/api/backtest/tools/ack")
 
     def test_missing_all_adapters_makes_no_provider_request(self):
         with patch("engine.backtest_bridge.Path.is_file", return_value=False):
@@ -139,6 +147,26 @@ class BacktestRouteTests(unittest.TestCase):
         self.assertEqual(error.exception.status_code, 502)
         self.assertEqual(error.exception.detail, failure.safe_message)
         self.assertFalse(self.analyzer._lock.locked())
+
+    def test_provider_timeout_returns_504_without_fabricating_a_decision_or_retrying(self):
+        self.analyzer.configure({"provider": "AGY", "model": "gemini-preset"})
+        self.analyzer.connection = {"connected": True}
+        payload = self.recovery_frame()
+        calls = []
+        def fail():
+            calls.append(True)
+            raise subprocess.TimeoutExpired(["private-cli", "secret-token"], 120, output="private strategy")
+        with self.assertRaises(HTTPException) as error:
+            self.run_mock(hold(), payload=payload, mutate=fail)
+        self.assertEqual(error.exception.status_code, 504)
+        self.assertIn("AGY", error.exception.detail)
+        self.assertIn("120", error.exception.detail)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(self.recover(payload), {"command": None})
+        self.assertFalse(self.analyzer._lock.locked())
+        self.assertIsNone(self.analyzer._backtest_mcp)
+        for secret in ("private-cli", "secret-token", "private strategy"):
+            self.assertNotIn(secret, error.exception.detail)
 
     def test_changed_strategy_during_request_discards_result(self):
         module = SimpleNamespace(analyze=lambda *args: hold())
@@ -175,19 +203,207 @@ class BacktestRouteTests(unittest.TestCase):
         finally:
             self.analyzer._lock.release()
 
-    def run_mock(self, output, mutate=None):
+    def run_mock(self, output, mutate=None, payload=None, execute=None):
         def analyze(analyzer, context, documents, image_path, schema):
             self.assertTrue(image_path.exists())
             self.assertTrue(analyzer._lock.locked())
             self.assertNotIn("image", context)
             self.assertEqual(schema["title"], "BacktestDecision")
+            if analyzer.__dict__.get("_backtest_mcp"):
+                with patch.dict(os.environ, analyzer._backtest_mcp):
+                    exchange("/call", {"name": "get_chart_state", "arguments": {}})
             if mutate:
                 mutate()
             return output
         module = SimpleNamespace(analyze=analyze)
         documents = [{"name": "test.md", "content": "fixture rule", "sha256": "v1"}]
         with patch("engine.backtest_bridge.Path.is_file", return_value=True), patch("engine.backtest_bridge.load_backtest_documents", return_value=(documents, [])), patch("engine.backtest_bridge.importlib.util.spec_from_file_location", return_value=SimpleNamespace(loader=SimpleNamespace(exec_module=lambda _: None))), patch("engine.backtest_bridge.importlib.util.module_from_spec", return_value=module):
-            return asyncio.run(self.endpoint(frame()))
+            operation = self.endpoint(payload or frame())
+            return asyncio.run(execute(operation) if execute else operation)
+
+    def recovery_frame(self, **changes):
+        return frame(client_id=str(uuid.uuid4()), drawings=[{"id": "support", "tool": "HorizontalLine", "points": [{"timestamp": 0, "price": 100}], "label": "Fixture"}], indicators=[{"id": "trend", "name": "Moving Average", "inputs": [], "visible": True, "operation": "upsert", "status": "ready"}], **changes)
+
+    def recover(self, payload):
+        with patch("engine.backtest_bridge.load_backtest_documents", return_value=([{"sha256": "v1"}], [])):
+            return self.sync(ToolSync(client_id=payload.client_id, frame=payload))
+
+    def test_completed_result_recovery_is_owner_scoped_and_does_not_rerun_adapter(self):
+        payload = self.recovery_frame()
+        result = self.run_mock(hold(), payload=payload)
+        with patch("engine.backtest_bridge.importlib.util.spec_from_file_location") as adapter:
+            self.assertEqual(self.recover(payload), {"command": None, "analysis": result})
+            self.assertEqual(self.recover(payload), {"command": None, "analysis": result})
+            adapter.assert_not_called()
+        other = payload.model_copy(update={"client_id": str(uuid.uuid4())})
+        self.assertEqual(self.recover(other), {"command": None})
+        with self.assertRaises(HTTPException) as error:
+            self.recover(payload.model_copy(update={"symbol": "OTHER"}))
+        self.assertEqual(error.exception.status_code, 409)
+
+    def test_117_second_success_survives_sync_and_final_validation_after_ack(self):
+        payload = self.recovery_frame()
+        clock = [0.0]
+        real_monotonic = time.monotonic
+        accepted = []
+        def acknowledge_then_finish_late():
+            def apply():
+                with patch.dict(os.environ, self.analyzer._backtest_mcp):
+                    exchange("/call", {"name": "apply_chart", "arguments": {}})
+            worker = threading.Thread(target=apply)
+            worker.start()
+            command = None
+            deadline = real_monotonic() + 2
+            while command is None and real_monotonic() < deadline:
+                command = self.sync(ToolSync(client_id=payload.client_id, frame=payload))["command"]
+            self.assertIsNotNone(command)
+            accepted.append(command["id"])
+            self.ack(ToolAck(client_id=payload.client_id, frame=payload, command_id=command["id"], error=""))
+            worker.join(2)
+            self.assertFalse(worker.is_alive())
+            clock[0] = 117.203
+            self.assertEqual(self.sync(ToolSync(client_id=payload.client_id, frame=payload))["acknowledged"], accepted)
+        with patch("engine.backtest_mcp.time.monotonic", side_effect=lambda: clock[0]):
+            result = self.run_mock(hold(), payload=payload, mutate=acknowledge_then_finish_late)
+            recovered = self.recover(payload)
+        self.assertEqual(result["decision"]["action"], "HOLD")
+        self.assertEqual(recovered["analysis"], result)
+        self.assertEqual(recovered["acknowledged"], accepted)
+        self.assertFalse(self.analyzer._lock.locked())
+        self.assertIsNone(self.analyzer._backtest_mcp)
+
+    def test_final_session_rejection_reports_precise_safe_category(self):
+        payload = self.recovery_frame()
+        self.analyzer.terminal = Mock()
+        def invalidate():
+            self.analyzer._catalog_revision += 1
+        with self.assertRaises(HTTPException) as rejected:
+            self.run_mock(hold(), payload=payload, mutate=invalidate)
+        self.assertEqual(rejected.exception.status_code, 409)
+        self.assertIn("configuration", rejected.exception.detail)
+        diagnostic = next(call for call in self.analyzer.terminal.write.call_args_list if call.args[0] == "backtest.rejected")
+        self.assertEqual(diagnostic.kwargs["code"], "mcp_configuration_changed")
+
+    def test_recovery_rejects_changed_configuration_and_strategy(self):
+        payload = self.recovery_frame()
+        self.run_mock(hold(), payload=payload)
+        self.analyzer._catalog_revision += 1
+        with self.assertRaises(HTTPException) as error:
+            self.recover(payload)
+        self.assertEqual(error.exception.status_code, 409)
+        self.run_mock(hold(), payload=payload)
+        with patch("engine.backtest_bridge.load_backtest_documents", return_value=([{"sha256": "changed"}], [])):
+            with self.assertRaises(HTTPException) as error:
+                self.sync(ToolSync(client_id=payload.client_id, frame=payload))
+        self.assertEqual(error.exception.status_code, 409)
+
+    def test_reset_and_expiration_remove_recoverable_results(self):
+        payload = self.recovery_frame()
+        self.run_mock(hold(), payload=payload)
+        self.reset(ToolOwner(client_id=payload.client_id))
+        self.assertEqual(self.recover(payload), {"command": None})
+        self.run_mock(hold(), payload=payload)
+        with patch("engine.backtest_bridge.time.monotonic", return_value=time.monotonic() + 1000):
+            with self.assertRaises(HTTPException) as error:
+                self.recover(payload)
+        self.assertEqual(error.exception.status_code, 409)
+
+    def test_reset_during_analysis_prevents_final_result_publication(self):
+        payload = self.recovery_frame()
+        with self.assertRaises(HTTPException) as error:
+            self.run_mock(hold(), payload=payload, mutate=lambda: self.reset(ToolOwner(client_id=payload.client_id)))
+        self.assertEqual(error.exception.status_code, 409)
+        self.assertFalse(self.analyzer._lock.locked())
+        self.assertEqual(self.recover(payload), {"command": None})
+
+    def test_cached_result_cannot_cross_replay_generations(self):
+        payload = self.recovery_frame(replay_id=str(uuid.uuid4()))
+        result = self.run_mock(hold(), payload=payload)
+        with self.assertRaises(HTTPException) as error:
+            self.recover(payload.model_copy(update={"replay_id": str(uuid.uuid4())}))
+        self.assertEqual(error.exception.status_code, 409)
+        self.assertEqual(self.recover(payload), {"command": None, "analysis": result})
+
+    def test_reset_during_final_validation_prevents_direct_response_and_recovery(self):
+        payload = self.recovery_frame()
+        finalizer = threading.get_ident()
+        validate = BacktestDecision.model_validate
+
+        def reset_before_publication(output):
+            result = validate(output)
+            if threading.get_ident() == finalizer:
+                reset = threading.Thread(target=lambda: self.reset(ToolOwner(client_id=payload.client_id)))
+                reset.start()
+                reset.join(timeout=2)
+                self.assertFalse(reset.is_alive())
+            return result
+
+        with patch.object(BacktestDecision, "model_validate", side_effect=reset_before_publication):
+            with self.assertRaises(HTTPException) as error:
+                self.run_mock(hold(), payload=payload)
+        self.assertEqual(error.exception.status_code, 409)
+        self.assertEqual(self.recover(payload), {"command": None})
+        self.assertFalse(self.analyzer._lock.locked())
+
+    def test_cached_result_rejects_mismatched_frame_owner(self):
+        payload = self.recovery_frame(replay_id=str(uuid.uuid4()))
+        result = self.run_mock(hold(), payload=payload)
+        for owner in (None, str(uuid.uuid4())):
+            with self.subTest(owner=owner), patch("engine.backtest_bridge.load_backtest_documents", return_value=([{"sha256": "v1"}], [])):
+                with self.assertRaises(HTTPException) as error:
+                    self.sync(ToolSync(client_id=payload.client_id, frame=payload.model_copy(update={"client_id": owner})))
+                self.assertEqual(error.exception.status_code, 409)
+        self.assertEqual(self.recover(payload), {"command": None, "analysis": result})
+
+    def test_disconnected_response_keeps_validated_result_for_sync_recovery(self):
+        payload = self.recovery_frame()
+        started = threading.Event()
+        release = threading.Event()
+
+        def block():
+            started.set()
+            self.assertTrue(release.wait(2))
+
+        async def disconnect(operation):
+            task = asyncio.create_task(operation)
+            self.assertTrue(await asyncio.to_thread(started.wait, 2))
+            task.cancel()
+            release.set()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+
+        self.run_mock(hold(), mutate=block, payload=payload, execute=disconnect)
+        self.assertEqual(self.recover(payload)["analysis"]["decision"]["action"], "HOLD")
+
+    def test_accepted_ack_remains_recoverable_when_final_analysis_fails(self):
+        payload = self.recovery_frame()
+        accepted = []
+
+        def fail_after_ack():
+            def apply():
+                with patch.dict(os.environ, self.analyzer._backtest_mcp):
+                    exchange("/call", {"name": "apply_chart", "arguments": {}})
+
+            worker = threading.Thread(target=apply)
+            worker.start()
+            deadline = time.monotonic() + 2
+            command = None
+            while command is None and time.monotonic() < deadline:
+                command = self.sync(ToolSync(client_id=payload.client_id, frame=payload))["command"]
+                if command is None:
+                    time.sleep(.005)
+            self.assertIsNotNone(command)
+            accepted.append(command["id"])
+            self.ack(ToolAck(client_id=payload.client_id, frame=payload, command_id=command["id"], error=""))
+            worker.join(2)
+            self.assertFalse(worker.is_alive())
+            raise CliRequestError("final_result")
+
+        with self.assertRaises(HTTPException):
+            self.run_mock(hold(), mutate=fail_after_ack, payload=payload)
+        self.assertEqual(self.recover(payload), {"command": None, "acknowledged": accepted})
+        self.reset(ToolOwner(client_id=payload.client_id))
+        self.assertEqual(self.recover(payload), {"command": None})
 
     def test_mock_adapter_receives_chart_and_backtest_schema(self):
         result = self.run_mock(hold())
