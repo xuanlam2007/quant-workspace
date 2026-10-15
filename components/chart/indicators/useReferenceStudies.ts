@@ -135,7 +135,7 @@ export function useReferenceStudies(chartRef: RefObject<IChartApi | null>, barsR
       instance.settings.intervals = mergeSaved(defaults.intervals, saved?.settings?.intervals);
       instance.settings.precision = typeof instance.settings.precision === "number" && Number.isInteger(instance.settings.precision) && instance.settings.precision >= 0 && instance.settings.precision <= 12 ? instance.settings.precision : defaults.precision;
       instance.view = new ReferenceStudyView(definition, instance.settings);
-      const priceOverlay = replayOnly && definition.metainfo.is_price_study;
+      const priceOverlay = definition.metainfo.is_price_study;
       instance.series = chart.addCustomSeries(instance.view, {
         priceScaleId: priceOverlay ? replayPriceSeries?.current?.options().priceScaleId ?? "right" : "right", priceLineVisible: false, lastValueVisible: false,
         priceFormat: definition.metainfo.format?.type === "volume" ? { type: "volume" } : { type: "price", precision: instance.settings.precision ?? 2, minMove: 10 ** -(instance.settings.precision ?? 2) },
@@ -148,7 +148,7 @@ export function useReferenceStudies(chartRef: RefObject<IChartApi | null>, barsR
       instance.error = error instanceof Error ? error.message : String(error);
       refresh();
     }
-  }, [calculate, chartRef, refresh, replayOnly, replayPriceSeries]);
+  }, [calculate, chartRef, refresh, replayPriceSeries]);
 
   useEffect(() => {
     let cancelled = false;

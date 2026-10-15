@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createChartRenderScheduler } from "@/lib/chart-render-scheduler";
 import { createQuoteStore, LiveMarketData } from "./chart/layout/symbols/LiveMarketData";
 import { StreamingIndicators } from "./chart/indicators/streaming-indicators";
+import { independentStudyScale } from "./chart/core/study-scale";
 import {
   createChart,
   createSeriesMarkers,
@@ -2636,13 +2637,21 @@ function ChartInstance({ active, onLoadLayout, replay }: { active: boolean; onLo
     priceIndicatorSeriesRef.current.forEach((series, id) => series.applyOptions({ priceScaleId: sourceScaleOverridesRef.current.get(`study:${id}`) ?? priceScaleId, baseLineVisible: false }));
     if (macdSeriesRef.current) {
       const { histogram, macd, signal } = macdSeriesRef.current;
-      [histogram, macd, signal].forEach((item) => item.applyOptions({ priceScaleId: indicatorScaleSides.macd, baseLineVisible: false }));
+      const side = independentStudyScale("macd", indicatorScaleSides.macd, mainScaleSide, macd.getPane() === mainSeries.getPane());
+      [histogram, macd, signal].forEach((item) => item.applyOptions({ priceScaleId: side, baseLineVisible: false }));
     }
     if (rsiSeriesRef.current) {
       const { rsi, upper, lower } = rsiSeriesRef.current;
-      [rsi, upper, lower].forEach((item) => item.applyOptions({ priceScaleId: indicatorScaleSides.rsi, baseLineVisible: false }));
+      const side = independentStudyScale("rsi", indicatorScaleSides.rsi, mainScaleSide, rsi.getPane() === mainSeries.getPane());
+      [rsi, upper, lower].forEach((item) => item.applyOptions({ priceScaleId: side, baseLineVisible: false }));
     }
-    const volumeScaleId = volumeScaleSideOverride ?? (currentVolumePaneIndex !== currentMainPaneIndex ? mainScaleSide : comparisonActive ? "volume" : mainScaleSide === "right" ? "left" : "right");
+    referenceStudyInstances.current.forEach((study) => {
+      if (!study.series || !study.definition) return;
+      const priceStudy = study.definition.metainfo.is_price_study;
+      const requested = sourceScaleOverridesRef.current.get(study.id) ?? (priceStudy ? mainScaleSide : "right");
+      study.series.applyOptions({ priceScaleId: priceStudy ? requested : independentStudyScale(study.id, requested, mainScaleSide, study.series.getPane() === mainSeries.getPane()) });
+    });
+    const volumeScaleId = independentStudyScale("volume", volumeScaleSideOverride ?? (currentVolumePaneIndex !== currentMainPaneIndex ? mainScaleSide : "volume"), mainScaleSide, currentVolumePaneIndex === currentMainPaneIndex);
     [volumeSeriesRef.current, volumeMaSeriesRef.current, volumeSmaSeriesRef.current].forEach((series) => series?.applyOptions({ baseLineVisible: false }));
     volumeSeriesRef.current?.applyOptions({
       priceScaleId: volumeScaleId,
@@ -2659,7 +2668,7 @@ function ChartInstance({ active, onLoadLayout, replay }: { active: boolean; onLo
     const visibleOtherSourceOn = (side: "left" | "right") =>
       [...compareSeriesRef.current.values(), ...priceIndicatorSeriesRef.current.values()]
         .some((item) => item.options().visible !== false && item.options().priceScaleId === side);
-    const volumeAxisVisible = volumeScaleId !== "volume" && [
+    const volumeAxisVisible = (volumeScaleId === "left" || volumeScaleId === "right") && [
       volumeSeriesRef.current, volumeMaSeriesRef.current, volumeSmaSeriesRef.current,
     ].some((item) => Boolean(item && item.options().visible !== false));
     chart.applyOptions({
@@ -2679,8 +2688,11 @@ function ChartInstance({ active, onLoadLayout, replay }: { active: boolean; onLo
       },
     });
 
-    if (volumeScaleId === "volume") volumeSeries.priceScale().applyOptions({ scaleMargins: { top: 0.8, bottom: 0 }, visible: false });
-    else if (currentVolumePaneIndex !== currentMainPaneIndex) volumeSeries.priceScale().applyOptions({ scaleMargins: { top: 0.08, bottom: 0.05 }, visible: true });
+    volumeSeries.priceScale().applyOptions({
+      mode: PriceScaleMode.Normal, autoScale: true, invertScale: false,
+      scaleMargins: currentVolumePaneIndex === currentMainPaneIndex ? { top: 0.8, bottom: 0 } : { top: 0.08, bottom: 0.05 },
+      visible: volumeScaleId === "left" || volumeScaleId === "right",
+    });
 
     const priceScale = mainSeries.priceScale();
     applyPriceScaleMode(chart, priceScale, mode);
@@ -2696,7 +2708,7 @@ function ChartInstance({ active, onLoadLayout, replay }: { active: boolean; onLo
       if (visibleTime) chart.timeScale().setVisibleRange(visibleTime);
       if (previousPriceRange) setVisiblePriceRange(priceScale, previousPriceRange);
     }
-  }, [activeStudies, autoScale, comparisonActive, effectiveScaleMode, mainScaleSide, mainScaleInverted, mainPaneIndex, scaleLocked, secondaryLeftVisible, secondaryRightVisible, volumeMaVisible, volumeSmoothedMaVisible, volumeAllowed, volumeVisualSettings.histogramVisible, volumeHidden, volumePaneIndex, volumeScaleSideOverride, paneRevision, indicatorScaleSides.macd, indicatorScaleSides.rsi, chartAppearance.topMargin, chartAppearance.bottomMargin]);
+  }, [activeStudies, autoScale, effectiveScaleMode, mainScaleSide, mainScaleInverted, mainPaneIndex, scaleLocked, secondaryLeftVisible, secondaryRightVisible, volumeMaVisible, volumeSmoothedMaVisible, volumeAllowed, volumeVisualSettings.histogramVisible, volumeHidden, volumePaneIndex, volumeScaleSideOverride, paneRevision, indicatorScaleSides.macd, indicatorScaleSides.rsi, chartAppearance.topMargin, chartAppearance.bottomMargin, referenceStudyInstances, referenceStudies.revision]);
 
   useEffect(() => {
     const chart = chartRef.current;
